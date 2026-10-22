@@ -1,0 +1,171 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #0a0a0a;
+    color: #e5e7eb;
+    overflow: hidden;
+  }
+
+  html, #root, #root > div {
+    height: 100%;
+    background: #0a0a0a;
+  }
+}
+
+.font-mono-numbers {
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.font-tech {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Technical accent: amber for engineering feel */
+:root {
+  --tech-accent: #f59e0b;
+  --tech-accent-hover: #d97706;
+  --tech-border: #1f2937;
+  --tech-border-hover: #374151;
+  --tech-panel: #111111;
+  --tech-surface: #171717;
+  --tech-text: #e5e7eb;
+  --tech-muted: #737373;
+  --tech-focus-ring: #f59e0b;
+}
+
+/* Custom Google Earth Pushpin - technical styling */
+.google-earth-pin {
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.7));
+  transition: transform 0.15s ease;
+}
+.google-earth-pin:hover {
+  transform: scale(1.1) translateY(-3px);
+}
+
+/* Leaflet dark overrides - technical */
+.leaflet-container {
+  background: #0a0a0a !important;
+  font-family: inherit !important;
+}
+
+.leaflet-control-zoom {
+  border: 1px solid #222 !important;
+  background: rgba(17, 17, 17, 0.95) !important;
+  border-radius: 4px !important;
+  overflow: hidden;
+  box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.6);
+}
+
+.leaflet-control-zoom a {
+  background: transparent !important;
+  color: #e5e7eb !important;
+  border-bottom: 1px solid #222 !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: #171717 !important;
+  color: #f59e0b !important;
+}
+
+.leaflet-popup-content-wrapper {
+  background: #111111 !important;
+  color: #e5e7eb !important;
+  border: 1px solid #222 !important;
+  border-radius: 4px !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6) !important;
+}
+
+.leaflet-popup-tip {
+  background: #111111 !important;
+}
+
+.leaflet-control-attribution {
+  color: #737373 !important;
+  font-size: 10px !important;
+}
+
+/* Technical subtle scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+::-webkit-scrollbar-thumb {
+  background: #222;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #374151;
+}
+
+/* Focus ring for inputs - technical */
+.focus-tech:focus {
+  outline: none;
+  border-color: #f59e0b;
+  box-shadow: 0 0 0 1px #f59e0b;
+}
+
+.focus-tech:focus-visible {
+  outline: 1px solid #f59e0b;
+}
+
+/* Railway Chainage Marker & Label Beside Track */
+.chainage-station-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+.chainage-marker-wrap:hover .chainage-badge {
+  transform: scale(1.1) translateX(2px);
+  border-color: #f59e0b !important;
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.35) !important;
+}
+
+/* Technical utility classes */
+.border-tech {
+  border-color: #1f2937;
+}
+.border-tech-hover:hover {
+  border-color: #374151;
+}
+.bg-tech-panel {
+  background-color: #111111;
+}
+.bg-tech-surface {
+  background-color: #171717;
+}
+.text-tech-muted {
+  color: #737373;
+}
+.btn-tech-primary {
+  background: #f59e0b;
+  color: #0a0a0a;
+}
+.btn-tech-primary:hover {
+  background: #d97706;
+}
+.btn-tech-ghost {
+  background: transparent;
+  color: #e5e7eb;
+  border: 1px solid #222;
+}
+.btn-tech-ghost:hover {
+  background: #171717;
+  border-color: #374151;
+  color: #f59e0b;
+}
+.btn-tech-danger {
+  background: transparent;
+  color: #737373;
+  border: 1px solid #222;
+}
+.btn-tech-danger:hover {
+  background: #1a1a1a;
+  border-color: #ef4444;
+  color: #ef4444;
+}
