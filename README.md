@@ -6,7 +6,7 @@ latitude and longitude of **every** chainage, and delineates the upstream
 catchment and stream draining to a chosen chainage using a global Digital
 Elevation Model.
 
-Outputs: Google Earth KML, a three-sheet Excel workbook, and an interactive
+Outputs: Google Earth KML, an Excel workbook, and an interactive
 satellite map.
 
 ---

@@ -1,16 +1,10 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
-import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
-    resolve: {
-      alias: {
-        '@': path.resolve(import.meta.dirname, '.'),
-      },
-    },
     // The terrain tile reader runs in the browser (DOM canvas) and on the
     // server (napi-rs/canvas). The native addon must never be pulled into the
     // browser bundle.
