@@ -1,4 +1,5 @@
 import { CorridorAlignment, HydrologyReport } from '../types/hydrology';
+import { decimalToDMS } from './geoUtils';
 
 /**
  * KML colour encoding is aabbggrr: alpha, then BLUE, then GREEN, then RED.
@@ -319,20 +320,134 @@ export function downloadBlob(blob: Blob, filename: string): void {
 
 /**
  * Exports the formatted Excel workbook from the server-side generator.
+ *
+ * On static hosting (e.g. GitHub Pages) there is no Express API, so a 404/405
+ * falls back to an identical client-side workbook built with ExcelJS — the
+ * summary, chainage register and catchment-boundary sheets, without the
+ * server-rendered basemap snapshot.
  */
 export async function exportExcelReport(
   report: HydrologyReport,
   alignment?: CorridorAlignment | null
 ): Promise<void> {
   const filename = `Hydrology_Report_CH_${chainageTag(report.targetChainageFormatted)}.xlsx`;
+  const payload = JSON.stringify(buildSnapshotPayload(report, alignment));
   const resp = await fetch('/api/export-excel', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildSnapshotPayload(report, alignment)),
+    body: payload,
   });
 
-  if (!resp.ok) {
-    throw new Error(`Excel export failed (HTTP ${resp.status})`);
+  if (resp.ok) {
+    downloadBlob(await resp.blob(), filename);
+    return;
   }
-  downloadBlob(await resp.blob(), filename);
+  if (resp.status !== 404 && resp.status !== 405) {
+    // A real server-side failure is surfaced, not silently degraded.
+    const detail = await resp.json().catch(() => null);
+    throw new Error(
+      `Excel export failed (HTTP ${resp.status})${detail?.error ? `: ${detail.error}` : ''}`
+    );
+  }
+  downloadBlob(await buildClientHydrologyWorkbook(report, alignment), filename);
+}
+
+/**
+ * Client-side mirror of the server workbook generator: the three-sheet layout
+ * without the embedded map snapshot (that is rendered on the server only).
+ */
+async function buildClientHydrologyWorkbook(
+  report: HydrologyReport,
+  alignment?: CorridorAlignment | null
+): Promise<Blob> {
+  const { default: ExcelJS } = await import('exceljs');
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Tensora GIS - Hydrology Catchment Engine';
+  workbook.created = new Date();
+
+  const nameBase = (report.targetChainageFormatted || 'Report')
+    .replace(/[\\/*?:[\]]/g, '_')
+    .slice(0, 31);
+  const summary = workbook.addWorksheet(nameBase, {
+    views: [{ showGridLines: true }],
+  });
+  summary.columns = [{ width: 30 }, { width: 48 }];
+
+  const headline: [string, string][] = [
+    ['LATITUDE :', report.latitudeDMS],
+    ['LONGITUDE :', report.longitudeDMS],
+    ['CATCHMENT AREA (A):', `${report.catchmentAreaKm2} km²`],
+    ['LENGTH OF STREAM (L):', `${report.lengthOfStreamKm} km`],
+    ['LEVEL STREAM ORIGIN:', `${report.levelStreamOriginM} m MSL`],
+    ['HIGHEST CONTOUR:', `${report.highestContourM} m MSL`],
+  ];
+  for (const [label, value] of headline) {
+    summary.addRow([label, value]);
+  }
+  summary.addRow([]);
+  summary.addRow(['ELEVATION DROP (Δh):', `${report.elevationDropM} m`]);
+  summary.addRow(['ANALYSIS SCOPE:', report.scopeAppliedM ? `${report.scopeAppliedM} m` : 'Not recorded']);
+  summary.addRow(['ELEVATION SOURCE:', report.elevationSource ?? 'Not recorded']);
+  summary.addRow([
+    'ORIGIN DATUM:',
+    report.elevationOriginKind === 'survey' ? 'Uploaded survey sheet' : 'Sampled from DEM',
+  ]);
+  summary.addRow([
+    'DEM COVERAGE:',
+    report.demCoverage !== undefined ? `${(report.demCoverage * 100).toFixed(1)}%` : 'Not recorded',
+  ]);
+  summary.addRow([]);
+  summary.addRow(['NOTE', 'Workbook generated in-browser (static deployment).']);
+
+  const register = workbook.addWorksheet('Chainage_Register', { views: [{ showGridLines: true }] });
+  register.columns = [
+    { width: 16, header: 'Chainage' },
+    { width: 24, header: 'Latitude (DMS)' },
+    { width: 24, header: 'Longitude (DMS)' },
+    { width: 16, header: 'Latitude (DD)' },
+    { width: 16, header: 'Longitude (DD)' },
+  ];
+  register.getRow(1).font = { bold: true };
+  const stations = buildSnapshotPayload(report, alignment ?? null).chainages as
+    | { chainage: number; formatted: string; lat: number; lng: number }[]
+    | undefined;
+  if (stations && stations.length > 0) {
+    for (const ch of stations) {
+      register.addRow([
+        ch.formatted ?? String(ch.chainage),
+        decimalToDMS(ch.lat, true),
+        decimalToDMS(ch.lng, false),
+        Math.round(ch.lat * 1e7) / 1e7,
+        Math.round(ch.lng * 1e7) / 1e7,
+      ]);
+    }
+  } else {
+    register.addRow(['No chainage stations were supplied with this request.']);
+  }
+
+  const boundary = workbook.addWorksheet('Catchment_Boundary', {
+    views: [{ showGridLines: true }],
+  });
+  boundary.columns = [
+    { width: 10, header: 'Vertex' },
+    { width: 16, header: 'Latitude (DD)' },
+    { width: 16, header: 'Longitude (DD)' },
+    { width: 24, header: 'Latitude (DMS)' },
+    { width: 24, header: 'Longitude (DMS)' },
+  ];
+  boundary.getRow(1).font = { bold: true };
+  (report.catchmentPolygon ?? []).forEach(([lat, lng], idx) => {
+    boundary.addRow([
+      idx + 1,
+      Math.round(lat * 1e7) / 1e7,
+      Math.round(lng * 1e7) / 1e7,
+      decimalToDMS(lat, true),
+      decimalToDMS(lng, false),
+    ]);
+  });
+
+  const out = await workbook.xlsx.writeBuffer();
+  return new Blob([out], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
 }
