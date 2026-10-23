@@ -1,4 +1,4 @@
-# Tensora GIS — Catchment & Stream Delineation
+# Tensora GIS - Catchment & Stream Delineation
 
 A hydrological analysis tool for highway and railway corridors. It ingests a
 corridor alignment (KML/KMZ) and/or a chainage sheet (CSV/XLSX), resolves the
