@@ -21,22 +21,29 @@ export type AppUser = AuthSession | { guest: true };
 
 export function useGoogleAuth() {
   const [user, setUser] = useState<AppUser | null>(() => loadSession());
+  const [recordingWarning, setRecordingWarning] = useState<string | null>(null);
 
-  const signIn = useCallback(async (credential: string): Promise<AuthSession | null> => {
-    const existing = loadSession();
-    const session = sessionFromCredential(
-      { credential },
-      existing?.sub ? existing.firstSeenAt : undefined
-    );
-    if (!session) return null;
+  const signIn = useCallback(
+    async (credential: string): Promise<AuthSession | null> => {
+      const existing = loadSession();
+      const session = sessionFromCredential(
+        { credential },
+        existing?.sub ? existing.firstSeenAt : undefined
+      );
+      if (!session) return null;
 
-    saveSession(session);
-    setUser(session);
+      // Registration completes before the session is granted, and the
+      // outcome is surfaced (see recordingWarning) so a sheet-recorder
+      // outage is visible in-app rather than being swallowed.
+      const outcome = await registerSignIn(credential);
+      setRecordingWarning(outcome.warning ?? null);
 
-    const outcome = await registerSignIn(credential);
-    if (outcome.warning) console.warn('Signup recording:', outcome.warning);
-    return session;
-  }, []);
+      saveSession(session);
+      setUser(session);
+      return session;
+    },
+    []
+  );
 
   const continueUnconfigured = useCallback(() => {
     if (isAuthConfigured()) return;
@@ -45,8 +52,9 @@ export function useGoogleAuth() {
 
   const signOut = useCallback(() => {
     clearSession();
+    setRecordingWarning(null);
     setUser(null);
   }, []);
 
-  return { user, signIn, signOut, continueUnconfigured };
+  return { user, signIn, signOut, continueUnconfigured, recordingWarning };
 }

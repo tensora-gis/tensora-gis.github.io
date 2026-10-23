@@ -116,9 +116,28 @@ function json_(obj) {
   );
 }
 
-/** Web app entry point (deployed with access: Anyone). */
-function doPost(e) {
+/**
+ * Diagnostics: opening the web app URL in a browser (GET) reports the
+ * deployed configuration so a stale deployment is immediately visible.
+ */
+function doGet() {
+  let sheetReachable = false;
   try {
+    sheetReachable = SpreadsheetApp.openById(SPREADSHEET_ID).getActiveRange() !== null;
+  } catch (err) {
+    console.error('Sheet not reachable: ' + err);
+  }
+  return json_({
+    app: 'tensora-gis signup recorder',
+    clientConfigured: CLIENT_ID.indexOf('YOUR_') === -1 && CLIENT_ID.indexOf('apps.googleusercontent.com') > 0,
+    clientTail: CLIENT_ID.slice(-18),
+    source: SOURCE,
+    sheetReachable: sheetReachable,
+  });
+}
+
+/** Web app entry point (deployed with access: Anyone). */
+function doPost(e) {  try {
     if (!e || !e.postData || !e.postData.contents) {
       return json_({ status: 'error', error: 'Empty request.' });
     }
