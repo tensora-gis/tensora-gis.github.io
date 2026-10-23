@@ -20,7 +20,7 @@
 
 // The OAuth Client ID — tokens issued for this app (and only this app) past
 // the audience check. This MUST equal VITE_GOOGLE_CLIENT_ID.
-const CLIENT_ID = 'YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com';
+const CLIENT_ID = '523114466210-vruov4c8o00rrt6huegq3iljs3iftu3b.apps.googleusercontent.com';
 
 // The sign-up register lives in this fixed spreadsheet; gid=0 (its first
 // sheet) is written to.
