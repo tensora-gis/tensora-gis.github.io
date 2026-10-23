@@ -1,5 +1,6 @@
 import React from 'react';
-import { Compass, Trash2, FileSpreadsheet } from 'lucide-react';
+import { Compass, LogOut, Trash2, FileSpreadsheet } from 'lucide-react';
+import { AppUser } from '../auth/useGoogleAuth';
 
 interface HeaderProps {
   onClearData: () => void;
@@ -8,6 +9,9 @@ interface HeaderProps {
   corridorName: string;
   onOpenRegister: () => void;
   hasData: boolean;
+  /** Signed-in user, rendered in the toolbar with a sign-out action. */
+  user?: AppUser | null;
+  onSignOut?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -17,7 +21,12 @@ export const Header: React.FC<HeaderProps> = ({
   corridorName,
   onOpenRegister,
   hasData,
+  user,
+  onSignOut,
 }) => {
+  const userName = user && !('guest' in user) ? user.name : 'Guest';
+  const userAvatar =
+    user && !('guest' in user) && user.picture ? user.picture : undefined;
   return (
     <header className="h-14 bg-[#0a0a0a] border-b border-[#222] px-4 md:px-6 flex items-center justify-between shrink-0 z-30 select-none">
       {/* Zone 1: Brand Wordmark */}
@@ -59,6 +68,34 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Zone 3: Primary Action & Tools */}
       <div className="flex items-center gap-2">
+        {/* Signed-in account chip */}
+        {user && (
+          <>
+            <div
+              className="hidden sm:flex items-center gap-2 pl-1 pr-2 py-0.5 bg-[#111] border border-[#222] rounded-full"
+              title={user && !('guest' in user) ? user.email : 'Continuing without an account'}
+            >
+              {userAvatar ? (
+                <img src={userAvatar} alt="" referrerPolicy="no-referrer" className="w-5 h-5 rounded-full" />
+              ) : (
+                <span className="w-5 h-5 rounded-full bg-[#1e1e1e] border border-[#2a2a2a] flex items-center justify-center text-[9px] font-semibold text-amber-400">
+                  {userName.charAt(0).toUpperCase()}
+                </span>
+              )}
+              <span className="max-w-[140px] truncate text-[11px] text-[#a3a3a3]">{userName}</span>
+            </div>
+            {onSignOut && (
+              <button
+                onClick={onSignOut}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[#737373] hover:text-white bg-[#111] hover:bg-[#171717] border border-[#222] rounded transition-colors"
+                title="Sign out"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Sign out</span>
+              </button>
+            )}
+          </>
+        )}
         {hasData && (
           <>
             <button

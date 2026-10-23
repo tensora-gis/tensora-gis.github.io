@@ -8,6 +8,7 @@ import {
 } from './utils/fileParsers';
 import { findNearestPointOnPolyline, decimalToDMS } from './utils/geoUtils';
 import { Header } from './components/Header';
+import { AppUser } from './auth/useGoogleAuth';
 import { InputPanel } from './components/InputPanel';
 import { MapViewport } from './components/MapViewport';
 import { ChainageRegisterModal } from './components/ChainageRegisterModal';
@@ -15,7 +16,13 @@ import { ChainageRegisterModal } from './components/ChainageRegisterModal';
 /** Clicks within this distance of the centreline snap to the nearest station. */
 const SNAP_TO_CORRIDOR_M = 50;
 
-export default function App() {
+export default function App({
+  user,
+  onSignOut,
+}: {
+  user: AppUser;
+  onSignOut: () => void;
+}) {
   const [alignment, setAlignment] = useState<CorridorAlignment | null>(null);
   const [report, setReport] = useState<HydrologyReport | null>(null);
   const [failure, setFailure] = useState<HydrologyRunFailure | null>(null);
@@ -263,6 +270,8 @@ export default function App() {
         corridorName={alignment ? alignment.name : 'Ready for Upload'}
         onOpenRegister={() => setIsRegisterOpen(true)}
         hasData={!!alignment}
+        user={user}
+        onSignOut={onSignOut}
       />
 
       <main className="flex-1 flex flex-col md:flex-row h-[calc(100vh-56px)] overflow-hidden relative">
