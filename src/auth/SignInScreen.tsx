@@ -29,10 +29,9 @@ function waitForGisClient(): Promise<boolean> {
 }
 
 export const SignInScreen: React.FC<{
-  /** Resolves with a warning message, or null when everything succeeded. */
+  /** Resolves with the session once the credential validates, or null. */
   onAuthenticated: (credential: string) => Promise<AuthSession | null>;
-  onContinueUnconfigured?: () => void;
-}> = ({ onAuthenticated, onContinueUnconfigured }) => {
+}> = ({ onAuthenticated }) => {
   const buttonRef = useRef<HTMLDivElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [warning, setWarning] = useState<string | null>(null);
@@ -120,19 +119,6 @@ export const SignInScreen: React.FC<{
           <p className="mt-4 text-center text-[11px] text-[#737373] animate-pulse">
             Verifying your Google account…
           </p>
-        )}
-
-        {onContinueUnconfigured && (
-          <a
-            href="#continue"
-            onClick={(e) => {
-              e.preventDefault();
-              onContinueUnconfigured();
-            }}
-            className="mx-auto mt-5 block w-fit text-xs text-[#737373] underline decoration-[#333] underline-offset-4 transition-colors hover:text-white"
-          >
-            Continue without an account (unconfigured deployment)
-          </a>
         )}
       </div>
     </div>

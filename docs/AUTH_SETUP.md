@@ -84,5 +84,3 @@ Locally, copy `.env.example` to `.env.local` and fill in the same two values.
 - If the Apps Script endpoint is unreachable (offline, quota), sign-in still
   succeeds locally and the failure is logged in the console — the sheet is
   signup telemetry, not an access-control list.
-- Guest access (`Continue without an account`) only appears on deployments
-  where `VITE_GOOGLE_CLIENT_ID` is not set (e.g. fresh forks).

@@ -25,15 +25,10 @@ function RecorderToast({message}: {message: string}) {
 }
 
 function Root() {
-  const {user, signIn, signOut, continueUnconfigured, recordingWarning} = useGoogleAuth();
+  const {user, signIn, signOut, recordingWarning} = useGoogleAuth();
 
   if (!user) {
-    return (
-      <SignInScreen
-        onAuthenticated={signIn}
-        onContinueUnconfigured={continueUnconfigured}
-      />
-    );
+    return <SignInScreen onAuthenticated={signIn} />;
   }
   return (
     <>

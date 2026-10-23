@@ -24,9 +24,8 @@ export const Header: React.FC<HeaderProps> = ({
   user,
   onSignOut,
 }) => {
-  const userName = user && !('guest' in user) ? user.name : 'Guest';
-  const userAvatar =
-    user && !('guest' in user) && user.picture ? user.picture : undefined;
+  const userName = user ? user.name : '';
+  const userAvatar = user?.picture;
   return (
     <header className="h-14 bg-[#0a0a0a] border-b border-[#222] px-4 md:px-6 flex items-center justify-between shrink-0 z-30 select-none">
       {/* Zone 1: Brand Wordmark */}
@@ -73,7 +72,7 @@ export const Header: React.FC<HeaderProps> = ({
           <>
             <div
               className="hidden sm:flex items-center gap-2 pl-1 pr-2 py-0.5 bg-[#111] border border-[#222] rounded-full"
-              title={user && !('guest' in user) ? user.email : 'Continuing without an account'}
+              title={user ? user.email : 'Signed in'}
             >
               {userAvatar ? (
                 <img src={userAvatar} alt="" referrerPolicy="no-referrer" className="w-5 h-5 rounded-full" />

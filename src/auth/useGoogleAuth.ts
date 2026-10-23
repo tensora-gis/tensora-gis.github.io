@@ -10,14 +10,13 @@ import { useCallback, useState } from 'react';
 import {
   AuthSession,
   clearSession,
-  isAuthConfigured,
   loadSession,
   registerSignIn,
   saveSession,
   sessionFromCredential,
 } from './session';
 
-export type AppUser = AuthSession | { guest: true };
+export type AppUser = AuthSession;
 
 export function useGoogleAuth() {
   const [user, setUser] = useState<AppUser | null>(() => loadSession());
@@ -45,16 +44,11 @@ export function useGoogleAuth() {
     []
   );
 
-  const continueUnconfigured = useCallback(() => {
-    if (isAuthConfigured()) return;
-    setUser({ guest: true });
-  }, []);
-
   const signOut = useCallback(() => {
     clearSession();
     setRecordingWarning(null);
     setUser(null);
   }, []);
 
-  return { user, signIn, signOut, continueUnconfigured, recordingWarning };
+  return { user, signIn, signOut, recordingWarning };
 }
