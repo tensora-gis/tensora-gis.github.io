@@ -62,7 +62,7 @@ typecheck, build, and the offline engine self-test (non-blocking).
 ## What it does
 
 1. **Ingest** a corridor alignment (`.kml` / `.kmz`) and/or a chainage sheet
-   (`.csv` / `.xlsx`). Column and coordinate formats are detected dynamically —
+   (`.csv` / `.xlsx`). Column and coordinate formats are detected dynamically
    nothing about a project is hardcoded.
 2. **Linear referencing.** For every chainage, the exact latitude and longitude
    on the corridor is computed by projecting the station perpendicularly onto
@@ -71,7 +71,7 @@ typecheck, build, and the offline engine self-test (non-blocking).
    degrees (`27.244844`).
 3. **Hydrological delineation** at the chosen chainage:
    - Find the ground that **actually drains to** the chainage point. If no
-     watercourse reaches it, no catchment is reported — the tool says so rather
+     watercourse reaches it, no catchment is reported the tool says so rather
      than drawing one.
    - Take the **head of the watercourse as the highest point within 1 km** of
      the crossing that drains to it. A culvert discharges from **one direction
