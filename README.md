@@ -31,6 +31,25 @@ npm run lint         # typecheck only
 
 ---
 
+## Deployment
+
+The repo ships with a multi-stage Dockerfile that builds the SPA and serves it
+with the Express API (single container, one origin, no API keys needed):
+
+```bash
+docker build -t tensora-gis .
+docker run -p 8080:3000 tensora-gis   # http://localhost:8080
+```
+
+It works as-is on Render, Railway, Fly.io, Google Cloud Run, or any container
+host — set `PORT` if the platform injects one (defaults to 3000). Requires
+Node 20+ at runtime (`.nvmrc` pins 22).
+
+CI runs on every push/PR to `master` (`.github/workflows/ci.yml`): install,
+typecheck, build, and the offline engine self-test (non-blocking).
+
+---
+
 ## What it does
 
 1. **Ingest** a corridor alignment (`.kml` / `.kmz`) and/or a chainage sheet
