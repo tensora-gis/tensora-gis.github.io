@@ -33,6 +33,15 @@ npm run lint         # typecheck only
 
 ## Deployment
 
+**Live site:** https://tensora-gis.github.io — deployed from a GitHub
+organization repo (`tensora-gis/tensora-gis.github.io`) via
+`.github/workflows/deploy-pages.yml` on every push to `master`.
+
+GitHub Pages is static hosting, so the Express API is not available there. The
+Excel export detects this (404 on `/api/export-excel`) and falls back to an
+identical client-side workbook. The delineation engine already runs entirely
+in the browser, so the full hydrology workflow works on the static site.
+
 The repo ships with a multi-stage Dockerfile that builds the SPA and serves it
 with the Express API (single container, one origin, no API keys needed):
 
