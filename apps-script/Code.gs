@@ -22,24 +22,19 @@
 // the audience check. This MUST equal VITE_GOOGLE_CLIENT_ID.
 const CLIENT_ID = 'YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com';
 
-const SIGNUP_SHEET_NAME = 'Signups';
-const HEADERS = [
-  'Last activity',
-  'Event',
-  'Google ID (sub)',
-  'Name',
-  'Email',
-  'Picture URL',
-  'Sign-up time',
-  'Sign-in count',
-  'Verified',
-];
+// The sign-up register lives in this fixed spreadsheet; gid=0 (its first
+// sheet) is written to.
+const SPREADSHEET_ID = '1jc5-gV42WqCiiRWxxjfd4-uIqhbYBwKodEXcAmjM43Y';
+
+// Value written to the "Source" column — where the sign-in happened.
+const SOURCE = 'https://tensora-gis.github.io';
+
+const HEADERS = ['Timestamp', 'Name', 'Email', 'Source'];
 
 function getSheet_() {
-  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet = spreadsheet.getSheetByName(SIGNUP_SHEET_NAME);
-  if (!sheet) {
-    sheet = spreadsheet.insertSheet(SIGNUP_SHEET_NAME);
+  const spreadsheet = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sheet = spreadsheet.getSheets()[0]; // gid=0
+  if (sheet.getLastRow() === 0) {
     sheet.appendRow(HEADERS);
     sheet.getRange(1, 1, 1, HEADERS.length).setFontWeight('bold');
     sheet.setFrozenRows(1);
@@ -86,39 +81,33 @@ function verifyIdToken_(credential) {
 }
 
 /**
- * Updates the row for an existing account, or appends a fresh one.
- * The Sign-up time column keeps the original registration; other columns
- * track the latest sign-in.
+ * Writes one row: Timestamp, Name, Email, Source.
+ *
+ * An account that is already in the sheet gets its Timestamp refreshed
+ * instead of a duplicate row (dedupe window: 10 minutes, so double-fires are
+ * collapsed but every session remains visible over time).
  */
 function recordSignIn_(claims) {
   const sheet = getSheet_();
   const data = sheet.getDataRange().getValues();
-  const subColumn = data.length > 0 ? data[0].indexOf('Google ID (sub)') : -1;
+  const emailColumn = data.length > 0 ? data[0].indexOf('Email') : -1;
   const now = new Date();
+  const dedupeCutoff = new Date(now.getTime() - 10 * 60 * 1000);
 
-  if (subColumn >= 0) {
+  if (emailColumn >= 0) {
     for (let r = 1; r < data.length; r++) {
-      if (data[r][subColumn] !== claims.sub) continue;
-      sheet.getRange(r + 1, 1).setValue(now); // Last activity
-      sheet.getRange(r + 1, 5).setValue(claims.email);
-      sheet.getRange(r + 1, 8).setValue((Number(data[r][7]) || 0) + 1); // Count
-      sheet.getRange(r + 1, 9).setValue('yes'); // Verified
-      return { action: 'signin', count: Number(data[r][7]) + 1 };
+      if (String(data[r][emailColumn]).toLowerCase() !== String(claims.email).toLowerCase()) continue;
+      const lastSeen = data[r][0] instanceof Date ? data[r][0] : null;
+      if (lastSeen && lastSeen > dedupeCutoff) {
+        return { action: 'signin', deduped: true };
+      }
+      sheet.getRange(r + 1, 1).setValue(now); // Timestamp
+      return { action: 'signin', deduped: false };
     }
   }
 
-  sheet.appendRow([
-    now,
-    'signup',
-    claims.sub,
-    claims.name || '',
-    claims.email,
-    claims.picture || '',
-    now,
-    1,
-    'yes',
-  ]);
-  return { action: 'signup', count: 1 };
+  sheet.appendRow([now, claims.name || '', claims.email, SOURCE]);
+  return { action: 'signup', deduped: false };
 }
 
 function json_(obj) {
@@ -143,7 +132,7 @@ function doPost(e) {
     return json_({
       status: 'ok',
       action: outcome.action,
-      count: outcome.count,
+      deduped: outcome.deduped,
       email: claims.email,
     });
   } catch (err) {

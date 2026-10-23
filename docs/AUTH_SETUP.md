@@ -37,17 +37,24 @@ or an email Google hasn't verified never reaches the sheet.
    (and `http://localhost:3000` for local development).
 5. Copy the generated Client ID (`…apps.googleusercontent.com`).
 
-## Step 2 — Sign-up Sheet + Apps Script web app
+## Step 2 — Apps Script web app (writes to the sign-up sheet)
 
-1. Create a new Google Sheet in your Drive (this is the sign-up register).
-2. Extensions → **Apps Script**. Delete the default code, paste in
+The register is this spreadsheet:
+<https://docs.google.com/spreadsheets/d/1jc5-gV42WqCiiRWxxjfd4-uIqhbYBwKodEXcAmjM43Y/edit#gid=0>
+(columns: **Timestamp, Name, Email, Source**).
+
+1. Open <https://script.google.com/home/create> (a standalone script is fine —
+   it opens the spreadsheet by ID) — or use Extensions → **Apps Script** inside
+   the sheet itself.
+2. Delete the default code, paste in
    [`apps-script/Code.gs`](../apps-script/Code.gs), and set `CLIENT_ID` at the
-   top to the Client ID from Step 1.
+   top to the Client ID from Step 1. (`SPREADSHEET_ID` and `SOURCE` are already
+   filled in.)
 3. Save, then **Deploy → New deployment → type: Web app**:
    - Description: `tensora-gis signup recorder`
    - Execute as: **Me**
    - Who has access: **Anyone**
-4. Authorize the deployment (the script only touches its own spreadsheet).
+4. Authorize the deployment (it writes only to the sign-up spreadsheet).
 5. Copy the web app URL — it ends in `/exec`.
 
 ## Step 3 — Wire the repo secrets
@@ -65,10 +72,15 @@ Locally, copy `.env.example` to `.env.local` and fill in the same two values.
 
 ## Behaviour notes
 
+- Every sign-in writes **Timestamp, Name, Email, Source** to the register;
+  Source records where the sign-in happened (`https://tensora-gis.github.io`).
+- An account already in the sheet has its Timestamp refreshed instead of
+  getting a duplicate row (10-minute dedupe window); new accounts append.
+- The ID token is verified against Google before any row is written;
+  unverified/expired/mismatched tokens are rejected with 403.
 - Returning users are stored in `localStorage` and skip the gate on repeat
   visits; clearing site data (or pressing **Sign out**) returns them to the
-  sign-in screen. Sign-ins by the same account update their existing sheet row
-  (count + last activity) rather than duplicating it.
+  sign-in screen.
 - If the Apps Script endpoint is unreachable (offline, quota), sign-in still
   succeeds locally and the failure is logged in the console — the sheet is
   signup telemetry, not an access-control list.
