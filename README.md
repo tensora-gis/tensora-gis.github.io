@@ -33,7 +33,7 @@ npm run lint         # typecheck only
 
 ## Deployment
 
-**Live site:** https://tensora-gis.github.io — deployed from a GitHub
+**Live site:** https://tensora-gis.github.io - deployed from a GitHub
 organization repo (`tensora-gis/tensora-gis.github.io`) via
 `.github/workflows/deploy-pages.yml` on every push to `master`.
 
@@ -51,7 +51,7 @@ docker run -p 8080:3000 tensora-gis   # http://localhost:8080
 ```
 
 It works as-is on Render, Railway, Fly.io, Google Cloud Run, or any container
-host — set `PORT` if the platform injects one (defaults to 3000). Requires
+host set `PORT` if the platform injects one (defaults to 3000). Requires
 Node 20+ at runtime (`.nvmrc` pins 22).
 
 CI runs on every push/PR to `master` (`.github/workflows/ci.yml`): install,
@@ -75,7 +75,7 @@ typecheck, build, and the offline engine self-test (non-blocking).
      than drawing one.
    - Take the **head of the watercourse as the highest point within 1 km** of
      the crossing that drains to it. A culvert discharges from **one direction
-     only**, so the catchment is that single drainage — not the whole grid.
+     only**, so the catchment is that single drainage not the whole grid.
    - Draw the channel as the **downhill D8 path the water actually takes**,
      from that highest point to the culvert, continuing the last few metres
      onto the chainage coordinate so it meets the placemark.
@@ -83,26 +83,26 @@ typecheck, build, and the offline engine self-test (non-blocking).
      drop is under **5 m**, widen the analysis scope (500 m → 1 km → 2 km) and
      re-run. Distance is not fixed: the head is wherever the highest ground is.
    - Report catchment area (km²), stream length (km), level stream origin
-     (m MSL), and highest contour (m MSL) — where "highest contour" is the
+     (m MSL), and highest contour (m MSL) where "highest contour" is the
      headwater level, the highest point the culvert must collect from.
 
 ### Why the corridor formation is modelled
 
 A road or railway formation is a **raised, graded bench**. Ground on both sides
 falls away from it, so the DEM cell under a chainage has essentially no
-upstream drainage at all — raw flow routing cannot see the water. Tracing
+upstream drainage at all raw flow routing cannot see the water. Tracing
 upstream from that cell returns a spurious pocket of a few cells, a metre or
 two of drop, and a stream that never touches the crossing.
 
 The engine therefore treats the crossing as the structure it is:
 
 - The formation is identified from the corridor geometry and **excluded from
-  runoff generation** — it is paved ballast and sheds no water.
+  runoff generation** - it is paved ballast and sheds no water.
 - It is **graded to drain towards the culvert**, exactly as a real formation is,
   which is what lets ground beside it reach the crossing. Grading only ever
   cuts the formation down; the natural ground outside is untouched.
 - The **culvert invert** is the lowest natural ground just beyond the toe of
-  the formation — the physical position of a culvert barrel. Using the crown of
+  the formation : the physical position of a culvert barrel. Using the crown of
   the embankment instead leaves the invert metres *above* the surrounding
   ground, so nothing can flow in.
 - The **pour point** is the toe cell beside the formation with the largest real
@@ -112,7 +112,7 @@ The engine therefore treats the crossing as the structure it is:
 Depressions are filled by priority-flood and flat areas are given an epsilon
 gradient measured from the outlets. Both are standard hydrological
 preprocessing: without the second, a metre-quantised DEM turns floodplain
-catchments into invisible regions. Neither affects a single reported number —
+catchments into invisible regions. Neither affects a single reported number
 every figure is read from the untouched natural DEM.
 4. **Target a station** by typing a chainage, or by typing a latitude and
    longitude directly in decimal degrees or DMS.
@@ -132,7 +132,7 @@ Open-Elevation). When a provider is unreachable, rate-limited, or has no data
 for a location, the sample is recorded as unavailable.
 
 - There is **no default or assumed baseline elevation**. If the DEM cannot be
-  sampled, the run fails and reports why — it does not substitute a number.
+  sampled, the run fails and reports why it does not substitute a number.
 - If DEM coverage of the analysis grid falls below 80%, the run is rejected as
   unreliable.
 - Reported figures are exactly what was measured. The elevation drop is *not*
@@ -143,7 +143,7 @@ for a location, the sample is recorded as unavailable.
 provider that actually answered, the DEM coverage of the analysis grid, the
 cell size, the number of contributing cells, and whether the level stream
 origin came from a survey sheet or from the DEM. Nothing claims to be
-"Google Earth verified" — this is not Google Earth, and the imagery is Esri
+"Google Earth verified", this is not Google Earth, and the imagery is Esri
 World Imagery with the attribution the basemap provider requires.
 
 **Scope is honoured.** The analysis grid is masked to the requested radius, so
@@ -168,7 +168,7 @@ synthetic terrain, including the reported failure reproduced in miniature: a
 road on an embankment with higher ground on one side only, where naive D8 from
 the crossing finds nothing. It asserts that stormwater **arrives at the
 crossing**, that the drawn stream **terminates on the chainage coordinate**,
-and that the drop reaches 5 m — in a plain-slope case and a DEM-plateau case.
+and that the drop reaches 5 m in a plain-slope case and a DEM-plateau case.
 
 It also asserts that the engine *refuses* to produce a catchment for an empty,
 too-sparse, or perfectly flat DEM.
@@ -177,7 +177,7 @@ too-sparse, or perfectly flat DEM.
 
 A cold DEM needs to be downloaded for the region. The scope ladder only widens
 when the terrain is too flat for the smaller scope, and DEM samples are cached
-per region, so this is a one-time cost — but on genuinely flat ground the 2 km
+per region, so this is a one-time cost but on genuinely flat ground the 2 km
 attempt is the expensive one, taking a minute or two. The UI reports progress
 and never blocks on a fabricated result.
 
@@ -206,6 +206,6 @@ scripts/                       Self-tests
 ## Demo data
 
 "Load Demo" inserts a short **synthetic** reference alignment so the app can be
-exercised without a file. It is demo input only — it carries no hydrology
+exercised without a file. It is demo input only, it carries no hydrology
 results. Every elevation and catchment figure still has to come from a real DEM
 run.
