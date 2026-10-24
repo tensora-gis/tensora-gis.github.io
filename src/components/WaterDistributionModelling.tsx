@@ -1,70 +1,536 @@
-import React from 'react';
-import { Network, Activity, Layers, Droplets } from 'lucide-react';
+/**
+ * Water Distribution Modelling Workspace (WaterGEMS on Real Ground Terrain)
+ *
+ * Provides a full-featured Bentley WaterGEMS-grade hydraulic network modeling
+ * environment running on real-world global Digital Elevation Models (DEMs).
+ *
+ * Capabilities:
+ * - Real terrain elevation auto-sampling via Copernicus GLO-30 / SRTM / Open-Meteo
+ * - Interactive CAD network modeling (Junctions, Pipes, Reservoirs, Tanks, Pumps, Valves)
+ * - EPANET-standard Global Gradient Algorithm (GGA) hydraulic simulation engine
+ * - WaterGEMS FlexTables tabular data editor with live inline modification & CSV export
+ * - Longitudinal Hydraulic Grade Line (HGL) terrain profile viewer
+ * - Thematic color-coding by Pressure (Nodes) and Velocity / Diameter / Flow (Pipes)
+ * - Two-way EPANET / WaterGEMS (.inp) file import & export
+ */
+
+import React, { useState, useCallback, useEffect } from 'react';
+import {
+  ActiveTool,
+  MapThematicDisplay,
+  NetworkElement,
+  SimulationSummary,
+  WaterDistributionNetwork,
+  WaterJunction,
+  WaterPipe,
+  WaterPump,
+  WaterReservoir,
+  WaterTank,
+} from '../types/waterDistribution';
+import { createHighlandMunicipalNetwork } from '../data/sampleWaterNetworks';
+import { simulateWaterNetwork } from '../utils/waterHydraulicsEngine';
+import {
+  sampleAllNetworkElevations,
+  sampleGroundElevation,
+  calculateGeodesicDistanceM,
+} from '../utils/waterTerrainService';
+import { exportToEpanetInp, parseEpanetInp } from '../utils/epanetParser';
+import { WaterToolbar } from './water/WaterToolbar';
+import { WaterMapViewport } from './water/WaterMapViewport';
+import { WaterPropertyInspector } from './water/WaterPropertyInspector';
+import { WaterFlexTables } from './water/WaterFlexTables';
+import { WaterProfileViewer } from './water/WaterProfileViewer';
+import { WaterSimulationResultsModal } from './water/WaterSimulationResultsModal';
 
 export const WaterDistributionModelling: React.FC = () => {
+  // Network Model State
+  const [network, setNetwork] = useState<WaterDistributionNetwork>(() =>
+    createHighlandMunicipalNetwork()
+  );
+
+  // Active Tool & Mode State
+  const [activeTool, setActiveTool] = useState<ActiveTool>('select');
+  const [thematicDisplay, setThematicDisplay] = useState<MapThematicDisplay>('pressure');
+  const [selectedElement, setSelectedElement] = useState<NetworkElement | null>(null);
+
+  // UI Panels State
+  const [isFlexTablesOpen, setIsFlexTablesOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
+
+  // Simulation State
+  const [simulationSummary, setSimulationSummary] = useState<SimulationSummary | null>(null);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [isSamplingElevation, setIsSamplingElevation] = useState(false);
+
+  // Profile Route Selection
+  const [profileRouteNodeIds, setProfileRouteNodeIds] = useState<string[]>([
+    'R-1',
+    'J-1',
+    'J-2',
+    'J-3',
+    'J-4',
+    'J-6',
+    'J-7',
+    'T-1',
+  ]);
+
+  // Run initial simulation on demo network mount
+  useEffect(() => {
+    try {
+      const { updatedNetwork, summary } = simulateWaterNetwork(network);
+      setNetwork(updatedNetwork);
+      setSimulationSummary(summary);
+    } catch (err) {
+      console.error('Initial water simulation error:', err);
+    }
+  }, []);
+
+  // Compute Hydraulics
+  const handleRunSimulation = useCallback(() => {
+    setIsSimulating(true);
+    try {
+      const { updatedNetwork, summary } = simulateWaterNetwork(network);
+      setNetwork(updatedNetwork);
+      setSimulationSummary(summary);
+      setIsSummaryModalOpen(true);
+    } catch (err) {
+      console.error('Hydraulic simulation error:', err);
+    } finally {
+      setIsSimulating(false);
+    }
+  }, [network]);
+
+  // Bulk DEM Elevation Sampling
+  const handleSampleAllElevations = useCallback(async () => {
+    setIsSamplingElevation(true);
+    try {
+      const res = await sampleAllNetworkElevations(network);
+      setNetwork(res.updatedNetwork);
+      // Auto re-run simulation with fresh real terrain elevations
+      const { updatedNetwork: simulated, summary } = simulateWaterNetwork(res.updatedNetwork);
+      setNetwork(simulated);
+      setSimulationSummary(summary);
+    } catch (err) {
+      console.error('DEM sampling error:', err);
+    } finally {
+      setIsSamplingElevation(false);
+    }
+  }, [network]);
+
+  // Element CRUD Operations
+  const handleAddJunction = useCallback(
+    async (lat: number, lng: number) => {
+      const newId = `J-${network.junctions.length + 1}`;
+      const newJunction: WaterJunction = {
+        id: newId,
+        label: `Junction ${newId}`,
+        type: 'junction',
+        lat,
+        lng,
+        elevation: 170.0,
+        baseDemand: 5.0,
+      };
+
+      // Add immediately with temporary elevation
+      const updated = {
+        ...network,
+        junctions: [...network.junctions, newJunction],
+      };
+      setNetwork(updated);
+      setSelectedElement(newJunction);
+
+      // Asynchronously fetch real ground elevation from DEM
+      try {
+        const elev = await sampleGroundElevation(lat, lng);
+        if (elev !== null) {
+          setNetwork((prev) => ({
+            ...prev,
+            junctions: prev.junctions.map((j) =>
+              j.id === newId ? { ...j, elevation: Math.round(elev * 10) / 10 } : j
+            ),
+          }));
+        }
+      } catch (err) {
+        console.error('Failed to sample elevation for new junction:', err);
+      }
+    },
+    [network]
+  );
+
+  const handleAddPipe = useCallback(
+    (startNodeId: string, endNodeId: string) => {
+      // Find start and end nodes to compute real geodesic ground distance
+      const allNodes = [
+        ...network.junctions,
+        ...network.reservoirs,
+        ...network.tanks,
+      ];
+      const start = allNodes.find((n) => n.id === startNodeId);
+      const end = allNodes.find((n) => n.id === endNodeId);
+
+      let length = 150;
+      if (start && end) {
+        length = calculateGeodesicDistanceM(start.lat, start.lng, end.lat, end.lng);
+      }
+
+      const newId = `P-${network.pipes.length + 1}`;
+      const newPipe: WaterPipe = {
+        id: newId,
+        label: `Pipe ${newId}`,
+        type: 'pipe',
+        startNodeId,
+        endNodeId,
+        length: Math.max(10, length),
+        diameter: 150,
+        roughness: 130,
+        minorLossCoeff: 0.2,
+        status: 'OPEN',
+      };
+
+      setNetwork((prev) => ({
+        ...prev,
+        pipes: [...prev.pipes, newPipe],
+      }));
+      setSelectedElement(newPipe);
+    },
+    [network]
+  );
+
+  const handleAddReservoir = useCallback(
+    async (lat: number, lng: number) => {
+      const newId = `R-${network.reservoirs.length + 1}`;
+      const newRes: WaterReservoir = {
+        id: newId,
+        label: `Reservoir ${newId}`,
+        type: 'reservoir',
+        lat,
+        lng,
+        elevation: 160.0,
+        totalHead: 175.0,
+      };
+
+      setNetwork((prev) => ({
+        ...prev,
+        reservoirs: [...prev.reservoirs, newRes],
+      }));
+      setSelectedElement(newRes);
+
+      try {
+        const elev = await sampleGroundElevation(lat, lng);
+        if (elev !== null) {
+          const rounded = Math.round(elev * 10) / 10;
+          setNetwork((prev) => ({
+            ...prev,
+            reservoirs: prev.reservoirs.map((r) =>
+              r.id === newId
+                ? { ...r, elevation: rounded, totalHead: Math.round((rounded + 15) * 10) / 10 }
+                : r
+            ),
+          }));
+        }
+      } catch (err) {
+        console.error('Error sampling reservoir elevation:', err);
+      }
+    },
+    [network]
+  );
+
+  const handleAddTank = useCallback(
+    async (lat: number, lng: number) => {
+      const newId = `T-${network.tanks.length + 1}`;
+      const newTank: WaterTank = {
+        id: newId,
+        label: `Tank ${newId}`,
+        type: 'tank',
+        lat,
+        lng,
+        elevation: 180.0,
+        initialLevel: 4.0,
+        minLevel: 1.0,
+        maxLevel: 6.0,
+        diameter: 10.0,
+      };
+
+      setNetwork((prev) => ({
+        ...prev,
+        tanks: [...prev.tanks, newTank],
+      }));
+      setSelectedElement(newTank);
+
+      try {
+        const elev = await sampleGroundElevation(lat, lng);
+        if (elev !== null) {
+          setNetwork((prev) => ({
+            ...prev,
+            tanks: prev.tanks.map((t) =>
+              t.id === newId ? { ...t, elevation: Math.round(elev * 10) / 10 } : t
+            ),
+          }));
+        }
+      } catch (err) {
+        console.error('Error sampling tank elevation:', err);
+      }
+    },
+    [network]
+  );
+
+  const handleAddPump = useCallback(
+    (startNodeId: string, endNodeId: string) => {
+      const newId = `PMP-${network.pumps.length + 1}`;
+      const newPump: WaterPump = {
+        id: newId,
+        label: `Booster Pump ${newId}`,
+        type: 'pump',
+        startNodeId,
+        endNodeId,
+        status: 'OPEN',
+        curveType: '1-POINT',
+        designFlow: 50.0,
+        designHead: 40.0,
+        shutoffHead: 53.0,
+        maxFlow: 100.0,
+        powerKw: 30.0,
+        speed: 1.0,
+      };
+
+      setNetwork((prev) => ({
+        ...prev,
+        pumps: [...prev.pumps, newPump],
+      }));
+      setSelectedElement(newPump);
+    },
+    [network]
+  );
+
+  const handleUpdateElement = useCallback((updated: NetworkElement) => {
+    setNetwork((prev) => {
+      if (updated.type === 'junction') {
+        return {
+          ...prev,
+          junctions: prev.junctions.map((j) => (j.id === updated.id ? (updated as WaterJunction) : j)),
+        };
+      }
+      if (updated.type === 'pipe') {
+        return {
+          ...prev,
+          pipes: prev.pipes.map((p) => (p.id === updated.id ? (updated as WaterPipe) : p)),
+        };
+      }
+      if (updated.type === 'pump') {
+        return {
+          ...prev,
+          pumps: prev.pumps.map((p) => (p.id === updated.id ? (updated as WaterPump) : p)),
+        };
+      }
+      if (updated.type === 'tank') {
+        return {
+          ...prev,
+          tanks: prev.tanks.map((t) => (t.id === updated.id ? (updated as WaterTank) : t)),
+        };
+      }
+      if (updated.type === 'reservoir') {
+        return {
+          ...prev,
+          reservoirs: prev.reservoirs.map((r) =>
+            r.id === updated.id ? (updated as WaterReservoir) : r
+          ),
+        };
+      }
+      return prev;
+    });
+    setSelectedElement(updated);
+  }, []);
+
+  const handleDeleteElement = useCallback(
+    (id: string, type: NetworkElement['type']) => {
+      setNetwork((prev) => {
+        if (type === 'junction') {
+          return {
+            ...prev,
+            junctions: prev.junctions.filter((j) => j.id !== id),
+            pipes: prev.pipes.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
+            pumps: prev.pumps.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
+          };
+        }
+        if (type === 'pipe') {
+          return { ...prev, pipes: prev.pipes.filter((p) => p.id !== id) };
+        }
+        if (type === 'pump') {
+          return { ...prev, pumps: prev.pumps.filter((p) => p.id !== id) };
+        }
+        if (type === 'tank') {
+          return {
+            ...prev,
+            tanks: prev.tanks.filter((t) => t.id !== id),
+            pipes: prev.pipes.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
+          };
+        }
+        if (type === 'reservoir') {
+          return {
+            ...prev,
+            reservoirs: prev.reservoirs.filter((r) => r.id !== id),
+            pipes: prev.pipes.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
+          };
+        }
+        return prev;
+      });
+
+      if (selectedElement?.id === id) {
+        setSelectedElement(null);
+      }
+    },
+    [selectedElement]
+  );
+
+  // EPANET / WaterGEMS INP Export
+  const handleExportInp = useCallback(() => {
+    const text = exportToEpanetInp(network);
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${network.name.replace(/\s+/g, '_')}.inp`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [network]);
+
+  // EPANET / WaterGEMS INP Import
+  const handleImportInp = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      e.target.value = '';
+
+      try {
+        const text = await file.text();
+        const parsed = parseEpanetInp(text, file.name);
+        setNetwork(parsed);
+        // Automatically compute simulation on imported model
+        const { updatedNetwork, summary } = simulateWaterNetwork(parsed);
+        setNetwork(updatedNetwork);
+        setSimulationSummary(summary);
+      } catch (err) {
+        console.error('Error importing INP file:', err);
+      }
+    },
+    []
+  );
+
+  // Load Demo Model
+  const handleLoadDemo = useCallback(() => {
+    const demo = createHighlandMunicipalNetwork();
+    const { updatedNetwork, summary } = simulateWaterNetwork(demo);
+    setNetwork(updatedNetwork);
+    setSimulationSummary(summary);
+    setProfileRouteNodeIds(['R-1', 'J-1', 'J-2', 'J-3', 'J-4', 'J-6', 'J-7', 'T-1']);
+  }, []);
+
+  // Clear Network
+  const handleClear = useCallback(() => {
+    setNetwork({
+      name: 'Empty Distribution Network',
+      units: 'SI',
+      headlossFormula: 'H-W',
+      junctions: [],
+      reservoirs: [],
+      tanks: [],
+      pipes: [],
+      pumps: [],
+      valves: [],
+    });
+    setSelectedElement(null);
+    setSimulationSummary(null);
+  }, []);
+
+  const elementCounts = {
+    junctions: network.junctions.length,
+    pipes: network.pipes.length,
+    tanks: network.tanks.length,
+    reservoirs: network.reservoirs.length,
+    pumps: network.pumps.length,
+  };
+
   return (
-    <div className="flex-1 h-full flex flex-col bg-[#0a0a0a] text-[#e5e7eb] overflow-hidden select-none">
-      {/* Module Top Bar */}
-      <div className="h-11 px-4 md:px-6 border-b border-[#222] bg-[#111]/40 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded bg-[#171717] border border-[#222] flex items-center justify-center text-amber-500">
-            <Network className="w-3 h-3 stroke-[2]" />
-          </div>
-          <span className="text-xs font-bold text-white font-tech uppercase tracking-wider">
-            Water Distribution Modelling
-          </span>
-          <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-[#171717] border border-[#222] text-amber-400">
-            Empty for now
-          </span>
-        </div>
+    <div className="flex-1 h-full flex flex-col bg-[#0a0a0a] text-[#e5e7eb] overflow-hidden select-none relative">
+      {/* 1. WaterGEMS CAD Toolbar */}
+      <WaterToolbar
+        activeTool={activeTool}
+        onSelectTool={setActiveTool}
+        thematicDisplay={thematicDisplay}
+        onSelectThematic={setThematicDisplay}
+        onRunSimulation={handleRunSimulation}
+        onSampleElevations={handleSampleAllElevations}
+        onToggleFlexTables={() => setIsFlexTablesOpen((prev) => !prev)}
+        onToggleProfile={() => setIsProfileOpen((prev) => !prev)}
+        onExportInp={handleExportInp}
+        onImportInp={handleImportInp}
+        onLoadDemo={handleLoadDemo}
+        onClear={handleClear}
+        simulationSummary={simulationSummary}
+        isSimulating={isSimulating}
+        isSamplingElevation={isSamplingElevation}
+        isFlexTablesOpen={isFlexTablesOpen}
+        isProfileOpen={isProfileOpen}
+        elementCounts={elementCounts}
+      />
 
-        <div className="hidden sm:flex items-center gap-3 text-xs text-[#737373] font-mono">
-          <span className="flex items-center gap-1.5">
-            <Activity className="w-3.5 h-3.5 text-[#525252]" />
-            <span>Hydraulic Engine: Standby</span>
-          </span>
-          <span className="text-[#333]">/</span>
-          <span className="flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-[#525252]" />
-            <span>Networks: 0 loaded</span>
-          </span>
-        </div>
-      </div>
-
-      {/* Main Workspace Area: Empty Canvas */}
-      <div className="flex-1 relative flex items-center justify-center p-6 bg-[#0a0a0a] overflow-auto">
-        {/* Subtle engineering grid background */}
-        <div
-          className="absolute inset-0 pointer-events-none opacity-25"
-          style={{
-            backgroundImage: `radial-gradient(#262626 1px, transparent 1px)`,
-            backgroundSize: '24px 24px',
+      {/* 2. Middle Main Area: Map Viewport + Property Inspector */}
+      <div className="flex-1 flex overflow-hidden relative">
+        <WaterMapViewport
+          network={network}
+          activeTool={activeTool}
+          thematicDisplay={thematicDisplay}
+          selectedElement={selectedElement}
+          onSelectElement={setSelectedElement}
+          onAddJunction={handleAddJunction}
+          onAddPipe={handleAddPipe}
+          onAddReservoir={handleAddReservoir}
+          onAddTank={handleAddTank}
+          onAddPump={handleAddPump}
+          onDeleteElement={handleDeleteElement}
+          onProfileRouteSelected={(nodes) => {
+            setProfileRouteNodeIds(nodes);
+            setIsProfileOpen(true);
           }}
         />
 
-        {/* Empty State Presentation Card */}
-        <div className="relative z-10 max-w-md w-full bg-[#111]/80 backdrop-blur border border-[#222] rounded-xl p-8 text-center shadow-2xl flex flex-col items-center">
-          <div className="w-16 h-16 rounded-2xl bg-[#171717] border border-[#262626] flex items-center justify-center text-amber-400 mb-4 shadow-inner">
-            <Network className="w-8 h-8 stroke-[1.75]" />
-          </div>
-
-          <h2 className="text-lg font-bold text-white font-tech mb-1">
-            Water Distribution Modelling
-          </h2>
-          <p className="text-xs font-mono text-amber-500/90 mb-4">
-            Workspace is empty for now
-          </p>
-
-          <p className="text-xs text-[#888] leading-relaxed mb-6 font-sans">
-            This module is reserved for water distribution network analysis, pipe network delineation, junction node pressure modeling, and EPANET hydraulic simulations.
-          </p>
-
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#171717] border border-[#222] text-[11px] font-mono text-[#a3a3a3]">
-            <Droplets className="w-3.5 h-3.5 text-amber-500" />
-            <span>Ready for distribution network design</span>
-          </div>
-        </div>
+        {selectedElement && (
+          <WaterPropertyInspector
+            element={selectedElement}
+            onClose={() => setSelectedElement(null)}
+            onUpdateElement={handleUpdateElement}
+            onDeleteElement={handleDeleteElement}
+          />
+        )}
       </div>
+
+      {/* 3. Bottom Panels: FlexTables & Profile Viewer */}
+      {isFlexTablesOpen && (
+        <WaterFlexTables
+          network={network}
+          onUpdateElement={handleUpdateElement}
+          onSelectElement={setSelectedElement}
+          onDeleteElement={handleDeleteElement}
+          onClose={() => setIsFlexTablesOpen(false)}
+        />
+      )}
+
+      {isProfileOpen && (
+        <WaterProfileViewer
+          network={network}
+          selectedRouteNodeIds={profileRouteNodeIds}
+          onClose={() => setIsProfileOpen(false)}
+        />
+      )}
+
+      {/* 4. Calculation Results Summary Modal */}
+      {isSummaryModalOpen && (
+        <WaterSimulationResultsModal
+          summary={simulationSummary}
+          onClose={() => setIsSummaryModalOpen(false)}
+        />
+      )}
     </div>
   );
 };
