@@ -3,6 +3,7 @@ import { ActiveModuleTab } from '../types/navigation';
 import {
   CloudRain,
   Network,
+  Waves,
   PanelLeftClose,
   PanelLeftOpen,
   X,
@@ -36,6 +37,11 @@ export const LeftMenu: React.FC<LeftMenuProps> = ({
       id: 'water-distribution' as const,
       name: 'Water Distribution Modelling',
       icon: Network,
+    },
+    {
+      id: 'wastewater' as const,
+      name: 'Wastewater Modelling',
+      icon: Waves,
     },
   ];
 

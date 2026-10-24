@@ -1,5 +1,5 @@
 import React from 'react';
-import { Compass, LogOut, Trash2, FileSpreadsheet, Menu, CloudRain, Network } from 'lucide-react';
+import { Compass, LogOut, Trash2, FileSpreadsheet, Menu, CloudRain, Network, Waves } from 'lucide-react';
 import { AppUser } from '../auth/useGoogleAuth';
 import { ActiveModuleTab } from '../types/navigation';
 
@@ -103,6 +103,23 @@ export const Header: React.FC<HeaderProps> = ({
             />
             <span className="font-tech text-[11px] sm:text-xs">Water Distribution Modelling</span>
           </button>
+
+          <button
+            onClick={() => onSelectTab('wastewater')}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
+              activeTab === 'wastewater'
+                ? 'bg-[#1e1e1e] text-white border border-amber-500/40 shadow-xs font-semibold'
+                : 'text-[#737373] hover:text-[#d1d5db] hover:bg-[#161616]'
+            }`}
+            title="Wastewater Modelling"
+          >
+            <Waves
+              className={`w-3.5 h-3.5 ${
+                activeTab === 'wastewater' ? 'text-amber-400' : 'text-[#737373]'
+              }`}
+            />
+            <span className="font-tech text-[11px] sm:text-xs">Wastewater Modelling</span>
+          </button>
         </nav>
       </div>
 
@@ -131,6 +148,14 @@ export const Header: React.FC<HeaderProps> = ({
       {activeTab === 'water-distribution' && (
         <div className="hidden xl:flex items-center gap-2 text-xs text-[#737373] font-mono">
           <span>Hazen-Williams (SI)</span>
+          <span className="text-[#333]">/</span>
+          <span className="text-[#10b981]">Terrain-Referenced DEM</span>
+        </div>
+      )}
+
+      {activeTab === 'wastewater' && (
+        <div className="hidden xl:flex items-center gap-2 text-xs text-[#737373] font-mono">
+          <span>Manning Gravity Flow (SI)</span>
           <span className="text-[#333]">/</span>
           <span className="text-[#10b981]">Terrain-Referenced DEM</span>
         </div>

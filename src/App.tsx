@@ -15,6 +15,7 @@ import { ChainageRegisterModal } from './components/ChainageRegisterModal';
 import { ActiveModuleTab } from './types/navigation';
 import { LeftMenu } from './components/LeftMenu';
 import { WaterDistributionModelling } from './components/WaterDistributionModelling';
+import { WastewaterModelling } from './components/WastewaterModelling';
 
 /** Clicks within this distance of the centreline snap to the nearest station. */
 const SNAP_TO_CORRIDOR_M = 50;
@@ -327,9 +328,14 @@ export default function App({
           </div>
         </main>
 
-        {/* Water Distribution Modelling Workspace (empty for now) */}
+        {/* Water Distribution Modelling Workspace */}
         {activeTab === 'water-distribution' && (
           <WaterDistributionModelling />
+        )}
+
+        {/* Wastewater Modelling Workspace */}
+        {activeTab === 'wastewater' && (
+          <WastewaterModelling />
         )}
       </div>
 
