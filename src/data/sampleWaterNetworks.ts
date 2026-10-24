@@ -1,5 +1,5 @@
 /**
- * Standard WaterGEMS Demonstration Networks on Real Terrain
+ * Standard Demonstration Water Distribution Networks on Real Terrain
  *
  * Pre-configured real-world municipal water distribution systems situated on
  * real terrain topography with verified DEM elevations.

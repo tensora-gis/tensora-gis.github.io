@@ -1,5 +1,5 @@
 /**
- * WaterGEMS / EPANET Water Distribution Modeling Types
+ * Water Distribution Network & Hydraulic Modeling Types
  *
  * Implements standard hydraulic network elements, physical properties,
  * simulation parameters, and real terrain DEM elevation references.

@@ -102,7 +102,7 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 text-white font-tech text-xs uppercase font-bold">
             <TrendingUp className="w-4 h-4 text-amber-500" />
-            <span>WaterGEMS Longitudinal Hydraulic Profile</span>
+            <span>Longitudinal Hydraulic Grade Line Profile</span>
           </div>
           <button onClick={onClose} className="p-1 text-[#737373] hover:text-white">
             <X className="w-4 h-4" />
@@ -152,7 +152,7 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-white font-tech text-xs uppercase font-bold">
             <TrendingUp className="w-4 h-4 text-amber-500" />
-            <span>WaterGEMS Longitudinal Hydraulic Profile</span>
+            <span>Longitudinal Hydraulic Grade Line Profile</span>
           </div>
 
           <div className="hidden sm:flex items-center gap-4 text-xs font-mono">

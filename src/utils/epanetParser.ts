@@ -1,7 +1,7 @@
 /**
  * EPANET .INP File Parser & Exporter
  *
- * Implements full two-way compatibility with EPANET 2.2 and Bentley WaterGEMS INP format.
+ * Implements full two-way compatibility with standard EPANET 2.2 INP format.
  */
 
 import {
@@ -20,7 +20,7 @@ export function exportToEpanetInp(network: WaterDistributionNetwork): string {
   const lines: string[] = [];
 
   lines.push('[TITLE]');
-  lines.push(`Tensora GIS WaterGEMS Model - ${network.name}`);
+  lines.push(`Tensora GIS Water Distribution Model - ${network.name}`);
   lines.push(`Terrain-Referenced Hydraulic Distribution System`);
   lines.push('');
 

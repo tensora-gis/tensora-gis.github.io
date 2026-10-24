@@ -53,7 +53,7 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `WaterGEMS_${activeTab}_FlexTable.csv`;
+    a.download = `HydraulicNetwork_${activeTab}_FlexTable.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -65,7 +65,7 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-white font-tech text-xs uppercase font-bold">
             <Table className="w-4 h-4 text-amber-500" />
-            <span>WaterGEMS FlexTables</span>
+            <span>Hydraulic FlexTables</span>
           </div>
 
           {/* Table Tab Switcher */}

@@ -153,7 +153,7 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
         </div>
       </div>
 
-      {/* 3. WaterGEMS Workspace Tools: Calculation Export, FlexTables, Profile, EPANET Import/Export */}
+      {/* 3. Hydraulic Workspace Tools: Calculation Export, FlexTables, Profile, EPANET Import/Export */}
       <div className="flex items-center gap-1.5">
         {/* Direct Calculation Excel Export */}
         <button
@@ -173,7 +173,7 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
               ? 'bg-amber-500/20 border-amber-500 text-amber-400 font-bold'
               : 'bg-[#171717] hover:bg-[#202020] border-[#262626] text-[#999] hover:text-white'
           }`}
-          title="Open WaterGEMS FlexTables"
+          title="Open Hydraulic FlexTables"
         >
           <Table className="w-3.5 h-3.5" />
           <span className="hidden md:inline font-tech text-[11px]">FlexTables</span>
@@ -192,20 +192,20 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
           <span className="hidden md:inline font-tech text-[11px]">HGL Profile</span>
         </button>
 
-        {/* EPANET / WaterGEMS Export */}
+        {/* EPANET Export */}
         <button
           onClick={onExportInp}
           className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[#171717] hover:bg-[#202020] border border-[#262626] text-[#999] hover:text-white text-xs transition-colors cursor-pointer"
-          title="Export EPANET / WaterGEMS .INP model"
+          title="Export EPANET .INP model"
         >
           <Download className="w-3.5 h-3.5 text-amber-400" />
           <span className="hidden lg:inline text-[10px] font-mono">.INP</span>
         </button>
 
-        {/* EPANET / WaterGEMS Import */}
+        {/* EPANET Import */}
         <label
           className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[#171717] hover:bg-[#202020] border border-[#262626] text-[#999] hover:text-white text-xs transition-colors cursor-pointer"
-          title="Import EPANET / WaterGEMS .INP model"
+          title="Import EPANET .INP model"
         >
           <Upload className="w-3.5 h-3.5 text-amber-400" />
           <span className="hidden lg:inline text-[10px] font-mono">Import</span>

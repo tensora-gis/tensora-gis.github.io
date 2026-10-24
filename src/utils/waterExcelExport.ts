@@ -1,5 +1,5 @@
 /**
- * WaterGEMS Comprehensive Hydraulic Calculation Excel Exporter
+ * Comprehensive Water Distribution Hydraulic Calculation Excel Exporter
  *
  * Generates an engineering-grade, multi-worksheet calculation workbook (.xlsx)
  * documenting network topology, nodal mass balance, pipe friction hydraulics,
@@ -23,7 +23,7 @@ export async function generateWaterHydraulicExcel(
 ): Promise<Blob> {
   const { default: ExcelJS } = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'Tensora GIS - WaterGEMS Hydraulic Engine';
+  workbook.creator = 'Tensora GIS - Water Distribution Hydraulic Engine';
   workbook.lastModifiedBy = 'Tensora GIS';
   workbook.created = new Date();
   workbook.modified = new Date();
@@ -434,7 +434,7 @@ export async function downloadWaterHydraulicExcel(
   const blob = await generateWaterHydraulicExcel(network, summary);
   const cleanName = network.name.replace(/[^a-zA-Z0-9_-]/g, '_');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const filename = `WaterGEMS_Calculation_Report_${cleanName}_${timestamp}.xlsx`;
+  const filename = `Hydraulic_Calculation_Report_${cleanName}_${timestamp}.xlsx`;
 
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

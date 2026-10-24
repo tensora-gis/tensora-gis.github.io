@@ -1,17 +1,17 @@
 /**
- * Water Distribution Modelling Workspace (WaterGEMS on Real Ground Terrain)
+ * Water Distribution Modelling Workspace (Real Ground Terrain Hydraulics)
  *
- * Provides a full-featured Bentley WaterGEMS-grade hydraulic network modeling
- * environment running on real-world global Digital Elevation Models (DEMs).
+ * Provides a professional hydraulic network modeling environment
+ * running on real-world global Digital Elevation Models (DEMs).
  *
  * Capabilities:
  * - Real terrain elevation auto-sampling via Copernicus GLO-30 / SRTM / Open-Meteo
  * - Interactive CAD network modeling (Junctions, Pipes, Reservoirs, Tanks, Pumps, Valves)
  * - EPANET-standard Global Gradient Algorithm (GGA) hydraulic simulation engine
- * - WaterGEMS FlexTables tabular data editor with live inline modification & CSV export
+ * - Hydraulic FlexTables tabular data editor with live inline modification & CSV export
  * - Longitudinal Hydraulic Grade Line (HGL) terrain profile viewer
  * - Thematic color-coding by Pressure (Nodes) and Velocity / Diameter / Flow (Pipes)
- * - Two-way EPANET / WaterGEMS (.inp) file import & export
+ * - Two-way EPANET standard (.inp) file import & export
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -392,7 +392,7 @@ export const WaterDistributionModelling: React.FC = () => {
     [selectedElement]
   );
 
-  // EPANET / WaterGEMS INP Export
+  // EPANET INP Export
   const handleExportInp = useCallback(() => {
     const text = exportToEpanetInp(network);
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
@@ -404,7 +404,7 @@ export const WaterDistributionModelling: React.FC = () => {
     URL.revokeObjectURL(url);
   }, [network]);
 
-  // EPANET / WaterGEMS INP Import
+  // EPANET INP Import
   const handleImportInp = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
@@ -462,7 +462,7 @@ export const WaterDistributionModelling: React.FC = () => {
 
   return (
     <div className="flex-1 h-full flex flex-col bg-[#0a0a0a] text-[#e5e7eb] overflow-hidden select-none relative">
-      {/* 1. WaterGEMS CAD Toolbar */}
+      {/* 1. Network CAD Toolbar */}
       <WaterToolbar
         activeTool={activeTool}
         onSelectTool={setActiveTool}

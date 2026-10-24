@@ -35,7 +35,7 @@ export const WaterSimulationResultsModal: React.FC<WaterSimulationResultsModalPr
           <div className="flex items-center gap-2">
             <Activity className="w-4 h-4 text-emerald-400" />
             <span className="text-sm font-bold text-white font-tech uppercase tracking-wider">
-              WaterGEMS Hydraulic Calculation Summary
+              Hydraulic Network Calculation Summary
             </span>
           </div>
           <button
