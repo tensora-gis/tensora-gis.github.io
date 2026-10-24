@@ -295,8 +295,6 @@ export default function App({
           onToggleOpen={() => setIsLeftMenuOpen((prev) => !prev)}
           isMobileDrawerOpen={isMobileMenuOpen}
           onCloseMobile={() => setIsMobileMenuOpen(false)}
-          stormwaterStationCount={alignment ? alignment.chainages.length : 0}
-          hasStormwaterData={!!alignment}
         />
 
         {/* Stormwater Modelling Workspace (everything moved under Stormwater modelling) */}

@@ -60,11 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
               Tensora <span className="text-amber-500 text-xs font-mono font-medium">GIS</span>
             </span>
             <span className="text-[10px] text-[#737373] font-mono truncate max-w-[140px] md:max-w-xs">
-              {activeTab === 'stormwater'
-                ? hasData
-                  ? corridorName
-                  : 'Ready for KML/KMZ'
-                : 'Distribution Module'}
+              {activeTab === 'stormwater' && hasData ? corridorName : 'Hydrological & Hydraulic Simulation'}
             </span>
           </div>
         </div>
@@ -134,8 +130,9 @@ export const Header: React.FC<HeaderProps> = ({
 
       {activeTab === 'water-distribution' && (
         <div className="hidden xl:flex items-center gap-2 text-xs text-[#737373] font-mono">
-          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
-          <span>Water Distribution Modelling: Workspace empty</span>
+          <span>Hazen-Williams (SI)</span>
+          <span className="text-[#333]">/</span>
+          <span className="text-[#10b981]">Terrain-Referenced DEM</span>
         </div>
       )}
 

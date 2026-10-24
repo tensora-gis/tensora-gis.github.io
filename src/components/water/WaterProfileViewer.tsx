@@ -110,7 +110,7 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
         </div>
         <div className="flex-1 flex flex-col items-center justify-center text-center">
           <p className="text-xs text-[#888] mb-1 font-mono">
-            Select 2 or more connected nodes using the 🏔️ Profile Tool on the toolbar to plot the terrain and hydraulic grade line profile.
+            Select 2 or more connected nodes using the Profile Route tool on the toolbar to plot the terrain and hydraulic grade line profile.
           </p>
         </div>
       </div>

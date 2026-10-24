@@ -35,6 +35,7 @@ import {
   calculateGeodesicDistanceM,
 } from '../utils/waterTerrainService';
 import { exportToEpanetInp, parseEpanetInp } from '../utils/epanetParser';
+import { downloadWaterHydraulicExcel } from '../utils/waterExcelExport';
 import { WaterToolbar } from './water/WaterToolbar';
 import { WaterMapViewport } from './water/WaterMapViewport';
 import { WaterPropertyInspector } from './water/WaterPropertyInspector';
@@ -86,20 +87,28 @@ export const WaterDistributionModelling: React.FC = () => {
     }
   }, []);
 
-  // Compute Hydraulics
-  const handleRunSimulation = useCallback(() => {
+  // Compute Hydraulics & Automatically Export Detailed Calculation (.xlsx)
+  const handleRunSimulation = useCallback(async () => {
     setIsSimulating(true);
     try {
       const { updatedNetwork, summary } = simulateWaterNetwork(network);
       setNetwork(updatedNetwork);
       setSimulationSummary(summary);
       setIsSummaryModalOpen(true);
+
+      // Automatically export every calculation result to detailed Excel workbook
+      await downloadWaterHydraulicExcel(updatedNetwork, summary);
     } catch (err) {
       console.error('Hydraulic simulation error:', err);
     } finally {
       setIsSimulating(false);
     }
   }, [network]);
+
+  const handleExportExcel = useCallback(async () => {
+    if (!simulationSummary) return;
+    await downloadWaterHydraulicExcel(network, simulationSummary);
+  }, [network, simulationSummary]);
 
   // Bulk DEM Elevation Sampling
   const handleSampleAllElevations = useCallback(async () => {
@@ -429,7 +438,7 @@ export const WaterDistributionModelling: React.FC = () => {
   // Clear Network
   const handleClear = useCallback(() => {
     setNetwork({
-      name: 'Empty Distribution Network',
+      name: 'New Distribution Network',
       units: 'SI',
       headlossFormula: 'H-W',
       junctions: [],
@@ -463,6 +472,7 @@ export const WaterDistributionModelling: React.FC = () => {
         onSampleElevations={handleSampleAllElevations}
         onToggleFlexTables={() => setIsFlexTablesOpen((prev) => !prev)}
         onToggleProfile={() => setIsProfileOpen((prev) => !prev)}
+        onExportExcel={handleExportExcel}
         onExportInp={handleExportInp}
         onImportInp={handleImportInp}
         onLoadDemo={handleLoadDemo}
@@ -512,6 +522,7 @@ export const WaterDistributionModelling: React.FC = () => {
           onUpdateElement={handleUpdateElement}
           onSelectElement={setSelectedElement}
           onDeleteElement={handleDeleteElement}
+          onExportExcel={handleExportExcel}
           onClose={() => setIsFlexTablesOpen(false)}
         />
       )}
@@ -529,6 +540,7 @@ export const WaterDistributionModelling: React.FC = () => {
         <WaterSimulationResultsModal
           summary={simulationSummary}
           onClose={() => setIsSummaryModalOpen(false)}
+          onExportExcel={handleExportExcel}
         />
       )}
     </div>

@@ -6,19 +6,21 @@ import {
 } from '../../types/waterDistribution';
 import {
   MousePointer,
-  Plus,
+  CircleDot,
+  GitCommit,
+  Waves,
+  Database,
+  Zap,
+  Trash2,
+  TrendingUp,
   Play,
-  RotateCcw,
+  Mountain,
+  Layers,
+  Table,
+  FileSpreadsheet,
   Download,
   Upload,
-  Table,
-  TrendingUp,
-  Mountain,
-  CheckCircle2,
-  AlertTriangle,
-  Layers,
-  Sparkles,
-  Trash2,
+  FolderOpen,
 } from 'lucide-react';
 
 interface WaterToolbarProps {
@@ -30,6 +32,7 @@ interface WaterToolbarProps {
   onSampleElevations: () => void;
   onToggleFlexTables: () => void;
   onToggleProfile: () => void;
+  onExportExcel: () => void;
   onExportInp: () => void;
   onImportInp: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onLoadDemo: () => void;
@@ -57,6 +60,7 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
   onSampleElevations,
   onToggleFlexTables,
   onToggleProfile,
+  onExportExcel,
   onExportInp,
   onImportInp,
   onLoadDemo,
@@ -68,36 +72,41 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
   isProfileOpen,
   elementCounts,
 }) => {
-  const tools: { id: ActiveTool; label: string; icon: string }[] = [
-    { id: 'select', label: 'Select & Move', icon: '👆' },
-    { id: 'add-junction', label: 'Junction', icon: '📍' },
-    { id: 'add-pipe', label: 'Pipe', icon: '〰️' },
-    { id: 'add-reservoir', label: 'Reservoir', icon: '⛲' },
-    { id: 'add-tank', label: 'Tank', icon: '🛢️' },
-    { id: 'add-pump', label: 'Pump', icon: '⚡' },
-    { id: 'delete', label: 'Delete', icon: '✂️' },
-    { id: 'profile-select', label: 'HGL Profile', icon: '🏔️' },
+  const tools: { id: ActiveTool; label: string; icon: React.FC<{ className?: string }> }[] = [
+    { id: 'select', label: 'Select / Move', icon: MousePointer },
+    { id: 'add-junction', label: 'Junction', icon: CircleDot },
+    { id: 'add-pipe', label: 'Pipe', icon: GitCommit },
+    { id: 'add-reservoir', label: 'Reservoir', icon: Waves },
+    { id: 'add-tank', label: 'Tank', icon: Database },
+    { id: 'add-pump', label: 'Pump', icon: Zap },
+    { id: 'delete', label: 'Delete', icon: Trash2 },
+    { id: 'profile-select', label: 'Profile Route', icon: TrendingUp },
   ];
 
   return (
     <div className="bg-[#111] border-b border-[#222] px-3 py-2 flex flex-wrap items-center justify-between gap-2 z-20 select-none">
       {/* 1. CAD / Modelling Tool Palette */}
       <div className="flex items-center gap-1 bg-[#0a0a0a] p-1 rounded-lg border border-[#222]">
-        {tools.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => onSelectTool(t.id)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all cursor-pointer ${
-              activeTool === t.id
-                ? 'bg-amber-500 text-[#0a0a0a] font-bold shadow-xs'
-                : 'text-[#888] hover:text-white hover:bg-[#1c1c1c]'
-            }`}
-            title={t.label}
-          >
-            <span>{t.icon}</span>
-            <span className="hidden xl:inline font-tech text-[11px]">{t.label}</span>
-          </button>
-        ))}
+        {tools.map((t) => {
+          const Icon = t.icon;
+          const isActive = activeTool === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => onSelectTool(t.id)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all cursor-pointer ${
+                isActive
+                  ? 'bg-amber-500 text-[#0a0a0a] font-bold shadow-xs'
+                  : 'text-[#888] hover:text-white hover:bg-[#1a1a1a]'
+              }`}
+              title={t.label}
+              aria-label={t.label}
+            >
+              <Icon className="w-3.5 h-3.5 shrink-0" />
+              <span className="hidden xl:inline font-tech text-[11px]">{t.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* 2. Simulation & Analysis Trigger */}
@@ -106,7 +115,7 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
           onClick={onRunSimulation}
           disabled={isSimulating || (elementCounts.junctions === 0 && elementCounts.pipes === 0)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md disabled:opacity-50 transition-all cursor-pointer"
-          title="Compute hydraulic pressures, flows, and headlosses"
+          title="Compute hydraulics and export calculations to Excel (.xlsx)"
         >
           <Play className="w-3.5 h-3.5 fill-current" />
           <span>{isSimulating ? 'Computing...' : 'Compute Hydraulics'}</span>
@@ -117,24 +126,24 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
           onClick={onSampleElevations}
           disabled={isSamplingElevation}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-amber-400 hover:text-amber-300 font-medium text-xs transition-colors cursor-pointer"
-          title="Sample real ground elevation from global DEM for all nodes"
+          title="Sample real ground elevation from global DEM for all network nodes"
         >
           <Mountain className="w-3.5 h-3.5" />
           <span className="hidden lg:inline text-[11px] font-tech">
-            {isSamplingElevation ? 'Sampling DEM...' : 'Sample DEM Elev.'}
+            {isSamplingElevation ? 'Sampling DEM...' : 'Sample DEM Elevations'}
           </span>
         </button>
 
         {/* Thematic Visualization Mode */}
         <div className="flex items-center gap-1 bg-[#0a0a0a] px-2 py-1 rounded-lg border border-[#222] text-xs">
-          <Layers className="w-3 h-3 text-[#737373]" />
-          <span className="text-[10px] text-[#737373] uppercase font-tech mr-1">Render:</span>
+          <Layers className="w-3.5 h-3.5 text-[#737373]" />
+          <span className="text-[10px] text-[#737373] uppercase font-tech mr-1">Thematic:</span>
           <select
             value={thematicDisplay}
             onChange={(e) => onSelectThematic(e.target.value as MapThematicDisplay)}
             className="bg-transparent text-white text-[11px] font-mono focus:outline-none cursor-pointer"
           >
-            <option value="none" className="bg-[#111]">Standard GIS</option>
+            <option value="none" className="bg-[#111]">Standard</option>
             <option value="pressure" className="bg-[#111]">Pressure (Nodes)</option>
             <option value="velocity" className="bg-[#111]">Velocity (Pipes)</option>
             <option value="flow" className="bg-[#111]">Flow (Pipes)</option>
@@ -144,8 +153,19 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
         </div>
       </div>
 
-      {/* 3. WaterGEMS Workspace Tools: FlexTables, Profile, Import/Export */}
+      {/* 3. WaterGEMS Workspace Tools: Calculation Export, FlexTables, Profile, EPANET Import/Export */}
       <div className="flex items-center gap-1.5">
+        {/* Direct Calculation Excel Export */}
+        <button
+          onClick={onExportExcel}
+          disabled={!simulationSummary}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-emerald-400 hover:text-emerald-300 font-medium text-xs transition-colors cursor-pointer disabled:opacity-40"
+          title="Export detailed calculation sheet to Microsoft Excel (.xlsx)"
+        >
+          <FileSpreadsheet className="w-3.5 h-3.5" />
+          <span className="font-tech text-[11px]">Export Calculation (.xlsx)</span>
+        </button>
+
         <button
           onClick={onToggleFlexTables}
           className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer ${
@@ -153,7 +173,7 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
               ? 'bg-amber-500/20 border-amber-500 text-amber-400 font-bold'
               : 'bg-[#171717] hover:bg-[#202020] border-[#262626] text-[#999] hover:text-white'
           }`}
-          title="Open WaterGEMS FlexTables (tabular element editor)"
+          title="Open WaterGEMS FlexTables"
         >
           <Table className="w-3.5 h-3.5" />
           <span className="hidden md:inline font-tech text-[11px]">FlexTables</span>
@@ -176,7 +196,7 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
         <button
           onClick={onExportInp}
           className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[#171717] hover:bg-[#202020] border border-[#262626] text-[#999] hover:text-white text-xs transition-colors cursor-pointer"
-          title="Export model as EPANET / WaterGEMS .INP file"
+          title="Export EPANET / WaterGEMS .INP model"
         >
           <Download className="w-3.5 h-3.5 text-amber-400" />
           <span className="hidden lg:inline text-[10px] font-mono">.INP</span>
@@ -185,7 +205,7 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
         {/* EPANET / WaterGEMS Import */}
         <label
           className="flex items-center gap-1 px-2 py-1.5 rounded-lg bg-[#171717] hover:bg-[#202020] border border-[#262626] text-[#999] hover:text-white text-xs transition-colors cursor-pointer"
-          title="Import EPANET / WaterGEMS .INP file"
+          title="Import EPANET / WaterGEMS .INP model"
         >
           <Upload className="w-3.5 h-3.5 text-amber-400" />
           <span className="hidden lg:inline text-[10px] font-mono">Import</span>
@@ -197,21 +217,21 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
           />
         </label>
 
-        {/* Demo Network */}
+        {/* Reference Demo Network */}
         <button
           onClick={onLoadDemo}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-semibold transition-colors cursor-pointer"
-          title="Load Highland Municipal Demo Network on real DEM"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-[#aaa] hover:text-white text-xs transition-colors cursor-pointer"
+          title="Load Highland Municipal Network model on real terrain"
         >
-          <Sparkles className="w-3.5 h-3.5" />
-          <span className="text-[11px] font-tech">Demo Model</span>
+          <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+          <span className="text-[11px] font-tech">Sample Network</span>
         </button>
 
         {/* Clear */}
         <button
           onClick={onClear}
           className="p-1.5 rounded-lg hover:bg-red-500/10 border border-transparent hover:border-red-500/30 text-[#737373] hover:text-red-400 transition-colors cursor-pointer"
-          title="Clear water distribution network"
+          title="Clear current model"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>

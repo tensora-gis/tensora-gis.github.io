@@ -326,9 +326,8 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
             background: #171717; border: 2px solid ${isSelected ? '#fbbf24' : '#f59e0b'};
             display: flex; align-items: center; justify-content: center;
             box-shadow: 0 2px 6px rgba(0,0,0,0.7); cursor: pointer; color: #f59e0b;
-            font-size: 12px; font-weight: bold;
           ">
-            ⚡
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           </div>
         `,
         iconSize: [26, 26],
@@ -363,17 +362,16 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         className: 'reservoir-marker',
         html: `
           <div style="
-            width: 32px; height: 32px; border-radius: 6px;
-            background: #0284c7; border: 2.5px solid ${isSelected || isPending ? '#fbbf24' : '#38bdf8'};
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            box-shadow: 0 3px 10px rgba(2,132,199,0.5); cursor: pointer; color: white;
-            font-size: 14px;
+            width: 28px; height: 28px; border-radius: 4px;
+            background: #0369a1; border: 2px solid ${isSelected || isPending ? '#fbbf24' : '#38bdf8'};
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.6); cursor: pointer; color: white;
           ">
-            ⛲
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12c2-2 4-2 6 0s4 2 6 0 4-2 6 0M2 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>
           </div>
         `,
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
       });
 
       const marker = L.marker([r.lat, r.lng], { icon: reservoirIcon }).addTo(nodesLayer);
@@ -402,17 +400,16 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         className: 'tank-marker',
         html: `
           <div style="
-            width: 30px; height: 30px; border-radius: 50%;
-            background: #0d9488; border: 2.5px solid ${isSelected || isPending ? '#fbbf24' : '#2dd4bf'};
+            width: 28px; height: 28px; border-radius: 50%;
+            background: #0f766e; border: 2px solid ${isSelected || isPending ? '#fbbf24' : '#2dd4bf'};
             display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 3px 10px rgba(13,148,136,0.5); cursor: pointer; color: white;
-            font-size: 13px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.6); cursor: pointer; color: white;
           ">
-            🛢️
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
           </div>
         `,
-        iconSize: [30, 30],
-        iconAnchor: [15, 15],
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
       });
 
       const marker = L.marker([t.lat, t.lng], { icon: tankIcon }).addTo(nodesLayer);
@@ -519,8 +516,8 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
 
       {/* Mode / Pending Action Overlay Banner */}
       {pendingStartNode && (
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-[#171717]/95 border border-amber-500 px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 text-xs font-mono text-white backdrop-blur">
-          <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-[#171717] border border-amber-500/60 px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-mono text-white backdrop-blur">
+          <span className="w-2 h-2 rounded-full bg-amber-400" />
           <span>
             Connecting from <strong>{pendingStartNode}</strong>: click target node to finish
           </span>

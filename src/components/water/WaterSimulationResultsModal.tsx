@@ -9,16 +9,19 @@ import {
   Gauge,
   Droplets,
   TrendingDown,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 interface WaterSimulationResultsModalProps {
   summary: SimulationSummary | null;
   onClose: () => void;
+  onExportExcel?: () => void;
 }
 
 export const WaterSimulationResultsModal: React.FC<WaterSimulationResultsModalProps> = ({
   summary,
   onClose,
+  onExportExcel,
 }) => {
   if (!summary) return null;
 
@@ -156,12 +159,21 @@ export const WaterSimulationResultsModal: React.FC<WaterSimulationResultsModalPr
         </div>
 
         {/* Modal Footer */}
-        <div className="p-3 border-t border-[#222] bg-[#141414] flex justify-end">
+        <div className="p-3 border-t border-[#222] bg-[#141414] flex items-center justify-between">
+          {onExportExcel ? (
+            <button
+              onClick={onExportExcel}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-emerald-400 hover:text-emerald-300 text-xs font-semibold transition-colors cursor-pointer"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              <span>Download Calculation (.xlsx)</span>
+            </button>
+          ) : <div />}
           <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-[#0a0a0a] font-bold text-xs transition-colors cursor-pointer"
           >
-            Close Summary
+            Close
           </button>
         </div>
       </div>

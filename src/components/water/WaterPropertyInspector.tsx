@@ -17,6 +17,11 @@ import {
   Sliders,
   CheckCircle2,
   AlertTriangle,
+  CircleDot,
+  GitCommit,
+  Waves,
+  Database,
+  Zap,
 } from 'lucide-react';
 
 interface WaterPropertyInspectorProps {
@@ -48,17 +53,13 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
       {/* Header */}
       <div className="p-3 border-b border-[#222] flex items-center justify-between bg-[#141414]">
         <div className="flex items-center gap-2">
-          <span className="text-base">
-            {element.type === 'junction'
-              ? '📍'
-              : element.type === 'pipe'
-              ? '〰️'
-              : element.type === 'reservoir'
-              ? '⛲'
-              : element.type === 'tank'
-              ? '🛢️'
-              : '⚡'}
-          </span>
+          <div className="w-6 h-6 rounded bg-[#1c1c1c] border border-[#262626] flex items-center justify-center text-amber-500">
+            {element.type === 'junction' && <CircleDot className="w-3.5 h-3.5" />}
+            {element.type === 'pipe' && <GitCommit className="w-3.5 h-3.5" />}
+            {element.type === 'reservoir' && <Waves className="w-3.5 h-3.5" />}
+            {element.type === 'tank' && <Database className="w-3.5 h-3.5" />}
+            {element.type === 'pump' && <Zap className="w-3.5 h-3.5" />}
+          </div>
           <div className="flex flex-col">
             <span className="text-xs font-bold text-white font-tech uppercase tracking-wider">
               {element.type} Properties

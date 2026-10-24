@@ -8,7 +8,7 @@ import {
   WaterReservoir,
   WaterTank,
 } from '../../types/waterDistribution';
-import { X, Table, Search, Download, Trash2 } from 'lucide-react';
+import { X, Table, Search, Download, Trash2, FileSpreadsheet } from 'lucide-react';
 
 interface WaterFlexTablesProps {
   network: WaterDistributionNetwork;
@@ -16,6 +16,7 @@ interface WaterFlexTablesProps {
   onSelectElement: (elem: NetworkElement) => void;
   onDeleteElement: (id: string, type: NetworkElement['type']) => void;
   onClose: () => void;
+  onExportExcel?: () => void;
 }
 
 type ActiveTableTab = 'junctions' | 'pipes' | 'pumps' | 'sources';
@@ -26,6 +27,7 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
   onSelectElement,
   onDeleteElement,
   onClose,
+  onExportExcel,
 }) => {
   const [activeTab, setActiveTab] = useState<ActiveTableTab>('junctions');
   const [filterText, setFilterText] = useState('');
@@ -103,6 +105,17 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
               className="bg-[#0a0a0a] border border-[#222] rounded pl-8 pr-2 py-1 text-xs text-white placeholder:text-[#555] font-mono focus:outline-none focus:border-amber-500 w-36"
             />
           </div>
+
+          {onExportExcel && (
+            <button
+              onClick={onExportExcel}
+              className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#1c1c1c] hover:bg-[#252525] border border-[#333] text-xs text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer"
+              title="Export complete calculation workbook (.xlsx)"
+            >
+              <FileSpreadsheet className="w-3 h-3" />
+              <span className="font-tech text-[10px]">Excel (.xlsx)</span>
+            </button>
+          )}
 
           <button
             onClick={handleExportCsv}
