@@ -272,7 +272,6 @@ export default function App({
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#0a0a0a] text-[#e5e7eb]">
       <Header
         activeTab={activeTab}
-        onSelectTab={setActiveTab}
         onToggleMenu={() => {
           setIsLeftMenuOpen((prev) => !prev);
           setIsMobileMenuOpen((prev) => !prev);
