@@ -13,19 +13,16 @@ import {
   WastewaterOutfall,
 } from '../../types/wastewater';
 import { calculateWastewaterDistanceM } from '../../utils/wastewaterTerrainService';
-import { Crosshair, Info, X } from 'lucide-react';
+import { Crosshair } from 'lucide-react';
 
 interface WastewaterMapViewportProps {
   network: WastewaterNetwork;
   activeTool: ActiveWastewaterTool;
   thematicDisplay: WastewaterThematicDisplay;
   selectedElement: WastewaterNetworkElement | null;
-  onSelectTool: (tool: ActiveWastewaterTool) => void;
   onSelectElement: (elem: WastewaterNetworkElement | null) => void;
-  onAddManhole: (lat: number, lng: number) => Promise<string>;
-  onAddConduit: (startNodeId: string, endNodeId: string) => string | null;
-  onAddManholeAndConnect: (fromNodeId: string, lat: number, lng: number) => Promise<string>;
-  onMoveNode: (id: string, lat: number, lng: number) => void;
+  onAddManhole: (lat: number, lng: number) => void;
+  onAddConduit: (startNodeId: string, endNodeId: string) => void;
   onAddWetWell: (lat: number, lng: number) => void;
   onAddPump: (startNodeId: string, endNodeId: string) => void;
   onAddForceMain: (startNodeId: string, endNodeId: string) => void;
@@ -39,12 +36,9 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
   activeTool,
   thematicDisplay,
   selectedElement,
-  onSelectTool,
   onSelectElement,
   onAddManhole,
   onAddConduit,
-  onAddManholeAndConnect,
-  onMoveNode,
   onAddWetWell,
   onAddPump,
   onAddForceMain,
@@ -59,84 +53,12 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
   const forceMainsLayerRef = useRef<L.LayerGroup | null>(null);
   const nodesLayerRef = useRef<L.LayerGroup | null>(null);
   const arrowsLayerRef = useRef<L.LayerGroup | null>(null);
-  const rubberbandLayerRef = useRef<L.LayerGroup | null>(null);
 
+  // Connection state for two-click tools (Conduit, Pump, Force Main, Profile)
   const [pendingStartNode, setPendingStartNode] = useState<string | null>(null);
-  const [rubberbandDistM, setRubberbandDistM] = useState<number | null>(null);
-  const [routeNodes, setRouteNodes] = useState<string[]>([]);
   const [mouseCoords, setMouseCoords] = useState<{ lat: number; lng: number } | null>(null);
 
-  // Keep latest props in a mutable ref to eliminate any stale closures in Leaflet events
-  const propsRef = useRef({
-    network,
-    activeTool,
-    thematicDisplay,
-    selectedElement,
-    pendingStartNode,
-    onSelectTool,
-    onSelectElement,
-    onAddManhole,
-    onAddConduit,
-    onAddManholeAndConnect,
-    onMoveNode,
-    onAddWetWell,
-    onAddPump,
-    onAddForceMain,
-    onAddOutfall,
-    onDeleteElement,
-    onProfileRouteSelected,
-  });
-
-  useEffect(() => {
-    propsRef.current = {
-      network,
-      activeTool,
-      thematicDisplay,
-      selectedElement,
-      pendingStartNode,
-      onSelectTool,
-      onSelectElement,
-      onAddManhole,
-      onAddConduit,
-      onAddManholeAndConnect,
-      onMoveNode,
-      onAddWetWell,
-      onAddPump,
-      onAddForceMain,
-      onAddOutfall,
-      onDeleteElement,
-      onProfileRouteSelected,
-    };
-  });
-
-  // Reset pending start node when active tool changes
-  useEffect(() => {
-    setPendingStartNode(null);
-    setRubberbandDistM(null);
-    if (rubberbandLayerRef.current) {
-      rubberbandLayerRef.current.clearLayers();
-    }
-  }, [activeTool]);
-
-  // Global ESC key to cancel active drafting or connection
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setPendingStartNode(null);
-        setRubberbandDistM(null);
-        if (rubberbandLayerRef.current) {
-          rubberbandLayerRef.current.clearLayers();
-        }
-        if (activeTool !== 'select') {
-          onSelectTool('select');
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTool, onSelectTool]);
-
-  // ResizeObserver for clean map sizing
+  // ResizeObserver to ensure Leaflet handles container resizing
   useEffect(() => {
     if (!mapContainerRef.current) return;
     const observer = new ResizeObserver(() => {
@@ -146,7 +68,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  // Initialize Leaflet map
+  // Initialize Map
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
 
@@ -157,7 +79,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
       attributionControl: true,
     });
 
-    // High-resolution satellite imagery
+    // Base Imagery: Esri World Imagery (Satellite)
     L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       { maxZoom: 19, maxNativeZoom: 18, crossOrigin: 'anonymous' }
@@ -175,83 +97,10 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     conduitsLayerRef.current = L.layerGroup().addTo(map);
     forceMainsLayerRef.current = L.layerGroup().addTo(map);
     arrowsLayerRef.current = L.layerGroup().addTo(map);
-    rubberbandLayerRef.current = L.layerGroup().addTo(map);
     nodesLayerRef.current = L.layerGroup().addTo(map);
 
-    // Live mouse move handler with rubberband preview
-    map.on('mousemove', (e: L.LeafletMouseEvent) => {
+    map.on('mousemove', (e) => {
       setMouseCoords({ lat: e.latlng.lat, lng: e.latlng.lng });
-
-      const { pendingStartNode: curPending, network: curNet } = propsRef.current;
-      const rubberLayer = rubberbandLayerRef.current;
-
-      if (curPending && rubberLayer) {
-        rubberLayer.clearLayers();
-        const allNodes = [...curNet.manholes, ...curNet.wetWells, ...curNet.outfalls];
-        const startNode = allNodes.find((n) => n.id === curPending);
-        if (startNode) {
-          const dist = calculateWastewaterDistanceM(startNode.lat, startNode.lng, e.latlng.lat, e.latlng.lng);
-          setRubberbandDistM(Math.round(dist * 10) / 10);
-
-          L.polyline(
-            [
-              [startNode.lat, startNode.lng],
-              [e.latlng.lat, e.latlng.lng],
-            ],
-            {
-              color: '#f59e0b',
-              weight: 2.5,
-              dashArray: '6, 6',
-              opacity: 0.85,
-            }
-          ).addTo(rubberLayer);
-        }
-      } else if (rubberLayer) {
-        rubberLayer.clearLayers();
-        setRubberbandDistM(null);
-      }
-    });
-
-    map.on('mouseout', () => {
-      if (rubberbandLayerRef.current) {
-        rubberbandLayerRef.current.clearLayers();
-      }
-      setRubberbandDistM(null);
-    });
-
-    // Map click listener reading propsRef directly - guaranteed no stale closures
-    map.on('click', async (e: L.LeafletMouseEvent) => {
-      const {
-        activeTool: currentTool,
-        pendingStartNode: currentPending,
-        onAddManhole: addMh,
-        onAddWetWell: addWw,
-        onAddOutfall: addOut,
-        onAddManholeAndConnect: addMhAndConnect,
-        onSelectElement: selectElem,
-      } = propsRef.current;
-
-      const { lat, lng } = e.latlng;
-
-      if (currentTool === 'add-manhole') {
-        await addMh(lat, lng);
-      } else if (currentTool === 'add-wetwell') {
-        addWw(lat, lng);
-      } else if (currentTool === 'add-outfall') {
-        addOut(lat, lng);
-      } else if (currentTool === 'add-conduit') {
-        if (!currentPending) {
-          // If no start node yet, clicking on terrain creates the first manhole and sets it as start
-          const newId = await addMh(lat, lng);
-          setPendingStartNode(newId);
-        } else {
-          // Continuous drafting: creates next manhole and connects conduit from previous node
-          const newId = await addMhAndConnect(currentPending, lat, lng);
-          setPendingStartNode(newId);
-        }
-      } else if (currentTool === 'select') {
-        selectElem(null);
-      }
     });
 
     mapInstanceRef.current = map;
@@ -262,31 +111,118 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     };
   }, []);
 
-  // Fit bounds to entire network
-  const handleFitBounds = useCallback(() => {
-    if (!mapInstanceRef.current) return;
-    const allCoords: [number, number][] = [
-      ...network.manholes.map((m) => [m.lat, m.lng] as [number, number]),
-      ...network.wetWells.map((w) => [w.lat, w.lng] as [number, number]),
-      ...network.outfalls.map((o) => [o.lat, o.lng] as [number, number]),
-    ];
-    if (allCoords.length > 0) {
-      const bounds = L.latLngBounds(allCoords);
-      mapInstanceRef.current.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
-    }
-  }, [network]);
-
-  // Redraw all nodes, gravity conduits, force mains and arrows
+  // Map Click Handler for Adding Ground Elements
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
+    const handleMapClick = (e: L.LeafletMouseEvent) => {
+      const { lat, lng } = e.latlng;
+
+      if (activeTool === 'add-manhole') {
+        onAddManhole(lat, lng);
+      } else if (activeTool === 'add-wetwell') {
+        onAddWetWell(lat, lng);
+      } else if (activeTool === 'add-outfall') {
+        onAddOutfall(lat, lng);
+      } else if (activeTool === 'select') {
+        onSelectElement(null);
+      }
+    };
+
+    map.on('click', handleMapClick);
+    return () => {
+      map.off('click', handleMapClick);
+    };
+  }, [activeTool, onAddManhole, onAddWetWell, onAddOutfall, onSelectElement]);
+
+  // Handle Node Clicks (connecting conduits, selecting, deleting)
+  const handleNodeClick = useCallback(
+    (nodeId: string, nodeType: WastewaterNetworkElement['type']) => {
+      if (activeTool === 'delete') {
+        onDeleteElement(nodeId, nodeType);
+        return;
+      }
+
+      if (activeTool === 'add-conduit') {
+        if (!pendingStartNode) {
+          setPendingStartNode(nodeId);
+        } else if (pendingStartNode !== nodeId) {
+          onAddConduit(pendingStartNode, nodeId);
+          setPendingStartNode(null);
+        }
+        return;
+      }
+
+      if (activeTool === 'add-pump') {
+        if (!pendingStartNode) {
+          setPendingStartNode(nodeId);
+        } else if (pendingStartNode !== nodeId) {
+          onAddPump(pendingStartNode, nodeId);
+          setPendingStartNode(null);
+        }
+        return;
+      }
+
+      if (activeTool === 'add-forcemain') {
+        if (!pendingStartNode) {
+          setPendingStartNode(nodeId);
+        } else if (pendingStartNode !== nodeId) {
+          onAddForceMain(pendingStartNode, nodeId);
+          setPendingStartNode(null);
+        }
+        return;
+      }
+
+      if (activeTool === 'profile-select') {
+        if (!pendingStartNode) {
+          setPendingStartNode(nodeId);
+        } else if (pendingStartNode !== nodeId) {
+          onProfileRouteSelected([pendingStartNode, nodeId]);
+          setPendingStartNode(null);
+        }
+        return;
+      }
+
+      // Default: Select Element
+      const m = network.manholes.find((item) => item.id === nodeId);
+      if (m) {
+        onSelectElement(m);
+        return;
+      }
+      const w = network.wetWells.find((item) => item.id === nodeId);
+      if (w) {
+        onSelectElement(w);
+        return;
+      }
+      const o = network.outfalls.find((item) => item.id === nodeId);
+      if (o) {
+        onSelectElement(o);
+        return;
+      }
+    },
+    [
+      activeTool,
+      pendingStartNode,
+      network,
+      onAddConduit,
+      onAddPump,
+      onAddForceMain,
+      onDeleteElement,
+      onProfileRouteSelected,
+      onSelectElement,
+    ]
+  );
+
+  // Render Network on Map
+  useEffect(() => {
+    const map = mapInstanceRef.current;
     const conduitsLayer = conduitsLayerRef.current;
     const forceMainsLayer = forceMainsLayerRef.current;
-    const arrowsLayer = arrowsLayerRef.current;
     const nodesLayer = nodesLayerRef.current;
+    const arrowsLayer = arrowsLayerRef.current;
 
-    if (!conduitsLayer || !forceMainsLayer || !arrowsLayer || !nodesLayer) return;
+    if (!map || !conduitsLayer || !forceMainsLayer || !nodesLayer || !arrowsLayer) return;
 
     conduitsLayer.clearLayers();
     forceMainsLayer.clearLayers();
@@ -294,34 +230,33 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     nodesLayer.clearLayers();
 
     // Map of all node coordinates
-    const nodeCoords = new Map<string, { lat: number; lng: number }>();
-    network.manholes.forEach((m) => nodeCoords.set(m.id, { lat: m.lat, lng: m.lng }));
-    network.wetWells.forEach((w) => nodeCoords.set(w.id, { lat: w.lat, lng: w.lng }));
-    network.outfalls.forEach((o) => nodeCoords.set(o.id, { lat: o.lat, lng: o.lng }));
+    const nodeCoords = new Map<string, [number, number]>();
+    network.manholes.forEach((m) => nodeCoords.set(m.id, [m.lat, m.lng]));
+    network.wetWells.forEach((w) => nodeCoords.set(w.id, [w.lat, w.lng]));
+    network.outfalls.forEach((o) => nodeCoords.set(o.id, [o.lat, o.lng]));
 
-    // 1. Render Gravity Conduits
+    // 1. Draw Gravity Conduits
     network.conduits.forEach((c) => {
-      const start = nodeCoords.get(c.startNodeId);
-      const end = nodeCoords.get(c.endNodeId);
-      if (!start || !end) return;
+      const c1 = nodeCoords.get(c.startNodeId);
+      const c2 = nodeCoords.get(c.endNodeId);
+      if (!c1 || !c2) return;
 
       const isSelected = selectedElement?.id === c.id;
 
-      // Color coding based on thematic mode
-      let color = '#38bdf8'; // Default cyan
+      let color = '#38bdf8';
       let weight = Math.max(3, Math.min(8, (c.diameterMm || 250) / 70));
 
       if (thematicDisplay === 'capacity') {
         const ratio = c.flowDepthRatio ?? 0;
-        if (ratio > 1.0) color = '#ef4444'; // Red (surcharged)
-        else if (ratio > 0.75) color = '#f59e0b'; // Amber (high fullness)
-        else if (ratio > 0.5) color = '#84cc16'; // Lime
-        else color = '#10b981'; // Green
+        if (ratio > 1.0) color = '#ef4444';
+        else if (ratio > 0.75) color = '#f59e0b';
+        else if (ratio > 0.5) color = '#84cc16';
+        else color = '#10b981';
       } else if (thematicDisplay === 'velocity') {
         const v = c.actualVelocityMs ?? 0;
-        if (v < 0.6 && (c.designFlowLs || 0) > 0.5) color = '#f59e0b'; // Sub-cleansing (amber)
-        else if (v > 3.0) color = '#ef4444'; // Scour risk (red)
-        else color = '#10b981'; // Optimal (green)
+        if (v < 0.6 && (c.designFlowLs || 0) > 0.5) color = '#f59e0b';
+        else if (v > 3.0) color = '#ef4444';
+        else color = '#10b981';
       } else if (thematicDisplay === 'slope') {
         if (c.isReverseSlope) color = '#ef4444';
         else if (c.slopeMPerM < 0.002) color = '#f59e0b';
@@ -330,50 +265,43 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         color = c.isSurcharged ? '#ef4444' : '#10b981';
       }
 
-      const polyline = L.polyline(
-        [
-          [start.lat, start.lng],
-          [end.lat, end.lng],
-        ],
-        {
-          color: isSelected ? '#fbbf24' : color,
-          weight: isSelected ? weight + 3 : weight,
-          opacity: 0.95,
-          lineCap: 'round',
-        }
-      );
+      if (isSelected) {
+        color = '#fbbf24';
+        weight = Math.max(weight + 2, 5);
+      }
+
+      const polyline = L.polyline([c1, c2], {
+        color,
+        weight,
+        opacity: 0.95,
+        lineCap: 'round',
+      }).addTo(conduitsLayer);
 
       polyline.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
-        const curTool = propsRef.current.activeTool;
-        if (curTool === 'delete') {
-          propsRef.current.onDeleteElement(c.id, 'conduit');
+        if (activeTool === 'delete') {
+          onDeleteElement(c.id, 'conduit');
         } else {
-          propsRef.current.onSelectElement(c);
+          onSelectElement(c);
         }
       });
 
-      const tooltipContent = `
-        <div style="font-family: monospace; font-size: 11px; padding: 2px;">
-          <strong style="color: #f59e0b;">${c.id} (${c.label})</strong><br/>
-          From: <strong>${c.startNodeId}</strong> → To: <strong>${c.endNodeId}</strong><br/>
+      polyline.bindTooltip(
+        `<div style="font-family: monospace; font-size: 11px;">
+          <strong>${c.label || c.id}</strong><br/>
           Diameter: <strong>${c.diameterMm} mm</strong> (${c.material})<br/>
           Length: ${c.lengthM.toFixed(1)} m | Slope: ${(c.slopeMPerM * 100).toFixed(3)}%<br/>
-          Design Flow Q: <strong>${c.designFlowLs?.toFixed(2) ?? '0.00'} L/s</strong><br/>
-          Velocity: <strong>${c.actualVelocityMs?.toFixed(2) ?? '0.00'} m/s</strong><br/>
-          Fullness d/D: <strong>${c.flowDepthRatio?.toFixed(2) ?? '0.00'}</strong> ${
-            (c.flowDepthRatio ?? 0) > 1.0 ? '<span style="color:#ef4444;font-weight:bold;">(SURCHARGED)</span>' : ''
-          }
-        </div>
-      `;
-      polyline.bindTooltip(tooltipContent, { sticky: true });
-      polyline.addTo(conduitsLayer);
+          ${c.designFlowLs !== undefined ? `Flow Q: <strong>${c.designFlowLs.toFixed(2)} L/s</strong><br/>` : ''}
+          ${c.actualVelocityMs !== undefined ? `Velocity: <strong>${c.actualVelocityMs.toFixed(2)} m/s</strong><br/>` : ''}
+          ${c.flowDepthRatio !== undefined ? `Fullness d/D: <strong>${c.flowDepthRatio.toFixed(2)}</strong>` : ''}
+        </div>`,
+        { sticky: true }
+      );
 
       // Flow direction arrow in middle of conduit
-      const midLat = (start.lat + end.lat) / 2;
-      const midLng = (start.lng + end.lng) / 2;
-      const angle =
-        (Math.atan2(end.lat - start.lat, end.lng - start.lng) * 180) / Math.PI;
+      const midLat = (c1[0] + c2[0]) / 2;
+      const midLng = (c1[1] + c2[1]) / 2;
+      const angle = (Math.atan2(c2[0] - c1[0], c2[1] - c1[1]) * 180) / Math.PI;
 
       const arrowIcon = L.divIcon({
         className: 'custom-flow-arrow',
@@ -391,408 +319,328 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
       L.marker([midLat, midLng], { icon: arrowIcon, interactive: false }).addTo(arrowsLayer);
     });
 
-    // 2. Render Force Mains
+    // 2. Draw Force Mains
     network.forceMains.forEach((fm) => {
-      const start = nodeCoords.get(fm.startNodeId);
-      const end = nodeCoords.get(fm.endNodeId);
-      if (!start || !end) return;
+      const c1 = nodeCoords.get(fm.startNodeId);
+      const c2 = nodeCoords.get(fm.endNodeId);
+      if (!c1 || !c2) return;
 
       const isSelected = selectedElement?.id === fm.id;
-      const polyline = L.polyline(
-        [
-          [start.lat, start.lng],
-          [end.lat, end.lng],
-        ],
-        {
-          color: isSelected ? '#fbbf24' : '#a855f7', // Purple for force main
-          weight: isSelected ? 6 : 4,
-          dashArray: '6, 6',
-          opacity: 0.95,
-        }
-      );
+      const polyline = L.polyline([c1, c2], {
+        color: isSelected ? '#fbbf24' : '#a855f7',
+        weight: isSelected ? 6 : 4,
+        dashArray: '6, 6',
+        opacity: 0.95,
+      }).addTo(forceMainsLayer);
 
       polyline.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
-        const curTool = propsRef.current.activeTool;
-        if (curTool === 'delete') {
-          propsRef.current.onDeleteElement(fm.id, 'force-main');
+        if (activeTool === 'delete') {
+          onDeleteElement(fm.id, 'force-main');
         } else {
-          propsRef.current.onSelectElement(fm);
+          onSelectElement(fm);
         }
       });
 
       polyline.bindTooltip(
-        `<div style="font-family:monospace;font-size:11px;">
-          <strong style="color:#a855f7;">${fm.id} (${fm.label})</strong><br/>
-          From: <strong>${fm.startNodeId}</strong> → To: <strong>${fm.endNodeId}</strong><br/>
+        `<div style="font-family: monospace; font-size: 11px;">
+          <strong>Force Main: ${fm.label || fm.id}</strong><br/>
           Diameter: ${fm.diameterMm} mm (${fm.material})<br/>
           Length: ${fm.lengthM.toFixed(1)} m<br/>
-          Velocity: ${fm.velocityMs?.toFixed(2) ?? '0.00'} m/s<br/>
-          Friction Loss: ${fm.frictionHeadlossM?.toFixed(2) ?? '0.00'} m
+          ${fm.velocityMs !== undefined ? `Velocity: <strong>${fm.velocityMs.toFixed(2)} m/s</strong>` : ''}
         </div>`,
         { sticky: true }
       );
-      polyline.addTo(forceMainsLayer);
     });
 
-    // 3. Common Node Click Handler
-    const handleNodeClick = (nodeId: string, elem: WastewaterNetworkElement) => {
-      const {
-        activeTool: curTool,
-        pendingStartNode: curPending,
-        onDeleteElement: delElem,
-        onAddConduit: addCon,
-        onAddPump: addPmp,
-        onAddForceMain: addFm,
-        onProfileRouteSelected: profileSelected,
-        onSelectElement: selectElem,
-      } = propsRef.current;
+    // 3. Draw Pumps
+    network.pumps.forEach((pmp) => {
+      const c1 = nodeCoords.get(pmp.startNodeId);
+      const c2 = nodeCoords.get(pmp.endNodeId);
+      if (!c1 || !c2) return;
 
-      if (curTool === 'delete') {
-        delElem(nodeId, elem.type);
-        return;
-      }
+      const midLat = (c1[0] + c2[0]) / 2;
+      const midLng = (c1[1] + c2[1]) / 2;
+      const isSelected = selectedElement?.id === pmp.id;
 
-      if (curTool === 'add-conduit') {
-        if (!curPending) {
-          setPendingStartNode(nodeId);
-        } else if (curPending !== nodeId) {
-          addCon(curPending, nodeId);
-          // Keep chaining for continuous sewer line drafting
-          setPendingStartNode(nodeId);
-        }
-        return;
-      }
+      L.polyline([c1, c2], {
+        color: '#f59e0b',
+        weight: 4,
+        dashArray: '2, 4',
+      }).addTo(conduitsLayer);
 
-      if (curTool === 'add-pump') {
-        if (!curPending) {
-          setPendingStartNode(nodeId);
-        } else if (curPending !== nodeId) {
-          addPmp(curPending, nodeId);
-          setPendingStartNode(null);
-        }
-        return;
-      }
-
-      if (curTool === 'add-forcemain') {
-        if (!curPending) {
-          setPendingStartNode(nodeId);
-        } else if (curPending !== nodeId) {
-          addFm(curPending, nodeId);
-          setPendingStartNode(null);
-        }
-        return;
-      }
-
-      if (curTool === 'profile-select') {
-        setRouteNodes((prev) => {
-          const next = prev.includes(nodeId) ? prev : [...prev, nodeId];
-          if (next.length >= 2) {
-            profileSelected(next);
-          }
-          return next;
-        });
-        return;
-      }
-
-      if (curTool === 'select') {
-        selectElem(elem);
-      }
-    };
-
-    // 4. Render Manholes
-    network.manholes.forEach((m) => {
-      const isSelected = selectedElement?.id === m.id;
-      const isPending = pendingStartNode === m.id;
-      const isInRoute = routeNodes.includes(m.id);
-      const isFlooding = m.isFlooding || false;
-      const isSurcharged = m.isSurcharged || false;
-
-      let markerBg = '#f59e0b'; // Amber
-      if (isFlooding) markerBg = '#ef4444';
-      else if (isSurcharged) markerBg = '#f97316';
-      else if (thematicDisplay === 'depth') {
-        markerBg = m.depth > 5.0 ? '#8b5cf6' : m.depth > 3.0 ? '#3b82f6' : '#10b981';
-      }
-
-      const icon = L.divIcon({
-        className: 'custom-manhole-marker',
+      const pumpIcon = L.divIcon({
+        className: 'pump-marker-icon',
         html: `
           <div style="
-            width: ${isSelected || isPending ? '24px' : '18px'};
-            height: ${isSelected || isPending ? '24px' : '18px'};
-            border-radius: 50%;
-            background: ${markerBg};
-            border: 2px solid ${isSelected ? '#ffffff' : isPending ? '#38bdf8' : '#171717'};
-            box-shadow: 0 0 ${isSelected || isPending ? '12px #38bdf8' : '4px rgba(0,0,0,0.8)'};
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #0a0a0a;
-            font-weight: bold;
-            font-size: 9px;
-            font-family: monospace;
-            cursor: ${activeTool === 'select' ? 'grab' : 'pointer'};
-            transition: transform 0.15s ease;
+            width: 26px; height: 26px; border-radius: 50%;
+            background: #171717; border: 2px solid ${isSelected ? '#fbbf24' : '#f59e0b'};
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.7); cursor: pointer; color: #f59e0b;
           ">
-            ${isInRoute ? '★' : ''}
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
           </div>
         `,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11],
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
       });
 
-      const marker = L.marker([m.lat, m.lng], {
-        icon,
-        draggable: activeTool === 'select',
-      });
-
-      marker.on('click', (e) => {
+      const pumpMarker = L.marker([midLat, midLng], { icon: pumpIcon }).addTo(nodesLayer);
+      pumpMarker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
-        handleNodeClick(m.id, m);
+        if (activeTool === 'delete') onDeleteElement(pmp.id, 'pump');
+        else onSelectElement(pmp);
       });
 
-      // Drag to relocate manhole on terrain
-      marker.on('dragend', (e) => {
-        const pos = e.target.getLatLng();
-        propsRef.current.onMoveNode(m.id, pos.lat, pos.lng);
-      });
-
-      marker.bindTooltip(
-        `<div style="font-family:monospace;font-size:11px;">
-          <strong style="color:#f59e0b;">${m.id} (${m.label})</strong><br/>
-          Rim Elev (DEM): <strong>${m.rimElevation.toFixed(2)} m MSL</strong><br/>
-          Invert Elev: <strong>${m.invertElevation.toFixed(2)} m MSL</strong><br/>
-          Chamber Depth: <strong>${m.depth.toFixed(2)} m</strong><br/>
-          Contributing Pop: ${m.population.toLocaleString()} Capita<br/>
-          Peak Sanitary Flow: <strong>${m.peakSanitaryFlowLs?.toFixed(2) ?? '0.00'} L/s</strong><br/>
-          HGL Water Elev: <strong>${m.waterElevationM?.toFixed(2) ?? m.invertElevation.toFixed(2)} m</strong>
-          ${isFlooding ? '<br/><strong style="color:#ef4444;">SURFACE FLOODING RISK</strong>' : ''}
-          ${isSurcharged && !isFlooding ? '<br/><strong style="color:#f97316;">SURCHARGED</strong>' : ''}
+      pumpMarker.bindTooltip(
+        `<div style="font-family: monospace; font-size: 11px;">
+          <strong>Pump: ${pmp.label || pmp.id}</strong><br/>
+          Rated Flow: <strong>${pmp.ratedDischargeLs} L/s</strong><br/>
+          Dynamic Head: <strong>${pmp.dynamicHeadM} m</strong><br/>
+          Power: ${pmp.powerKw ?? 0} kW
         </div>`,
         { sticky: true }
       );
-      marker.addTo(nodesLayer);
     });
 
-    // 5. Render Wet Wells
+    // 4. Draw Wet Wells
     network.wetWells.forEach((w) => {
       const isSelected = selectedElement?.id === w.id;
       const isPending = pendingStartNode === w.id;
 
-      const icon = L.divIcon({
-        className: 'custom-wetwell-marker',
+      const wetWellIcon = L.divIcon({
+        className: 'wetwell-marker',
         html: `
           <div style="
-            width: ${isSelected || isPending ? '26px' : '20px'};
-            height: ${isSelected || isPending ? '26px' : '20px'};
-            background: #0ea5e9;
-            border: 2px solid ${isSelected ? '#ffffff' : isPending ? '#fbbf24' : '#111'};
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 0 8px rgba(14,165,233,0.8);
-            color: #ffffff;
-            font-size: 10px;
-            font-weight: bold;
-            cursor: ${activeTool === 'select' ? 'grab' : 'pointer'};
+            width: 28px; height: 28px; border-radius: 4px;
+            background: #0ea5e9; border: 2px solid ${isSelected || isPending ? '#fbbf24' : '#ffffff'};
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.6); cursor: pointer; color: white;
+            font-size: 10px; font-weight: bold;
           ">
             W
           </div>
         `,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11],
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
       });
 
-      const marker = L.marker([w.lat, w.lng], {
-        icon,
-        draggable: activeTool === 'select',
-      });
-
+      const marker = L.marker([w.lat, w.lng], { icon: wetWellIcon }).addTo(nodesLayer);
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
-        handleNodeClick(w.id, w);
-      });
-
-      marker.on('dragend', (e) => {
-        const pos = e.target.getLatLng();
-        propsRef.current.onMoveNode(w.id, pos.lat, pos.lng);
+        handleNodeClick(w.id, 'wet-well');
       });
 
       marker.bindTooltip(
-        `<div style="font-family:monospace;font-size:11px;">
-          <strong style="color:#0ea5e9;">${w.id} (${w.label})</strong><br/>
-          Ground Rim (DEM): <strong>${w.rimElevation.toFixed(2)} m MSL</strong><br/>
-          Floor Invert: <strong>${w.floorElevation.toFixed(2)} m MSL</strong><br/>
-          Active Storage: <strong>${w.storageVolumeM3} m³</strong> (${w.diameterM}m Dia)<br/>
-          Duty Start: ${w.maxWaterLevelM.toFixed(2)} m | Alarm: ${w.alarmLevelM.toFixed(2)} m
+        `<div style="font-family: monospace; font-size: 11px;">
+          <strong>Wet Well: ${w.label || w.id}</strong><br/>
+          Rim Elev: <strong>${w.rimElevation.toFixed(2)} m MSL</strong><br/>
+          Floor Elev: <strong>${w.floorElevation.toFixed(2)} m MSL</strong><br/>
+          Active Storage: ${w.storageVolumeM3} m³ (${w.diameterM}m Dia)
         </div>`,
         { sticky: true }
       );
-      marker.addTo(nodesLayer);
     });
 
-    // 6. Render Outfalls
+    // 5. Draw Outfalls
     network.outfalls.forEach((o) => {
       const isSelected = selectedElement?.id === o.id;
       const isPending = pendingStartNode === o.id;
 
-      const icon = L.divIcon({
-        className: 'custom-outfall-marker',
+      const outfallIcon = L.divIcon({
+        className: 'outfall-marker',
         html: `
           <div style="
-            width: ${isSelected || isPending ? '26px' : '22px'};
-            height: ${isSelected || isPending ? '26px' : '22px'};
-            background: #10b981;
-            border: 2px solid ${isSelected ? '#ffffff' : isPending ? '#fbbf24' : '#111'};
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 0 8px rgba(16,185,129,0.8);
-            color: #0a0a0a;
-            font-size: 10px;
-            font-weight: bold;
-            cursor: ${activeTool === 'select' ? 'grab' : 'pointer'};
+            width: 28px; height: 28px; border-radius: 6px;
+            background: #10b981; border: 2px solid ${isSelected || isPending ? '#fbbf24' : '#ffffff'};
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.6); cursor: pointer; color: #0a0a0a;
+            font-size: 9px; font-weight: bold;
           ">
             OUT
           </div>
         `,
-        iconSize: [24, 24],
-        iconAnchor: [12, 12],
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
       });
 
-      const marker = L.marker([o.lat, o.lng], {
-        icon,
-        draggable: activeTool === 'select',
-      });
-
+      const marker = L.marker([o.lat, o.lng], { icon: outfallIcon }).addTo(nodesLayer);
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
-        handleNodeClick(o.id, o);
-      });
-
-      marker.on('dragend', (e) => {
-        const pos = e.target.getLatLng();
-        propsRef.current.onMoveNode(o.id, pos.lat, pos.lng);
+        handleNodeClick(o.id, 'outfall');
       });
 
       marker.bindTooltip(
-        `<div style="font-family:monospace;font-size:11px;">
-          <strong style="color:#10b981;">${o.id} (${o.label})</strong><br/>
-          Discharge Invert: <strong>${o.invertElevation.toFixed(2)} m MSL</strong><br/>
-          Receiving Water Level: <strong>${o.receivingWaterElevation.toFixed(2)} m MSL</strong><br/>
-          Total Effluent Discharge: <strong>${o.totalDischargeLs?.toFixed(2) ?? '0.00'} L/s</strong>
+        `<div style="font-family: monospace; font-size: 11px;">
+          <strong>Outfall: ${o.label || o.id}</strong><br/>
+          Invert Elev: <strong>${o.invertElevation.toFixed(2)} m MSL</strong><br/>
+          Receiving Water: ${o.receivingWaterElevation.toFixed(2)} m MSL<br/>
+          ${o.totalDischargeLs !== undefined ? `Total Flow: <strong>${o.totalDischargeLs.toFixed(2)} L/s</strong>` : ''}
         </div>`,
         { sticky: true }
       );
-      marker.addTo(nodesLayer);
     });
-  }, [network, thematicDisplay, selectedElement, activeTool, pendingStartNode, routeNodes]);
 
-  // Contextual helper prompt for active tool
-  const getToolHelperMessage = () => {
-    switch (activeTool) {
-      case 'add-manhole':
-        return 'Click anywhere on terrain to place a new Manhole with real Earth DEM elevation';
-      case 'add-conduit':
-        if (!pendingStartNode) {
-          return 'Drafting Gravity Pipe: Click a manhole to start, or click anywhere on terrain to place first manhole';
-        }
-        return `Drafting Pipe from ${pendingStartNode}: Click next node or click on terrain to place next manhole (${
-          rubberbandDistM ? `${rubberbandDistM} m` : ''
-        })`;
-      case 'add-wetwell':
-        return 'Click anywhere on terrain to place a Wet Well / Pump Station Sump';
-      case 'add-pump':
-        if (!pendingStartNode) return 'Click starting node (Wet Well) to connect pump';
-        return `Click destination node to complete Sewage Pump from ${pendingStartNode}`;
-      case 'add-forcemain':
-        if (!pendingStartNode) return 'Click starting node for Force Main';
-        return `Click destination node to complete Force Main from ${pendingStartNode}`;
-      case 'add-outfall':
-        return 'Click anywhere on terrain to place an Outfall discharge point';
-      case 'delete':
-        return 'Click any node or conduit to delete it from the network';
-      case 'profile-select':
-        return `Click nodes along sewer alignment to view Longitudinal Profile (${routeNodes.length} nodes selected)`;
-      case 'select':
-      default:
-        return 'Click any node or conduit to inspect; drag manholes to relocate; click empty terrain to deselect';
+    // 6. Draw Manholes
+    network.manholes.forEach((m) => {
+      const isSelected = selectedElement?.id === m.id;
+      const isPending = pendingStartNode === m.id;
+
+      let nodeColor = '#3b82f6';
+      if (thematicDisplay === 'depth') {
+        nodeColor = m.depth > 5.0 ? '#8b5cf6' : m.depth > 3.0 ? '#3b82f6' : '#10b981';
+      } else if (m.isFlooding) {
+        nodeColor = '#ef4444';
+      } else if (m.isSurcharged) {
+        nodeColor = '#f97316';
+      } else {
+        nodeColor = '#f59e0b';
+      }
+
+      const size = isSelected || isPending ? 18 : 14;
+
+      const manholeIcon = L.divIcon({
+        className: 'manhole-marker',
+        html: `
+          <div style="
+            width: ${size}px; height: ${size}px; border-radius: 50%;
+            background: ${nodeColor}; border: 2px solid ${isSelected || isPending ? '#fbbf24' : '#ffffff'};
+            box-shadow: 0 2px 6px rgba(0,0,0,0.8); cursor: pointer;
+            transition: transform 0.1s ease;
+          "></div>
+        `,
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+      });
+
+      const marker = L.marker([m.lat, m.lng], { icon: manholeIcon }).addTo(nodesLayer);
+      marker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        handleNodeClick(m.id, 'manhole');
+      });
+
+      marker.bindTooltip(
+        `<div style="font-family: monospace; font-size: 11px;">
+          <strong>Manhole: ${m.label || m.id}</strong><br/>
+          Rim Elev: <strong>${m.rimElevation.toFixed(2)} m MSL</strong><br/>
+          Invert Elev: <strong>${m.invertElevation.toFixed(2)} m MSL</strong><br/>
+          Depth: ${m.depth.toFixed(2)} m<br/>
+          Contributing Pop: ${m.population.toLocaleString()} Capita<br/>
+          ${m.peakSanitaryFlowLs !== undefined ? `Peak Flow: <strong>${m.peakSanitaryFlowLs.toFixed(2)} L/s</strong><br/>` : ''}
+          ${m.waterElevationM !== undefined ? `HGL: <strong>${m.waterElevationM.toFixed(2)} m</strong>` : ''}
+          ${m.isFlooding ? '<br/><strong style="color: #ef4444;">SURFACE FLOODING</strong>' : ''}
+        </div>`,
+        { sticky: true }
+      );
+    });
+  }, [
+    network,
+    thematicDisplay,
+    selectedElement,
+    pendingStartNode,
+    activeTool,
+    handleNodeClick,
+    onDeleteElement,
+    onSelectElement,
+  ]);
+
+  // Center on network elements if any exist
+  const handleZoomToFit = () => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    const allPts: [number, number][] = [
+      ...network.manholes.map((m): [number, number] => [m.lat, m.lng]),
+      ...network.wetWells.map((w): [number, number] => [w.lat, w.lng]),
+      ...network.outfalls.map((o): [number, number] => [o.lat, o.lng]),
+    ];
+
+    if (allPts.length > 0) {
+      const bounds = L.latLngBounds(allPts);
+      map.fitBounds(bounds, { padding: [40, 40] });
     }
   };
 
   return (
     <div className="flex-1 h-full relative overflow-hidden bg-[#0a0a0a]">
-      {/* Map Container */}
-      <div
-        ref={mapContainerRef}
-        className={`w-full h-full z-0 ${
-          activeTool === 'select'
-            ? 'cursor-default'
-            : activeTool === 'delete'
-            ? 'cursor-pointer'
-            : 'cursor-crosshair'
-        }`}
-      />
+      {/* Leaflet container - strictly static className so Leaflet classes are never stripped */}
+      <div ref={mapContainerRef} className="w-full h-full" />
 
-      {/* Interactive Contextual Guidance Floating Banner */}
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
-        <div className="bg-[#111111]/95 text-white border border-[#2a2a2a] px-3.5 py-1.5 rounded-full shadow-2xl backdrop-blur-md flex items-center gap-2.5 text-xs font-mono">
-          <Info className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-          <span className="text-[#e5e7eb] font-medium">{getToolHelperMessage()}</span>
-
-          {pendingStartNode && (
-            <button
-              onClick={() => {
-                setPendingStartNode(null);
-                setRubberbandDistM(null);
-                if (rubberbandLayerRef.current) {
-                  rubberbandLayerRef.current.clearLayers();
-                }
-              }}
-              className="ml-2 px-2 py-0.5 rounded bg-[#262626] hover:bg-[#333] text-amber-400 hover:text-amber-300 font-bold text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
-            >
-              <X className="w-3 h-3" />
-              <span>Cancel</span>
-            </button>
-          )}
-
-          {activeTool !== 'select' && !pendingStartNode && (
-            <button
-              onClick={() => onSelectTool('select')}
-              className="ml-1 text-[11px] text-[#888] hover:text-white underline cursor-pointer"
-            >
-              Done
-            </button>
-          )}
+      {/* Mode / Pending Action Overlay Banner - identical to Water Distribution */}
+      {pendingStartNode && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-[#171717] border border-amber-500/60 px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-mono text-white backdrop-blur">
+          <span className="w-2 h-2 rounded-full bg-amber-400" />
+          <span>
+            Connecting from <strong>{pendingStartNode}</strong>: click target node to finish
+          </span>
+          <button
+            onClick={() => setPendingStartNode(null)}
+            className="ml-2 text-xs text-[#737373] hover:text-white"
+          >
+            Cancel
+          </button>
         </div>
-      </div>
+      )}
 
-      {/* Floating View Controls */}
-      <div className="absolute bottom-6 right-4 z-20 flex flex-col gap-1.5">
+      {/* Map Controls Float: Zoom to Extents & Coords - identical to Water Distribution */}
+      <div className="absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2">
         <button
-          onClick={handleFitBounds}
-          className="p-2 rounded-lg bg-[#111]/90 hover:bg-[#1a1a1a] border border-[#222] text-[#888] hover:text-white shadow-lg backdrop-blur-sm transition-colors cursor-pointer"
-          title="Fit view to entire sewer network"
+          onClick={handleZoomToFit}
+          className="p-2 rounded-lg bg-[#111]/90 hover:bg-[#1c1c1c] border border-[#222] text-[#d1d5db] hover:text-white shadow-xl transition-colors cursor-pointer"
+          title="Zoom to Fit Network Extents"
         >
           <Crosshair className="w-4 h-4 text-amber-500" />
         </button>
+
+        {mouseCoords && (
+          <div className="px-2.5 py-1 rounded bg-[#0a0a0a]/90 border border-[#222] text-[10px] font-mono text-[#737373] shadow-md backdrop-blur">
+            {mouseCoords.lat.toFixed(5)}° N, {mouseCoords.lng.toFixed(5)}° E
+          </div>
+        )}
       </div>
 
-      {/* Live Coordinates Footer */}
-      {mouseCoords && (
-        <div className="absolute bottom-2 left-20 z-10 bg-[#0a0a0a]/80 px-2.5 py-0.5 rounded border border-[#222] text-[10px] text-[#737373] font-mono pointer-events-none">
-          <span>Lat: {mouseCoords.lat.toFixed(6)}°</span>
-          <span className="mx-1.5 text-[#333]">|</span>
-          <span>Lng: {mouseCoords.lng.toFixed(6)}°</span>
-          {rubberbandDistM !== null && (
-            <>
-              <span className="mx-1.5 text-[#333]">|</span>
-              <span className="text-amber-400 font-bold">Drafting: {rubberbandDistM} m</span>
-            </>
-          )}
+      {/* Legend for Thematic Visualization - identical to Water Distribution */}
+      {thematicDisplay === 'capacity' && (
+        <div className="absolute bottom-4 left-4 z-20 bg-[#111]/95 border border-[#222] rounded-lg p-2.5 text-[11px] font-mono shadow-xl backdrop-blur flex flex-col gap-1">
+          <span className="text-[10px] uppercase font-tech text-[#737373] font-bold">
+            Fullness Legend (d/D)
+          </span>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#10b981]" />
+            <span>&lt; 0.50 (Low)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#84cc16]" />
+            <span>0.50 – 0.75 (Optimal)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#f59e0b]" />
+            <span>0.75 – 1.00 (High)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#ef4444]" />
+            <span>&gt; 1.00 (Surcharged)</span>
+          </div>
+        </div>
+      )}
+
+      {thematicDisplay === 'velocity' && (
+        <div className="absolute bottom-4 left-4 z-20 bg-[#111]/95 border border-[#222] rounded-lg p-2.5 text-[11px] font-mono shadow-xl backdrop-blur flex flex-col gap-1">
+          <span className="text-[10px] uppercase font-tech text-[#737373] font-bold">
+            Velocity Legend (m/s)
+          </span>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#f59e0b]" />
+            <span>&lt; 0.6 m/s (Sub-cleansing)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#10b981]" />
+            <span>0.6 – 3.0 m/s (Optimal)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#ef4444]" />
+            <span>&gt; 3.0 m/s (High Scour)</span>
+          </div>
         </div>
       )}
     </div>

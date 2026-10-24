@@ -76,9 +76,9 @@ export const WastewaterToolbar: React.FC<WastewaterToolbarProps> = ({
   const tools: { id: ActiveWastewaterTool; label: string; icon: React.FC<{ className?: string }> }[] = [
     { id: 'select', label: 'Select / Move', icon: MousePointer },
     { id: 'add-manhole', label: 'Manhole', icon: CircleDot },
-    { id: 'add-conduit', label: 'Gravity Pipe', icon: GitCommit },
+    { id: 'add-conduit', label: 'Pipe', icon: GitCommit },
     { id: 'add-wetwell', label: 'Wet Well', icon: Database },
-    { id: 'add-pump', label: 'Lift Pump', icon: Zap },
+    { id: 'add-pump', label: 'Pump', icon: Zap },
     { id: 'add-forcemain', label: 'Force Main', icon: ArrowRightCircle },
     { id: 'add-outfall', label: 'Outfall', icon: Waves },
     { id: 'delete', label: 'Delete', icon: Trash2 },
@@ -120,7 +120,7 @@ export const WastewaterToolbar: React.FC<WastewaterToolbarProps> = ({
           title="Compute gravity Manning hydraulics, velocities, capacity and export calculations to Excel (.xlsx)"
         >
           <Play className="w-3.5 h-3.5 fill-current" />
-          <span>{isSimulating ? 'Computing...' : 'Compute Sewer Hydraulics'}</span>
+          <span>{isSimulating ? 'Computing...' : 'Compute Hydraulics'}</span>
         </button>
 
         {/* DEM Elevation Query */}
