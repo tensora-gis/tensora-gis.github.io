@@ -141,6 +141,15 @@ export const MapViewport: React.FC<MapViewportProps> = ({
     };
   }, []);
 
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+    const observer = new ResizeObserver(() => {
+      mapInstanceRef.current?.invalidateSize();
+    });
+    observer.observe(mapContainerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
   const activeChainage = report?.targetChainage ?? null;
 
   useEffect(() => {

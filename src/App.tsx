@@ -12,6 +12,9 @@ import { AppUser } from './auth/useGoogleAuth';
 import { InputPanel } from './components/InputPanel';
 import { MapViewport } from './components/MapViewport';
 import { ChainageRegisterModal } from './components/ChainageRegisterModal';
+import { ActiveModuleTab } from './types/navigation';
+import { LeftMenu } from './components/LeftMenu';
+import { WaterDistributionModelling } from './components/WaterDistributionModelling';
 
 /** Clicks within this distance of the centreline snap to the nearest station. */
 const SNAP_TO_CORRIDOR_M = 50;
@@ -28,6 +31,9 @@ export default function App({
   const [failure, setFailure] = useState<HydrologyRunFailure | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isRegisterOpen, setIsRegisterOpen] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<ActiveModuleTab>('stormwater');
+  const [isLeftMenuOpen, setIsLeftMenuOpen] = useState<boolean>(true);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
   /**
    * Resolves a chainage to an exact point on the corridor and delineates it.
@@ -264,6 +270,12 @@ export default function App({
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#0a0a0a] text-[#e5e7eb]">
       <Header
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        onToggleMenu={() => {
+          setIsLeftMenuOpen((prev) => !prev);
+          setIsMobileMenuOpen((prev) => !prev);
+        }}
         onClearData={handleClearData}
         activeChainage={report ? report.targetChainageFormatted : 'None'}
         totalChainages={alignment ? alignment.chainages.length : 0}
@@ -274,30 +286,54 @@ export default function App({
         onSignOut={onSignOut}
       />
 
-      <main className="flex-1 flex flex-col md:flex-row h-[calc(100vh-56px)] overflow-hidden relative">
-        <InputPanel
-          report={report}
-          failure={failure}
-          alignment={alignment}
-          onSelectChainage={(ch) => void handleSelectChainage(ch)}
-          onSelectCoordinates={(lat, lng) => void handleSelectCoordinates(lat, lng)}
-          onAlignmentUpdated={(a) => void handleAlignmentUpdated(a)}
-          onChainagesUpdated={(r, f) => void handleChainagesUpdated(r, f)}
-          isLoading={isLoading}
-          onOpenRegister={() => setIsRegisterOpen(true)}
-            onClearData={handleClearData}
-          onLoadDemo={() => void handleLoadDemo()}
-          onUpdateReport={handleUpdateReport}
+      <div className="flex-1 flex h-[calc(100vh-56px)] overflow-hidden relative">
+        {/* Left Corner Menu */}
+        <LeftMenu
+          activeTab={activeTab}
+          onSelectTab={setActiveTab}
+          isOpen={isLeftMenuOpen}
+          onToggleOpen={() => setIsLeftMenuOpen((prev) => !prev)}
+          isMobileDrawerOpen={isMobileMenuOpen}
+          onCloseMobile={() => setIsMobileMenuOpen(false)}
+          stormwaterStationCount={alignment ? alignment.chainages.length : 0}
+          hasStormwaterData={!!alignment}
         />
 
-        <div className="flex-1 h-full min-h-[350px] relative">
-          <MapViewport
+        {/* Stormwater Modelling Workspace (everything moved under Stormwater modelling) */}
+        <main
+          className={`flex-1 flex flex-col md:flex-row h-full overflow-hidden relative ${
+            activeTab === 'stormwater' ? 'flex' : 'hidden'
+          }`}
+        >
+          <InputPanel
             report={report}
+            failure={failure}
             alignment={alignment}
-            onMapClickCoordinate={handleMapClick}
+            onSelectChainage={(ch) => void handleSelectChainage(ch)}
+            onSelectCoordinates={(lat, lng) => void handleSelectCoordinates(lat, lng)}
+            onAlignmentUpdated={(a) => void handleAlignmentUpdated(a)}
+            onChainagesUpdated={(r, f) => void handleChainagesUpdated(r, f)}
+            isLoading={isLoading}
+            onOpenRegister={() => setIsRegisterOpen(true)}
+            onClearData={handleClearData}
+            onLoadDemo={() => void handleLoadDemo()}
+            onUpdateReport={handleUpdateReport}
           />
-        </div>
-      </main>
+
+          <div className="flex-1 h-full min-h-[350px] relative">
+            <MapViewport
+              report={report}
+              alignment={alignment}
+              onMapClickCoordinate={handleMapClick}
+            />
+          </div>
+        </main>
+
+        {/* Water Distribution Modelling Workspace (empty for now) */}
+        {activeTab === 'water-distribution' && (
+          <WaterDistributionModelling />
+        )}
+      </div>
 
       {alignment && (
         <ChainageRegisterModal
