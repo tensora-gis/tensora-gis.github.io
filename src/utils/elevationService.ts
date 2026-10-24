@@ -69,13 +69,19 @@ function demCellKey(lat: number, lng: number): string {
 
 /**
  * Providers that have answered with a hard rate-limit response are quarantined
- * for the rest of the session. Continuing to call them wastes the entire time
- * budget and guarantees the analysis fails.
+ * temporarily (45 seconds cooldown). This allows transient bursts to recover
+ * without locking out the user for the entire session.
  */
 const quarantined = new Map<string, number>();
 
 function isQuarantined(id: string): boolean {
-  return quarantined.has(id);
+  const ts = quarantined.get(id);
+  if (!ts) return false;
+  if (Date.now() - ts > 45_000) {
+    quarantined.delete(id);
+    return false;
+  }
+  return true;
 }
 
 function quarantine(id: string): void {
@@ -362,22 +368,6 @@ export async function fetchBulkElevations(
 
     const remaining = () => cells.filter((c) => out[c.indices[0]] === null);
 
-    // PRIMARY: terrain tiles. A raster carries ~65k samples per request
-    // against 100 per point-API call, so a whole catchment resolves from a
-    // handful of tiles - and there is no daily cap to exhaust.
-    {
-      const pending = remaining();
-      if (pending.length > 0) {
-        try {
-          const terrain = await fetchTerrainElevations(
-            pending.map((c) => ({ lat: c.lat, lng: c.lng }))
-          );
-          resolve(pending, terrain.elevations, 'terrain-tiles');
-        } catch {
-          // Fall through to the point sources.
-        }
-      }
-    }
     const chunks = (arr: CellRequest[], size: number): CellRequest[][] => {
       const groups: CellRequest[][] = [];
       for (let i = 0; i < arr.length; i += size) groups.push(arr.slice(i, i + size));
@@ -385,8 +375,7 @@ export async function fetchBulkElevations(
     };
 
     /**
-     * Runs `task` over `groups` with bounded concurrency. Sequential fetching of
-     * a few dozen calls exhausted any sensible time budget.
+     * Runs `task` over `groups` with bounded concurrency.
      */
     const runPooled = async (
       groups: CellRequest[][],
@@ -410,26 +399,14 @@ export async function fetchBulkElevations(
       await Promise.all(workers);
     };
 
-    // Primary: OpenTopoData, 100 points per call, concurrent but polite.
-    {
-      const groups = chunks(remaining(), 100);
-      await runPooled(groups, OPENTOPODATA_KEY ? 6 : 3, async (group) => {
-        const { values, ok, rateLimited } = await queryOpenTopoData(
-          group.map((c) => ({ lat: c.lat, lng: c.lng }))
-        );
-        if (ok) resolve(group, values, 'opentopodata-srtm30m');
-        return { ok, rateLimited };
-      });
-      if (groups.length > 1) await pause(150);
-    }
-
-    // Secondary: Open-Meteo. Two passes so transient gaps get a second chance.
+    // 1. PRIMARY: Open-Meteo (Copernicus GLO-30 / SRTM 30m).
+    // Direct, fast, CORS-enabled true global Earth elevation dataset.
     if (remaining().length > 0 && !isQuarantined('openmeteo')) {
       for (let round = 0; round < 2; round++) {
-        const groups = chunks(remaining(), 100);
+        const groups = chunks(remaining(), 80);
         if (groups.length === 0) break;
         let filledAny = false;
-        await runPooled(groups, 2, async (group) => {
+        await runPooled(groups, 3, async (group) => {
           const { values, ok, rateLimited } = await queryOpenMeteo(
             group.map((c) => ({ lat: c.lat, lng: c.lng }))
           );
@@ -438,6 +415,34 @@ export async function fetchBulkElevations(
         });
         if (remaining().length === 0 || !filledAny) break;
       }
+    }
+
+    // 2. FALLBACK: Terrain tiles.
+    {
+      const pending = remaining();
+      if (pending.length > 0) {
+        try {
+          const terrain = await fetchTerrainElevations(
+            pending.map((c) => ({ lat: c.lat, lng: c.lng }))
+          );
+          resolve(pending, terrain.elevations, 'terrain-tiles');
+        } catch {
+          // Fall through to the point sources.
+        }
+      }
+    }
+
+    // 3. FALLBACK: OpenTopoData, 100 points per call.
+    if (remaining().length > 0 && !isQuarantined('opentopodata')) {
+      const groups = chunks(remaining(), 100);
+      await runPooled(groups, OPENTOPODATA_KEY ? 6 : 2, async (group) => {
+        const { values, ok, rateLimited } = await queryOpenTopoData(
+          group.map((c) => ({ lat: c.lat, lng: c.lng }))
+        );
+        if (ok) resolve(group, values, 'opentopodata-srtm30m');
+        return { ok, rateLimited };
+      });
+      if (groups.length > 1) await pause(150);
     }
 
     // Last resort: Open-Elevation.

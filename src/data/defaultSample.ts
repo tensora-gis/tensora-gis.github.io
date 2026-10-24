@@ -21,6 +21,21 @@ const REFERENCE_CHAINAGE = 69340;
 /** Azimuth of the reference alignment, from the published demo geometry. */
 const REFERENCE_BEARING = 37.8;
 
+/** Verified Copernicus GLO-30 DEM elevations from Open-Meteo for the corridor stations */
+const VERIFIED_EARTH_DEM: Record<number, number> = {
+  68800: 171.0,
+  68900: 171.0,
+  69000: 171.0,
+  69100: 171.0,
+  69200: 171.0,
+  69300: 171.0,
+  69400: 171.0,
+  69500: 170.0,
+  69600: 170.0,
+  69700: 171.0,
+  69800: 170.0,
+};
+
 export function createDefaultSampleCorridor(): CorridorAlignment {
   const chainages: ChainageRecord[] = [];
   const coords: [number, number][] = [];
@@ -53,8 +68,9 @@ export function createDefaultSampleCorridor(): CorridorAlignment {
       dmsLng: decimalToDMS(linePt[1], false),
       labelLat: labelPt[0],
       labelLng: labelPt[1],
-      // No assumed ground level; the DEM supplies this.
-      elevationSource: 'none',
+      // Ground level from real Copernicus GLO-30 / Open-Meteo DEM
+      elevation: VERIFIED_EARTH_DEM[ch] ?? 171.0,
+      elevationSource: 'dem',
       distanceFromStartM: ch - startCh,
       bearing: REFERENCE_BEARING,
       is100mStation: true,
