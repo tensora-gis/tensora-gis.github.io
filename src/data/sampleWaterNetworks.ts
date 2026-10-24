@@ -22,8 +22,8 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         type: 'reservoir',
         lat: 27.24250,
         lng: 77.82100,
-        elevation: 165.2,
-        totalHead: 172.0, // Water surface level at 172m MSL
+        elevation: 171.0, // Copernicus GLO-30 DEM from Open-Meteo
+        totalHead: 185.0, // Water surface level at 185.0m MSL (+14m head)
       },
     ],
     tanks: [
@@ -33,7 +33,7 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         type: 'tank',
         lat: 27.25120,
         lng: 77.82850,
-        elevation: 176.4, // On higher ground
+        elevation: 169.0, // Copernicus GLO-30 DEM from Open-Meteo
         initialLevel: 4.5,
         minLevel: 1.0,
         maxLevel: 6.0,
@@ -47,7 +47,7 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         type: 'junction',
         lat: 27.24310,
         lng: 77.82180,
-        elevation: 166.0,
+        elevation: 171.0,
         baseDemand: 0,
       },
       {
@@ -56,7 +56,7 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         type: 'junction',
         lat: 27.24380,
         lng: 77.82270,
-        elevation: 166.5,
+        elevation: 171.0,
         baseDemand: 2.0,
       },
       {
@@ -65,7 +65,7 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         type: 'junction',
         lat: 27.24550,
         lng: 77.82420,
-        elevation: 167.8,
+        elevation: 171.0,
         baseDemand: 12.5,
       },
       {
@@ -74,7 +74,7 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         type: 'junction',
         lat: 27.24720,
         lng: 77.82600,
-        elevation: 169.4,
+        elevation: 170.0,
         baseDemand: 18.0,
       },
       {
@@ -83,7 +83,7 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         type: 'junction',
         lat: 27.24880,
         lng: 77.82450,
-        elevation: 170.2,
+        elevation: 171.0,
         baseDemand: 15.0,
       },
       {
@@ -92,7 +92,7 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         type: 'junction',
         lat: 27.25050,
         lng: 77.82620,
-        elevation: 172.5,
+        elevation: 170.0,
         baseDemand: 10.5,
       },
       {
@@ -101,7 +101,7 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         type: 'junction',
         lat: 27.25180,
         lng: 77.82780,
-        elevation: 175.8,
+        elevation: 171.0,
         baseDemand: 8.0,
       },
       {
@@ -110,7 +110,7 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         type: 'junction',
         lat: 27.24600,
         lng: 77.82780,
-        elevation: 168.1,
+        elevation: 171.0,
         baseDemand: 14.0,
       },
     ],

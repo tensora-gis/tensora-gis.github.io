@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { SimulationSummary } from '../../types/waterDistribution';
 import {
   X,
@@ -10,6 +11,7 @@ import {
   Droplets,
   TrendingDown,
   FileSpreadsheet,
+  Mountain,
 } from 'lucide-react';
 
 interface WaterSimulationResultsModalProps {
@@ -23,11 +25,11 @@ export const WaterSimulationResultsModal: React.FC<WaterSimulationResultsModalPr
   onClose,
   onExportExcel,
 }) => {
-  if (!summary) return null;
+  if (!summary || typeof document === 'undefined') return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-xs select-none">
-      <div className="w-full max-w-lg bg-[#111] border border-[#222] rounded-xl shadow-2xl flex flex-col overflow-hidden">
+  return createPortal(
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm select-none pointer-events-auto">
+      <div className="w-full max-w-lg bg-[#111] border border-[#262626] rounded-xl shadow-2xl flex flex-col overflow-hidden relative z-[100000]">
         {/* Modal Header */}
         <div className="px-5 py-3 border-b border-[#222] bg-[#141414] flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -143,6 +145,22 @@ export const WaterSimulationResultsModal: React.FC<WaterSimulationResultsModalPr
             </div>
           </div>
 
+          {/* Real Earth Terrain DEM Reference */}
+          <div className="p-3 rounded-lg bg-[#141414] border border-[#222] space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-tech uppercase font-bold text-amber-400 flex items-center gap-1.5">
+                <Mountain className="w-3.5 h-3.5" />
+                <span>Real Earth Terrain DEM Reference</span>
+              </span>
+              <span className="text-[9px] text-emerald-400 font-mono bg-[#0a0a0a] px-2 py-0.5 rounded border border-[#262626]">
+                Copernicus GLO-30 / SRTM (Open-Meteo)
+              </span>
+            </div>
+            <p className="text-[11px] text-[#888] leading-relaxed">
+              Every node elevation is sampled from real global Earth DEM data. Pressure heads are solved against true ground datum: P = (HGL - zDEM) m H2O.
+            </p>
+          </div>
+
           {/* Warnings list if negative pressures exist */}
           {summary.negativePressureNodes.length > 0 && (
             <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-300 space-y-1">
@@ -177,6 +195,7 @@ export const WaterSimulationResultsModal: React.FC<WaterSimulationResultsModalPr
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

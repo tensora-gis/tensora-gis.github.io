@@ -126,11 +126,11 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
           onClick={onSampleElevations}
           disabled={isSamplingElevation}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-amber-400 hover:text-amber-300 font-medium text-xs transition-colors cursor-pointer"
-          title="Sample real ground elevation from global DEM for all network nodes"
+          title="Query true Earth DEM elevations (Copernicus GLO-30 / Open-Meteo) for all network nodes"
         >
           <Mountain className="w-3.5 h-3.5" />
           <span className="hidden lg:inline text-[11px] font-tech">
-            {isSamplingElevation ? 'Sampling DEM...' : 'Sample DEM Elevations'}
+            {isSamplingElevation ? 'Sampling Open-Meteo DEM...' : 'Sync Real Earth DEM'}
           </span>
         </button>
 
