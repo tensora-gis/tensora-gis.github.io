@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   WastewaterNetworkElement,
   WastewaterManhole,
@@ -8,7 +8,8 @@ import {
   WastewaterForceMain,
   WastewaterOutfall,
 } from '../../types/wastewater';
-import { X, Trash2, Activity, Mountain, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { sampleWastewaterGroundElevation } from '../../utils/wastewaterTerrainService';
+import { X, Trash2, Activity, Mountain, RefreshCw, Compass } from 'lucide-react';
 
 interface WastewaterPropertyInspectorProps {
   element: WastewaterNetworkElement | null;
@@ -23,7 +24,24 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
   onUpdateElement,
   onDeleteElement,
 }) => {
+  const [isSamplingDEM, setIsSamplingDEM] = useState(false);
+
   if (!element) return null;
+
+  // Single-node DEM elevation sync
+  const handleSyncNodeElevation = async (lat: number, lng: number, applyElevation: (elev: number) => void) => {
+    setIsSamplingDEM(true);
+    try {
+      const elev = await sampleWastewaterGroundElevation(lat, lng);
+      if (elev !== null) {
+        applyElevation(Math.round(elev * 10) / 10);
+      }
+    } catch (err) {
+      console.error('Error syncing elevation from DEM:', err);
+    } finally {
+      setIsSamplingDEM(false);
+    }
+  };
 
   const renderManholeFields = (m: WastewaterManhole) => (
     <div className="space-y-3">
@@ -39,12 +57,63 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
         />
       </div>
 
+      {/* Geodetic Coordinates */}
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="text-[10px] text-amber-400 uppercase font-tech flex items-center gap-1 mb-1">
-            <Mountain className="w-3 h-3" />
-            <span>Rim Elev (m MSL)</span>
+          <label className="text-[10px] text-[#737373] uppercase font-tech flex items-center gap-1 mb-1">
+            <Compass className="w-3 h-3 text-amber-500" />
+            <span>Latitude</span>
           </label>
+          <input
+            type="number"
+            step="0.00001"
+            value={m.lat}
+            onChange={(e) => onUpdateElement({ ...m, lat: parseFloat(e.target.value) || 0 })}
+            className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] text-[#737373] uppercase font-tech flex items-center gap-1 mb-1">
+            <Compass className="w-3 h-3 text-amber-500" />
+            <span>Longitude</span>
+          </label>
+          <input
+            type="number"
+            step="0.00001"
+            value={m.lng}
+            onChange={(e) => onUpdateElement({ ...m, lng: parseFloat(e.target.value) || 0 })}
+            className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+          />
+        </div>
+      </div>
+
+      {/* Elevation & Invert with DEM Sync */}
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[10px] text-amber-400 uppercase font-tech flex items-center gap-1">
+              <Mountain className="w-3 h-3" />
+              <span>Rim (m MSL)</span>
+            </label>
+            <button
+              type="button"
+              onClick={() =>
+                handleSyncNodeElevation(m.lat, m.lng, (elev) => {
+                  onUpdateElement({
+                    ...m,
+                    rimElevation: elev,
+                    invertElevation: Math.round((elev - m.depth) * 10) / 10,
+                  });
+                })
+              }
+              disabled={isSamplingDEM}
+              className="text-[9px] text-amber-400 hover:text-amber-300 underline font-mono flex items-center gap-0.5 cursor-pointer disabled:opacity-50"
+              title="Query real Earth DEM elevation from Copernicus GLO-30"
+            >
+              <RefreshCw className={`w-2.5 h-2.5 ${isSamplingDEM ? 'animate-spin' : ''}`} />
+              <span>DEM</span>
+            </button>
+          </div>
           <input
             type="number"
             step="0.1"
@@ -67,10 +136,10 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
           <input
             type="number"
             step="0.1"
-            min="1.0"
+            min="0.5"
             value={m.depth}
             onChange={(e) => {
-              const depth = parseFloat(e.target.value) || 2.0;
+              const depth = parseFloat(e.target.value) || 1.5;
               onUpdateElement({
                 ...m,
                 depth,
@@ -220,6 +289,18 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
         />
       </div>
 
+      {/* Topology Nodes */}
+      <div className="grid grid-cols-2 gap-2 bg-[#0a0a0a] p-2 rounded border border-[#222] text-xs font-mono">
+        <div>
+          <span className="text-[10px] text-[#737373] uppercase font-tech block mb-0.5">From Node</span>
+          <span className="text-amber-400 font-bold">{c.startNodeId}</span>
+        </div>
+        <div>
+          <span className="text-[10px] text-[#737373] uppercase font-tech block mb-0.5">To Node</span>
+          <span className="text-emerald-400 font-bold">{c.endNodeId}</span>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">
@@ -290,6 +371,7 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
         </div>
       </div>
 
+      {/* Length and Slope % */}
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">
@@ -308,17 +390,35 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
           />
         </div>
         <div>
-          <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">
-            Manning's n
+          <label className="text-[10px] text-amber-400 uppercase font-tech block mb-1">
+            Slope (%)
           </label>
           <input
             type="number"
-            step="0.001"
-            value={c.manningN}
-            onChange={(e) => onUpdateElement({ ...c, manningN: parseFloat(e.target.value) || 0.01 })}
+            step="0.05"
+            value={Math.round(c.slopeMPerM * 100000) / 1000}
+            onChange={(e) => {
+              const slopePct = parseFloat(e.target.value) || 0;
+              const slopeMPerM = slopePct / 100;
+              const dn = Math.round((c.upstreamInvertM - slopeMPerM * c.lengthM) * 100) / 100;
+              onUpdateElement({ ...c, slopeMPerM, downstreamInvertM: dn });
+            }}
             className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
           />
         </div>
+      </div>
+
+      <div>
+        <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">
+          Manning's n Roughness
+        </label>
+        <input
+          type="number"
+          step="0.001"
+          value={c.manningN}
+          onChange={(e) => onUpdateElement({ ...c, manningN: parseFloat(e.target.value) || 0.01 })}
+          className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+        />
       </div>
 
       {/* Hydraulic Calculation Output Card */}
@@ -376,10 +476,52 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
 
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="text-[10px] text-amber-400 uppercase font-tech flex items-center gap-1 mb-1">
-            <Mountain className="w-3 h-3" />
-            <span>Rim Elev (m MSL)</span>
-          </label>
+          <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">Latitude</label>
+          <input
+            type="number"
+            step="0.00001"
+            value={w.lat}
+            onChange={(e) => onUpdateElement({ ...w, lat: parseFloat(e.target.value) || 0 })}
+            className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">Longitude</label>
+          <input
+            type="number"
+            step="0.00001"
+            value={w.lng}
+            onChange={(e) => onUpdateElement({ ...w, lng: parseFloat(e.target.value) || 0 })}
+            className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[10px] text-amber-400 uppercase font-tech flex items-center gap-1">
+              <Mountain className="w-3 h-3" />
+              <span>Rim Elev (m)</span>
+            </label>
+            <button
+              type="button"
+              onClick={() =>
+                handleSyncNodeElevation(w.lat, w.lng, (elev) => {
+                  onUpdateElement({
+                    ...w,
+                    rimElevation: elev,
+                    floorElevation: Math.round((elev - 6.0) * 10) / 10,
+                  });
+                })
+              }
+              disabled={isSamplingDEM}
+              className="text-[9px] text-amber-400 hover:text-amber-300 underline font-mono flex items-center gap-0.5 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-2.5 h-2.5 ${isSamplingDEM ? 'animate-spin' : ''}`} />
+              <span>DEM</span>
+            </button>
+          </div>
           <input
             type="number"
             step="0.1"
@@ -390,7 +532,7 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
         </div>
         <div>
           <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">
-            Floor Elev (m MSL)
+            Floor Elev (m)
           </label>
           <input
             type="number"
@@ -445,6 +587,17 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
         />
       </div>
 
+      <div className="grid grid-cols-2 gap-2 bg-[#0a0a0a] p-2 rounded border border-[#222] text-xs font-mono">
+        <div>
+          <span className="text-[10px] text-[#737373] uppercase font-tech block mb-0.5">Suction Node</span>
+          <span className="text-sky-400 font-bold">{p.startNodeId}</span>
+        </div>
+        <div>
+          <span className="text-[10px] text-[#737373] uppercase font-tech block mb-0.5">Discharge Node</span>
+          <span className="text-emerald-400 font-bold">{p.endNodeId}</span>
+        </div>
+      </div>
+
       <div className="grid grid-cols-2 gap-2">
         <div>
           <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">
@@ -495,9 +648,53 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
 
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">
-            Invert Elev (m MSL)
-          </label>
+          <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">Latitude</label>
+          <input
+            type="number"
+            step="0.00001"
+            value={o.lat}
+            onChange={(e) => onUpdateElement({ ...o, lat: parseFloat(e.target.value) || 0 })}
+            className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+          />
+        </div>
+        <div>
+          <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">Longitude</label>
+          <input
+            type="number"
+            step="0.00001"
+            value={o.lng}
+            onChange={(e) => onUpdateElement({ ...o, lng: parseFloat(e.target.value) || 0 })}
+            className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1 text-xs text-white font-mono focus:outline-none focus:border-amber-500"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-[10px] text-amber-400 uppercase font-tech flex items-center gap-1">
+              <Mountain className="w-3 h-3" />
+              <span>Invert Elev (m)</span>
+            </label>
+            <button
+              type="button"
+              onClick={() =>
+                handleSyncNodeElevation(o.lat, o.lng, (elev) => {
+                  const inv = Math.round((elev - 1.0) * 10) / 10;
+                  onUpdateElement({
+                    ...o,
+                    invertElevation: inv,
+                    receivingWaterElevation: Math.round((inv + 0.5) * 10) / 10,
+                  });
+                })
+              }
+              disabled={isSamplingDEM}
+              className="text-[9px] text-amber-400 hover:text-amber-300 underline font-mono flex items-center gap-0.5 cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw className={`w-2.5 h-2.5 ${isSamplingDEM ? 'animate-spin' : ''}`} />
+              <span>DEM</span>
+            </button>
+          </div>
           <input
             type="number"
             step="0.1"
@@ -508,7 +705,7 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
         </div>
         <div>
           <label className="text-[10px] text-[#737373] uppercase font-tech block mb-1">
-            Receiving Water (m MSL)
+            Receiving Water (m)
           </label>
           <input
             type="number"

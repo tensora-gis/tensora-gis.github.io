@@ -8,7 +8,7 @@ import {
   WastewaterPump,
   WastewaterOutfall,
 } from '../../types/wastewater';
-import { X, Table, Search, Download, Trash2, FileSpreadsheet } from 'lucide-react';
+import { X, Table, Search, Download, Trash2, FileSpreadsheet, Plus } from 'lucide-react';
 
 interface WastewaterFlexTablesProps {
   network: WastewaterNetwork;
@@ -46,6 +46,19 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
       csv = 'ID,Label,FromNode,ToNode,Length(m),Diameter(mm),Material,Slope(%),Qfull(L/s),DesignQ(L/s),Velocity(m/s),Fullness(d/D)\n';
       network.conduits.forEach((c) => {
         csv += `${c.id},${c.label},${c.startNodeId},${c.endNodeId},${c.lengthM},${c.diameterMm},${c.material},${(c.slopeMPerM * 100).toFixed(3)},${c.fullCapacityLs ?? ''},${c.designFlowLs ?? ''},${c.actualVelocityMs ?? ''},${c.flowDepthRatio ?? ''}\n`;
+      });
+    } else if (activeTab === 'pumps') {
+      csv = 'ID,Type,Label,RimElev(m),FloorElev(m),RatedFlow(L/s),Head(m),Power(kW)\n';
+      network.wetWells.forEach((w) => {
+        csv += `${w.id},WetWell,${w.label},${w.rimElevation},${w.floorElevation},-,ActiveVol:${w.storageVolumeM3},-\n`;
+      });
+      network.pumps.forEach((p) => {
+        csv += `${p.id},Pump,${p.label},-,-,${p.ratedDischargeLs},${p.dynamicHeadM},${p.powerKw ?? 0}\n`;
+      });
+    } else if (activeTab === 'outfalls') {
+      csv = 'ID,Label,Latitude,Longitude,InvertElev(m),WaterLevel(m),Discharge(L/s)\n';
+      network.outfalls.forEach((o) => {
+        csv += `${o.id},${o.label},${o.lat},${o.lng},${o.invertElevation},${o.receivingWaterElevation},${o.totalDischargeLs ?? ''}\n`;
       });
     }
 
@@ -99,7 +112,7 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
             <Search className="w-3.5 h-3.5 text-[#666] absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search table..."
+              placeholder="Filter elements..."
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
               className="bg-[#0a0a0a] border border-[#222] rounded pl-8 pr-2 py-1 text-xs text-white placeholder:text-[#555] font-mono focus:outline-none focus:border-amber-500 w-36"
@@ -135,22 +148,24 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
         </div>
       </div>
 
-      {/* Grid Content */}
+      {/* Grid Content with Editable Cells */}
       <div className="flex-1 overflow-auto font-mono text-xs">
+        {/* 1. Manholes Table */}
         {activeTab === 'manholes' && (
-          <table className="w-full text-left border-collapse min-w-[900px]">
+          <table className="w-full text-left border-collapse min-w-[980px]">
             <thead className="bg-[#141414] sticky top-0 text-[#888] text-[11px] font-tech uppercase border-b border-[#222]">
               <tr>
-                <th className="p-2 border-r border-[#222]">ID</th>
-                <th className="p-2 border-r border-[#222]">Label</th>
-                <th className="p-2 border-r border-[#222]">Rim (m MSL)</th>
-                <th className="p-2 border-r border-[#222]">Invert (m MSL)</th>
-                <th className="p-2 border-r border-[#222]">Depth (m)</th>
-                <th className="p-2 border-r border-[#222]">Dia (mm)</th>
-                <th className="p-2 border-r border-[#222]">Population</th>
-                <th className="p-2 border-r border-[#222]">Peak Flow (L/s)</th>
-                <th className="p-2 border-r border-[#222]">HGL Water (m)</th>
-                <th className="p-2 border-r border-[#222]">Surcharge Status</th>
+                <th className="p-2 border-r border-[#222] w-20">ID</th>
+                <th className="p-2 border-r border-[#222] w-36">Label</th>
+                <th className="p-2 border-r border-[#222] w-24">Rim (m)</th>
+                <th className="p-2 border-r border-[#222] w-24">Invert (m)</th>
+                <th className="p-2 border-r border-[#222] w-20">Depth (m)</th>
+                <th className="p-2 border-r border-[#222] w-20">Dia (mm)</th>
+                <th className="p-2 border-r border-[#222] w-24">Pop (Cap)</th>
+                <th className="p-2 border-r border-[#222] w-20">I&I (L/s)</th>
+                <th className="p-2 border-r border-[#222] w-24">Peak Q (L/s)</th>
+                <th className="p-2 border-r border-[#222] w-24">HGL (m)</th>
+                <th className="p-2 border-r border-[#222]">Status</th>
                 <th className="p-2 text-center w-12">Action</th>
               </tr>
             </thead>
@@ -164,12 +179,99 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                     className="hover:bg-[#1a1a1a] cursor-pointer transition-colors"
                   >
                     <td className="p-2 font-bold text-amber-500 border-r border-[#1e1e1e]">{m.id}</td>
-                    <td className="p-2 text-white border-r border-[#1e1e1e]">{m.label}</td>
-                    <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{m.rimElevation.toFixed(2)}</td>
-                    <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{m.invertElevation.toFixed(2)}</td>
-                    <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{m.depth.toFixed(2)}</td>
-                    <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{m.diameterMm}</td>
-                    <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{m.population.toLocaleString()}</td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <input
+                        type="text"
+                        value={m.label}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => onUpdateElement({ ...m, label: e.target.value })}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                      />
+                    </td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={m.rimElevation}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          const rim = parseFloat(e.target.value) || 0;
+                          onUpdateElement({
+                            ...m,
+                            rimElevation: rim,
+                            invertElevation: Math.round((rim - m.depth) * 10) / 10,
+                          });
+                        }}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                      />
+                    </td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={m.invertElevation}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          const inv = parseFloat(e.target.value) || 0;
+                          onUpdateElement({
+                            ...m,
+                            invertElevation: inv,
+                            depth: Math.round((m.rimElevation - inv) * 10) / 10,
+                          });
+                        }}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                      />
+                    </td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.5"
+                        value={m.depth}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          const d = parseFloat(e.target.value) || 1.5;
+                          onUpdateElement({
+                            ...m,
+                            depth: d,
+                            invertElevation: Math.round((m.rimElevation - d) * 10) / 10,
+                          });
+                        }}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                      />
+                    </td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <input
+                        type="number"
+                        step="100"
+                        value={m.diameterMm}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => onUpdateElement({ ...m, diameterMm: parseInt(e.target.value) || 1000 })}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                      />
+                    </td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <input
+                        type="number"
+                        step="50"
+                        min="0"
+                        value={m.population}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => onUpdateElement({ ...m, population: parseInt(e.target.value) || 0 })}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                      />
+                    </td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        value={m.inflowInfiltrationLs}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => onUpdateElement({ ...m, inflowInfiltrationLs: parseFloat(e.target.value) || 0 })}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                      />
+                    </td>
                     <td className="p-2 text-white font-bold border-r border-[#1e1e1e]">
                       {m.peakSanitaryFlowLs?.toFixed(2) ?? '-'}
                     </td>
@@ -191,7 +293,8 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                           e.stopPropagation();
                           onDeleteElement(m.id, 'manhole');
                         }}
-                        className="text-[#666] hover:text-red-400 p-0.5"
+                        className="text-[#666] hover:text-red-400 p-0.5 cursor-pointer"
+                        title="Delete manhole"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -202,20 +305,22 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
           </table>
         )}
 
+        {/* 2. Conduits Table */}
         {activeTab === 'conduits' && (
-          <table className="w-full text-left border-collapse min-w-[1000px]">
+          <table className="w-full text-left border-collapse min-w-[1100px]">
             <thead className="bg-[#141414] sticky top-0 text-[#888] text-[11px] font-tech uppercase border-b border-[#222]">
               <tr>
-                <th className="p-2 border-r border-[#222]">ID</th>
-                <th className="p-2 border-r border-[#222]">From → To</th>
-                <th className="p-2 border-r border-[#222]">Length (m)</th>
-                <th className="p-2 border-r border-[#222]">Dia (mm)</th>
-                <th className="p-2 border-r border-[#222]">Material</th>
-                <th className="p-2 border-r border-[#222]">Slope (%)</th>
-                <th className="p-2 border-r border-[#222]">Qfull (L/s)</th>
-                <th className="p-2 border-r border-[#222]">Design Q (L/s)</th>
-                <th className="p-2 border-r border-[#222]">Fullness (d/D)</th>
-                <th className="p-2 border-r border-[#222]">Velocity (m/s)</th>
+                <th className="p-2 border-r border-[#222] w-20">ID</th>
+                <th className="p-2 border-r border-[#222] w-28">From → To</th>
+                <th className="p-2 border-r border-[#222] w-24">Length (m)</th>
+                <th className="p-2 border-r border-[#222] w-24">Dia (mm)</th>
+                <th className="p-2 border-r border-[#222] w-24">Material</th>
+                <th className="p-2 border-r border-[#222] w-24">Up Inv (m)</th>
+                <th className="p-2 border-r border-[#222] w-24">Dn Inv (m)</th>
+                <th className="p-2 border-r border-[#222] w-20">Slope (%)</th>
+                <th className="p-2 border-r border-[#222] w-24">Design Q (L/s)</th>
+                <th className="p-2 border-r border-[#222] w-20">d/D</th>
+                <th className="p-2 border-r border-[#222] w-20">Vel (m/s)</th>
                 <th className="p-2 border-r border-[#222]">Compliance</th>
                 <th className="p-2 text-center w-12">Action</th>
               </tr>
@@ -233,11 +338,77 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                     <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">
                       {c.startNodeId} → {c.endNodeId}
                     </td>
-                    <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{c.lengthM.toFixed(1)}</td>
-                    <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{c.diameterMm}</td>
-                    <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{c.material}</td>
-                    <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{(c.slopeMPerM * 100).toFixed(3)}</td>
-                    <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{c.fullCapacityLs?.toFixed(1) ?? '-'}</td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <input
+                        type="number"
+                        step="1"
+                        value={c.lengthM}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          const len = parseFloat(e.target.value) || 10;
+                          const slope = (c.upstreamInvertM - c.downstreamInvertM) / Math.max(1, len);
+                          onUpdateElement({ ...c, lengthM: len, slopeMPerM: slope });
+                        }}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                      />
+                    </td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <input
+                        type="number"
+                        step="25"
+                        value={c.diameterMm}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => onUpdateElement({ ...c, diameterMm: parseInt(e.target.value) || 250 })}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                      />
+                    </td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <select
+                        value={c.material}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          const mat = e.target.value as any;
+                          const n = mat === 'PVC' || mat === 'HDPE' ? 0.010 : 0.013;
+                          onUpdateElement({ ...c, material: mat, manningN: n });
+                        }}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1 py-0.5 text-white"
+                      >
+                        <option value="PVC">PVC</option>
+                        <option value="HDPE">HDPE</option>
+                        <option value="RCC">RCC</option>
+                        <option value="DI">DI</option>
+                        <option value="Clay">Clay</option>
+                      </select>
+                    </td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={c.upstreamInvertM}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          const up = parseFloat(e.target.value) || 0;
+                          const slope = (up - c.downstreamInvertM) / Math.max(1, c.lengthM);
+                          onUpdateElement({ ...c, upstreamInvertM: up, slopeMPerM: slope });
+                        }}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                      />
+                    </td>
+                    <td className="p-1 border-r border-[#1e1e1e]">
+                      <input
+                        type="number"
+                        step="0.1"
+                        value={c.downstreamInvertM}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => {
+                          const dn = parseFloat(e.target.value) || 0;
+                          const slope = (c.upstreamInvertM - dn) / Math.max(1, c.lengthM);
+                          onUpdateElement({ ...c, downstreamInvertM: dn, slopeMPerM: slope });
+                        }}
+                        className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                      />
+                    </td>
+                    <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{(c.slopeMPerM * 100).toFixed(3)}%</td>
                     <td className="p-2 text-amber-400 font-bold border-r border-[#1e1e1e]">
                       {c.designFlowLs?.toFixed(2) ?? '-'}
                     </td>
@@ -264,7 +435,8 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                           e.stopPropagation();
                           onDeleteElement(c.id, 'conduit');
                         }}
-                        className="text-[#666] hover:text-red-400 p-0.5"
+                        className="text-[#666] hover:text-red-400 p-0.5 cursor-pointer"
+                        title="Delete conduit"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -275,14 +447,15 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
           </table>
         )}
 
+        {/* 3. Pumps & Wet Wells Table */}
         {activeTab === 'pumps' && (
-          <table className="w-full text-left border-collapse min-w-[700px]">
+          <table className="w-full text-left border-collapse min-w-[800px]">
             <thead className="bg-[#141414] sticky top-0 text-[#888] text-[11px] font-tech uppercase border-b border-[#222]">
               <tr>
                 <th className="p-2 border-r border-[#222]">ID</th>
                 <th className="p-2 border-r border-[#222]">Type</th>
                 <th className="p-2 border-r border-[#222]">Label</th>
-                <th className="p-2 border-r border-[#222]">Ground Rim (m)</th>
+                <th className="p-2 border-r border-[#222]">Rim (m MSL)</th>
                 <th className="p-2 border-r border-[#222]">Floor / Invert (m)</th>
                 <th className="p-2 border-r border-[#222]">Rated Flow / Vol</th>
                 <th className="p-2 border-r border-[#222]">TDH / Power</th>
@@ -298,10 +471,38 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                 >
                   <td className="p-2 font-bold text-sky-400 border-r border-[#1e1e1e]">{w.id}</td>
                   <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">Wet Well</td>
-                  <td className="p-2 text-white border-r border-[#1e1e1e]">{w.label}</td>
-                  <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{w.rimElevation.toFixed(2)}</td>
-                  <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{w.floorElevation.toFixed(2)}</td>
-                  <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{w.storageVolumeM3} m³ ({w.diameterM}m Dia)</td>
+                  <td className="p-1 border-r border-[#1e1e1e]">
+                    <input
+                      type="text"
+                      value={w.label}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onUpdateElement({ ...w, label: e.target.value })}
+                      className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                    />
+                  </td>
+                  <td className="p-1 border-r border-[#1e1e1e]">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={w.rimElevation}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onUpdateElement({ ...w, rimElevation: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                    />
+                  </td>
+                  <td className="p-1 border-r border-[#1e1e1e]">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={w.floorElevation}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onUpdateElement({ ...w, floorElevation: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                    />
+                  </td>
+                  <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">
+                    {w.storageVolumeM3} m³ ({w.diameterM}m Dia)
+                  </td>
                   <td className="p-2 text-[#888] border-r border-[#1e1e1e]">-</td>
                   <td className="p-2 text-center">
                     <button
@@ -309,7 +510,7 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                         e.stopPropagation();
                         onDeleteElement(w.id, 'wet-well');
                       }}
-                      className="text-[#666] hover:text-red-400 p-0.5"
+                      className="text-[#666] hover:text-red-400 p-0.5 cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -324,18 +525,44 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                 >
                   <td className="p-2 font-bold text-amber-500 border-r border-[#1e1e1e]">{p.id}</td>
                   <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">Lift Pump</td>
-                  <td className="p-2 text-white border-r border-[#1e1e1e]">{p.label}</td>
+                  <td className="p-1 border-r border-[#1e1e1e]">
+                    <input
+                      type="text"
+                      value={p.label}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onUpdateElement({ ...p, label: e.target.value })}
+                      className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                    />
+                  </td>
                   <td className="p-2 text-[#888] border-r border-[#1e1e1e]">-</td>
                   <td className="p-2 text-[#888] border-r border-[#1e1e1e]">-</td>
-                  <td className="p-2 text-white font-bold border-r border-[#1e1e1e]">{p.ratedDischargeLs} L/s</td>
-                  <td className="p-2 text-amber-400 font-bold border-r border-[#1e1e1e]">{p.dynamicHeadM} m ({p.powerKw ?? 0} kW)</td>
+                  <td className="p-1 border-r border-[#1e1e1e]">
+                    <input
+                      type="number"
+                      step="5"
+                      value={p.ratedDischargeLs}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onUpdateElement({ ...p, ratedDischargeLs: parseFloat(e.target.value) || 30 })}
+                      className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                    />
+                  </td>
+                  <td className="p-1 border-r border-[#1e1e1e]">
+                    <input
+                      type="number"
+                      step="1"
+                      value={p.dynamicHeadM}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onUpdateElement({ ...p, dynamicHeadM: parseFloat(e.target.value) || 20 })}
+                      className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                    />
+                  </td>
                   <td className="p-2 text-center">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
                         onDeleteElement(p.id, 'pump');
                       }}
-                      className="text-[#666] hover:text-red-400 p-0.5"
+                      className="text-[#666] hover:text-red-400 p-0.5 cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -346,15 +573,16 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
           </table>
         )}
 
+        {/* 4. Outfalls Table */}
         {activeTab === 'outfalls' && (
-          <table className="w-full text-left border-collapse min-w-[700px]">
+          <table className="w-full text-left border-collapse min-w-[750px]">
             <thead className="bg-[#141414] sticky top-0 text-[#888] text-[11px] font-tech uppercase border-b border-[#222]">
               <tr>
                 <th className="p-2 border-r border-[#222]">ID</th>
                 <th className="p-2 border-r border-[#222]">Label</th>
                 <th className="p-2 border-r border-[#222]">Latitude</th>
                 <th className="p-2 border-r border-[#222]">Longitude</th>
-                <th className="p-2 border-r border-[#222]">Invert Elev (m)</th>
+                <th className="p-2 border-r border-[#222]">Invert (m)</th>
                 <th className="p-2 border-r border-[#222]">Water Level (m)</th>
                 <th className="p-2 border-r border-[#222]">Total Discharge (L/s)</th>
                 <th className="p-2 text-center w-12">Action</th>
@@ -368,11 +596,37 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                   className="hover:bg-[#1a1a1a] cursor-pointer"
                 >
                   <td className="p-2 font-bold text-emerald-400 border-r border-[#1e1e1e]">{o.id}</td>
-                  <td className="p-2 text-white border-r border-[#1e1e1e]">{o.label}</td>
+                  <td className="p-1 border-r border-[#1e1e1e]">
+                    <input
+                      type="text"
+                      value={o.label}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onUpdateElement({ ...o, label: e.target.value })}
+                      className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                    />
+                  </td>
                   <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{o.lat.toFixed(6)}</td>
                   <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{o.lng.toFixed(6)}</td>
-                  <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{o.invertElevation.toFixed(2)}</td>
-                  <td className="p-2 text-[#e5e7eb] border-r border-[#1e1e1e]">{o.receivingWaterElevation.toFixed(2)}</td>
+                  <td className="p-1 border-r border-[#1e1e1e]">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={o.invertElevation}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onUpdateElement({ ...o, invertElevation: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                    />
+                  </td>
+                  <td className="p-1 border-r border-[#1e1e1e]">
+                    <input
+                      type="number"
+                      step="0.1"
+                      value={o.receivingWaterElevation}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onUpdateElement({ ...o, receivingWaterElevation: parseFloat(e.target.value) || 0 })}
+                      className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                    />
+                  </td>
                   <td className="p-2 text-emerald-400 font-bold border-r border-[#1e1e1e]">
                     {o.totalDischargeLs?.toFixed(2) ?? '-'}
                   </td>
@@ -382,7 +636,7 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                         e.stopPropagation();
                         onDeleteElement(o.id, 'outfall');
                       }}
-                      className="text-[#666] hover:text-red-400 p-0.5"
+                      className="text-[#666] hover:text-red-400 p-0.5 cursor-pointer"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>

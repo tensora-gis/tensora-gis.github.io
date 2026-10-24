@@ -13,16 +13,19 @@ import {
   WastewaterOutfall,
 } from '../../types/wastewater';
 import { calculateWastewaterDistanceM } from '../../utils/wastewaterTerrainService';
-import { Layers, ZoomIn, ZoomOut, Crosshair } from 'lucide-react';
+import { Crosshair, Info, X } from 'lucide-react';
 
 interface WastewaterMapViewportProps {
   network: WastewaterNetwork;
   activeTool: ActiveWastewaterTool;
   thematicDisplay: WastewaterThematicDisplay;
   selectedElement: WastewaterNetworkElement | null;
+  onSelectTool: (tool: ActiveWastewaterTool) => void;
   onSelectElement: (elem: WastewaterNetworkElement | null) => void;
-  onAddManhole: (lat: number, lng: number) => void;
-  onAddConduit: (startNodeId: string, endNodeId: string) => void;
+  onAddManhole: (lat: number, lng: number) => Promise<string>;
+  onAddConduit: (startNodeId: string, endNodeId: string) => string | null;
+  onAddManholeAndConnect: (fromNodeId: string, lat: number, lng: number) => Promise<string>;
+  onMoveNode: (id: string, lat: number, lng: number) => void;
   onAddWetWell: (lat: number, lng: number) => void;
   onAddPump: (startNodeId: string, endNodeId: string) => void;
   onAddForceMain: (startNodeId: string, endNodeId: string) => void;
@@ -36,9 +39,12 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
   activeTool,
   thematicDisplay,
   selectedElement,
+  onSelectTool,
   onSelectElement,
   onAddManhole,
   onAddConduit,
+  onAddManholeAndConnect,
+  onMoveNode,
   onAddWetWell,
   onAddPump,
   onAddForceMain,
@@ -53,10 +59,82 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
   const forceMainsLayerRef = useRef<L.LayerGroup | null>(null);
   const nodesLayerRef = useRef<L.LayerGroup | null>(null);
   const arrowsLayerRef = useRef<L.LayerGroup | null>(null);
+  const rubberbandLayerRef = useRef<L.LayerGroup | null>(null);
 
   const [pendingStartNode, setPendingStartNode] = useState<string | null>(null);
+  const [rubberbandDistM, setRubberbandDistM] = useState<number | null>(null);
   const [routeNodes, setRouteNodes] = useState<string[]>([]);
   const [mouseCoords, setMouseCoords] = useState<{ lat: number; lng: number } | null>(null);
+
+  // Keep latest props in a mutable ref to eliminate any stale closures in Leaflet events
+  const propsRef = useRef({
+    network,
+    activeTool,
+    thematicDisplay,
+    selectedElement,
+    pendingStartNode,
+    onSelectTool,
+    onSelectElement,
+    onAddManhole,
+    onAddConduit,
+    onAddManholeAndConnect,
+    onMoveNode,
+    onAddWetWell,
+    onAddPump,
+    onAddForceMain,
+    onAddOutfall,
+    onDeleteElement,
+    onProfileRouteSelected,
+  });
+
+  useEffect(() => {
+    propsRef.current = {
+      network,
+      activeTool,
+      thematicDisplay,
+      selectedElement,
+      pendingStartNode,
+      onSelectTool,
+      onSelectElement,
+      onAddManhole,
+      onAddConduit,
+      onAddManholeAndConnect,
+      onMoveNode,
+      onAddWetWell,
+      onAddPump,
+      onAddForceMain,
+      onAddOutfall,
+      onDeleteElement,
+      onProfileRouteSelected,
+    };
+  });
+
+  // Reset pending start node when active tool changes
+  useEffect(() => {
+    setPendingStartNode(null);
+    setRubberbandDistM(null);
+    if (rubberbandLayerRef.current) {
+      rubberbandLayerRef.current.clearLayers();
+    }
+  }, [activeTool]);
+
+  // Global ESC key to cancel active drafting or connection
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPendingStartNode(null);
+        setRubberbandDistM(null);
+        if (rubberbandLayerRef.current) {
+          rubberbandLayerRef.current.clearLayers();
+        }
+        if (activeTool !== 'select') {
+          onSelectTool('select');
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeTool, onSelectTool]);
 
   // ResizeObserver for clean map sizing
   useEffect(() => {
@@ -79,7 +157,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
       attributionControl: true,
     });
 
-    // High-resolution satellite tiles
+    // High-resolution satellite imagery
     L.tileLayer(
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       { maxZoom: 19, maxNativeZoom: 18, crossOrigin: 'anonymous' }
@@ -97,21 +175,82 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     conduitsLayerRef.current = L.layerGroup().addTo(map);
     forceMainsLayerRef.current = L.layerGroup().addTo(map);
     arrowsLayerRef.current = L.layerGroup().addTo(map);
+    rubberbandLayerRef.current = L.layerGroup().addTo(map);
     nodesLayerRef.current = L.layerGroup().addTo(map);
 
-    map.on('mousemove', (e) => {
+    // Live mouse move handler with rubberband preview
+    map.on('mousemove', (e: L.LeafletMouseEvent) => {
       setMouseCoords({ lat: e.latlng.lat, lng: e.latlng.lng });
+
+      const { pendingStartNode: curPending, network: curNet } = propsRef.current;
+      const rubberLayer = rubberbandLayerRef.current;
+
+      if (curPending && rubberLayer) {
+        rubberLayer.clearLayers();
+        const allNodes = [...curNet.manholes, ...curNet.wetWells, ...curNet.outfalls];
+        const startNode = allNodes.find((n) => n.id === curPending);
+        if (startNode) {
+          const dist = calculateWastewaterDistanceM(startNode.lat, startNode.lng, e.latlng.lat, e.latlng.lng);
+          setRubberbandDistM(Math.round(dist * 10) / 10);
+
+          L.polyline(
+            [
+              [startNode.lat, startNode.lng],
+              [e.latlng.lat, e.latlng.lng],
+            ],
+            {
+              color: '#f59e0b',
+              weight: 2.5,
+              dashArray: '6, 6',
+              opacity: 0.85,
+            }
+          ).addTo(rubberLayer);
+        }
+      } else if (rubberLayer) {
+        rubberLayer.clearLayers();
+        setRubberbandDistM(null);
+      }
     });
 
-    map.on('click', (e) => {
-      if (activeTool === 'add-manhole') {
-        onAddManhole(e.latlng.lat, e.latlng.lng);
-      } else if (activeTool === 'add-wetwell') {
-        onAddWetWell(e.latlng.lat, e.latlng.lng);
-      } else if (activeTool === 'add-outfall') {
-        onAddOutfall(e.latlng.lat, e.latlng.lng);
-      } else if (activeTool === 'select') {
-        onSelectElement(null);
+    map.on('mouseout', () => {
+      if (rubberbandLayerRef.current) {
+        rubberbandLayerRef.current.clearLayers();
+      }
+      setRubberbandDistM(null);
+    });
+
+    // Map click listener reading propsRef directly - guaranteed no stale closures
+    map.on('click', async (e: L.LeafletMouseEvent) => {
+      const {
+        activeTool: currentTool,
+        pendingStartNode: currentPending,
+        onAddManhole: addMh,
+        onAddWetWell: addWw,
+        onAddOutfall: addOut,
+        onAddManholeAndConnect: addMhAndConnect,
+        onSelectElement: selectElem,
+      } = propsRef.current;
+
+      const { lat, lng } = e.latlng;
+
+      if (currentTool === 'add-manhole') {
+        await addMh(lat, lng);
+      } else if (currentTool === 'add-wetwell') {
+        addWw(lat, lng);
+      } else if (currentTool === 'add-outfall') {
+        addOut(lat, lng);
+      } else if (currentTool === 'add-conduit') {
+        if (!currentPending) {
+          // If no start node yet, clicking on terrain creates the first manhole and sets it as start
+          const newId = await addMh(lat, lng);
+          setPendingStartNode(newId);
+        } else {
+          // Continuous drafting: creates next manhole and connects conduit from previous node
+          const newId = await addMhAndConnect(currentPending, lat, lng);
+          setPendingStartNode(newId);
+        }
+      } else if (currentTool === 'select') {
+        selectElem(null);
       }
     });
 
@@ -123,7 +262,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     };
   }, []);
 
-  // Fit bounds to network
+  // Fit bounds to entire network
   const handleFitBounds = useCallback(() => {
     if (!mapInstanceRef.current) return;
     const allCoords: [number, number][] = [
@@ -197,7 +336,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
           [end.lat, end.lng],
         ],
         {
-          color: isSelected ? '#f59e0b' : color,
+          color: isSelected ? '#fbbf24' : color,
           weight: isSelected ? weight + 3 : weight,
           opacity: 0.95,
           lineCap: 'round',
@@ -206,22 +345,24 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
 
       polyline.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
-        if (activeTool === 'delete') {
-          onDeleteElement(c.id, 'conduit');
+        const curTool = propsRef.current.activeTool;
+        if (curTool === 'delete') {
+          propsRef.current.onDeleteElement(c.id, 'conduit');
         } else {
-          onSelectElement(c);
+          propsRef.current.onSelectElement(c);
         }
       });
 
       const tooltipContent = `
         <div style="font-family: monospace; font-size: 11px; padding: 2px;">
           <strong style="color: #f59e0b;">${c.id} (${c.label})</strong><br/>
+          From: <strong>${c.startNodeId}</strong> → To: <strong>${c.endNodeId}</strong><br/>
           Diameter: <strong>${c.diameterMm} mm</strong> (${c.material})<br/>
           Length: ${c.lengthM.toFixed(1)} m | Slope: ${(c.slopeMPerM * 100).toFixed(3)}%<br/>
           Design Flow Q: <strong>${c.designFlowLs?.toFixed(2) ?? '0.00'} L/s</strong><br/>
           Velocity: <strong>${c.actualVelocityMs?.toFixed(2) ?? '0.00'} m/s</strong><br/>
           Fullness d/D: <strong>${c.flowDepthRatio?.toFixed(2) ?? '0.00'}</strong> ${
-            (c.flowDepthRatio ?? 0) > 1.0 ? '<span style="color:#ef4444;">(SURCHARGED)</span>' : ''
+            (c.flowDepthRatio ?? 0) > 1.0 ? '<span style="color:#ef4444;font-weight:bold;">(SURCHARGED)</span>' : ''
           }
         </div>
       `;
@@ -263,7 +404,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
           [end.lat, end.lng],
         ],
         {
-          color: isSelected ? '#f59e0b' : '#a855f7', // Purple for force main
+          color: isSelected ? '#fbbf24' : '#a855f7', // Purple for force main
           weight: isSelected ? 6 : 4,
           dashArray: '6, 6',
           opacity: 0.95,
@@ -272,77 +413,94 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
 
       polyline.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
-        if (activeTool === 'delete') {
-          onDeleteElement(fm.id, 'force-main');
+        const curTool = propsRef.current.activeTool;
+        if (curTool === 'delete') {
+          propsRef.current.onDeleteElement(fm.id, 'force-main');
         } else {
-          onSelectElement(fm);
+          propsRef.current.onSelectElement(fm);
         }
       });
 
       polyline.bindTooltip(
         `<div style="font-family:monospace;font-size:11px;">
-          <strong style="color:#a855f7;">${fm.id} (Force Main)</strong><br/>
+          <strong style="color:#a855f7;">${fm.id} (${fm.label})</strong><br/>
+          From: <strong>${fm.startNodeId}</strong> → To: <strong>${fm.endNodeId}</strong><br/>
           Diameter: ${fm.diameterMm} mm (${fm.material})<br/>
+          Length: ${fm.lengthM.toFixed(1)} m<br/>
           Velocity: ${fm.velocityMs?.toFixed(2) ?? '0.00'} m/s<br/>
-          Headloss hf: ${fm.frictionHeadlossM?.toFixed(2) ?? '0.00'} m
+          Friction Loss: ${fm.frictionHeadlossM?.toFixed(2) ?? '0.00'} m
         </div>`,
         { sticky: true }
       );
       polyline.addTo(forceMainsLayer);
     });
 
-    // 3. Render Nodes: Manholes, Wet Wells, Outfalls
+    // 3. Common Node Click Handler
     const handleNodeClick = (nodeId: string, elem: WastewaterNetworkElement) => {
-      if (activeTool === 'delete') {
-        onDeleteElement(nodeId, elem.type);
+      const {
+        activeTool: curTool,
+        pendingStartNode: curPending,
+        onDeleteElement: delElem,
+        onAddConduit: addCon,
+        onAddPump: addPmp,
+        onAddForceMain: addFm,
+        onProfileRouteSelected: profileSelected,
+        onSelectElement: selectElem,
+      } = propsRef.current;
+
+      if (curTool === 'delete') {
+        delElem(nodeId, elem.type);
         return;
       }
 
-      if (activeTool === 'add-conduit') {
-        if (!pendingStartNode) {
+      if (curTool === 'add-conduit') {
+        if (!curPending) {
           setPendingStartNode(nodeId);
-        } else if (pendingStartNode !== nodeId) {
-          onAddConduit(pendingStartNode, nodeId);
+        } else if (curPending !== nodeId) {
+          addCon(curPending, nodeId);
+          // Keep chaining for continuous sewer line drafting
+          setPendingStartNode(nodeId);
+        }
+        return;
+      }
+
+      if (curTool === 'add-pump') {
+        if (!curPending) {
+          setPendingStartNode(nodeId);
+        } else if (curPending !== nodeId) {
+          addPmp(curPending, nodeId);
           setPendingStartNode(null);
         }
         return;
       }
 
-      if (activeTool === 'add-pump') {
-        if (!pendingStartNode) {
+      if (curTool === 'add-forcemain') {
+        if (!curPending) {
           setPendingStartNode(nodeId);
-        } else if (pendingStartNode !== nodeId) {
-          onAddPump(pendingStartNode, nodeId);
+        } else if (curPending !== nodeId) {
+          addFm(curPending, nodeId);
           setPendingStartNode(null);
         }
         return;
       }
 
-      if (activeTool === 'add-forcemain') {
-        if (!pendingStartNode) {
-          setPendingStartNode(nodeId);
-        } else if (pendingStartNode !== nodeId) {
-          onAddForceMain(pendingStartNode, nodeId);
-          setPendingStartNode(null);
-        }
-        return;
-      }
-
-      if (activeTool === 'profile-select') {
+      if (curTool === 'profile-select') {
         setRouteNodes((prev) => {
           const next = prev.includes(nodeId) ? prev : [...prev, nodeId];
           if (next.length >= 2) {
-            onProfileRouteSelected(next);
+            profileSelected(next);
           }
           return next;
         });
         return;
       }
 
-      onSelectElement(elem);
+      if (curTool === 'select') {
+        selectElem(elem);
+      }
     };
 
-    // Render Manholes
+    // 4. Render Manholes
     network.manholes.forEach((m) => {
       const isSelected = selectedElement?.id === m.id;
       const isPending = pendingStartNode === m.id;
@@ -366,7 +524,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
             border-radius: 50%;
             background: ${markerBg};
             border: 2px solid ${isSelected ? '#ffffff' : isPending ? '#38bdf8' : '#171717'};
-            box-shadow: 0 0 ${isSelected || isPending ? '10px #f59e0b' : '4px rgba(0,0,0,0.8)'};
+            box-shadow: 0 0 ${isSelected || isPending ? '12px #38bdf8' : '4px rgba(0,0,0,0.8)'};
             display: flex;
             align-items: center;
             justify-content: center;
@@ -374,6 +532,8 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
             font-weight: bold;
             font-size: 9px;
             font-family: monospace;
+            cursor: ${activeTool === 'select' ? 'grab' : 'pointer'};
+            transition: transform 0.15s ease;
           ">
             ${isInRoute ? '★' : ''}
           </div>
@@ -382,10 +542,20 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         iconAnchor: [11, 11],
       });
 
-      const marker = L.marker([m.lat, m.lng], { icon });
+      const marker = L.marker([m.lat, m.lng], {
+        icon,
+        draggable: activeTool === 'select',
+      });
+
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         handleNodeClick(m.id, m);
+      });
+
+      // Drag to relocate manhole on terrain
+      marker.on('dragend', (e) => {
+        const pos = e.target.getLatLng();
+        propsRef.current.onMoveNode(m.id, pos.lat, pos.lng);
       });
 
       marker.bindTooltip(
@@ -405,7 +575,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
       marker.addTo(nodesLayer);
     });
 
-    // Render Wet Wells
+    // 5. Render Wet Wells
     network.wetWells.forEach((w) => {
       const isSelected = selectedElement?.id === w.id;
       const isPending = pendingStartNode === w.id;
@@ -417,7 +587,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
             width: ${isSelected || isPending ? '26px' : '20px'};
             height: ${isSelected || isPending ? '26px' : '20px'};
             background: #0ea5e9;
-            border: 2px solid ${isSelected ? '#ffffff' : '#111'};
+            border: 2px solid ${isSelected ? '#ffffff' : isPending ? '#fbbf24' : '#111'};
             border-radius: 4px;
             display: flex;
             align-items: center;
@@ -426,6 +596,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
             color: #ffffff;
             font-size: 10px;
             font-weight: bold;
+            cursor: ${activeTool === 'select' ? 'grab' : 'pointer'};
           ">
             W
           </div>
@@ -434,10 +605,19 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         iconAnchor: [11, 11],
       });
 
-      const marker = L.marker([w.lat, w.lng], { icon });
+      const marker = L.marker([w.lat, w.lng], {
+        icon,
+        draggable: activeTool === 'select',
+      });
+
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         handleNodeClick(w.id, w);
+      });
+
+      marker.on('dragend', (e) => {
+        const pos = e.target.getLatLng();
+        propsRef.current.onMoveNode(w.id, pos.lat, pos.lng);
       });
 
       marker.bindTooltip(
@@ -453,18 +633,19 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
       marker.addTo(nodesLayer);
     });
 
-    // Render Outfalls
+    // 6. Render Outfalls
     network.outfalls.forEach((o) => {
       const isSelected = selectedElement?.id === o.id;
+      const isPending = pendingStartNode === o.id;
 
       const icon = L.divIcon({
         className: 'custom-outfall-marker',
         html: `
           <div style="
-            width: ${isSelected ? '26px' : '22px'};
-            height: ${isSelected ? '26px' : '22px'};
+            width: ${isSelected || isPending ? '26px' : '22px'};
+            height: ${isSelected || isPending ? '26px' : '22px'};
             background: #10b981;
-            border: 2px solid ${isSelected ? '#ffffff' : '#111'};
+            border: 2px solid ${isSelected ? '#ffffff' : isPending ? '#fbbf24' : '#111'};
             border-radius: 6px;
             display: flex;
             align-items: center;
@@ -473,6 +654,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
             color: #0a0a0a;
             font-size: 10px;
             font-weight: bold;
+            cursor: ${activeTool === 'select' ? 'grab' : 'pointer'};
           ">
             OUT
           </div>
@@ -481,10 +663,19 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         iconAnchor: [12, 12],
       });
 
-      const marker = L.marker([o.lat, o.lng], { icon });
+      const marker = L.marker([o.lat, o.lng], {
+        icon,
+        draggable: activeTool === 'select',
+      });
+
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         handleNodeClick(o.id, o);
+      });
+
+      marker.on('dragend', (e) => {
+        const pos = e.target.getLatLng();
+        propsRef.current.onMoveNode(o.id, pos.lat, pos.lng);
       });
 
       marker.bindTooltip(
@@ -500,23 +691,84 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     });
   }, [network, thematicDisplay, selectedElement, activeTool, pendingStartNode, routeNodes]);
 
+  // Contextual helper prompt for active tool
+  const getToolHelperMessage = () => {
+    switch (activeTool) {
+      case 'add-manhole':
+        return 'Click anywhere on terrain to place a new Manhole with real Earth DEM elevation';
+      case 'add-conduit':
+        if (!pendingStartNode) {
+          return 'Drafting Gravity Pipe: Click a manhole to start, or click anywhere on terrain to place first manhole';
+        }
+        return `Drafting Pipe from ${pendingStartNode}: Click next node or click on terrain to place next manhole (${
+          rubberbandDistM ? `${rubberbandDistM} m` : ''
+        })`;
+      case 'add-wetwell':
+        return 'Click anywhere on terrain to place a Wet Well / Pump Station Sump';
+      case 'add-pump':
+        if (!pendingStartNode) return 'Click starting node (Wet Well) to connect pump';
+        return `Click destination node to complete Sewage Pump from ${pendingStartNode}`;
+      case 'add-forcemain':
+        if (!pendingStartNode) return 'Click starting node for Force Main';
+        return `Click destination node to complete Force Main from ${pendingStartNode}`;
+      case 'add-outfall':
+        return 'Click anywhere on terrain to place an Outfall discharge point';
+      case 'delete':
+        return 'Click any node or conduit to delete it from the network';
+      case 'profile-select':
+        return `Click nodes along sewer alignment to view Longitudinal Profile (${routeNodes.length} nodes selected)`;
+      case 'select':
+      default:
+        return 'Click any node or conduit to inspect; drag manholes to relocate; click empty terrain to deselect';
+    }
+  };
+
   return (
     <div className="flex-1 h-full relative overflow-hidden bg-[#0a0a0a]">
       {/* Map Container */}
-      <div ref={mapContainerRef} className="w-full h-full z-0 cursor-crosshair" />
+      <div
+        ref={mapContainerRef}
+        className={`w-full h-full z-0 ${
+          activeTool === 'select'
+            ? 'cursor-default'
+            : activeTool === 'delete'
+            ? 'cursor-pointer'
+            : 'cursor-crosshair'
+        }`}
+      />
 
-      {/* Connection Mode Indicator */}
-      {pendingStartNode && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 bg-amber-500/90 text-[#0a0a0a] px-4 py-1.5 rounded-full shadow-lg font-tech font-bold text-xs flex items-center gap-2 backdrop-blur-sm animate-pulse">
-          <span>Click second node to complete connection from {pendingStartNode}</span>
-          <button
-            onClick={() => setPendingStartNode(null)}
-            className="text-[10px] underline ml-1 cursor-pointer"
-          >
-            Cancel
-          </button>
+      {/* Interactive Contextual Guidance Floating Banner */}
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
+        <div className="bg-[#111111]/95 text-white border border-[#2a2a2a] px-3.5 py-1.5 rounded-full shadow-2xl backdrop-blur-md flex items-center gap-2.5 text-xs font-mono">
+          <Info className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+          <span className="text-[#e5e7eb] font-medium">{getToolHelperMessage()}</span>
+
+          {pendingStartNode && (
+            <button
+              onClick={() => {
+                setPendingStartNode(null);
+                setRubberbandDistM(null);
+                if (rubberbandLayerRef.current) {
+                  rubberbandLayerRef.current.clearLayers();
+                }
+              }}
+              className="ml-2 px-2 py-0.5 rounded bg-[#262626] hover:bg-[#333] text-amber-400 hover:text-amber-300 font-bold text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+              <span>Cancel</span>
+            </button>
+          )}
+
+          {activeTool !== 'select' && !pendingStartNode && (
+            <button
+              onClick={() => onSelectTool('select')}
+              className="ml-1 text-[11px] text-[#888] hover:text-white underline cursor-pointer"
+            >
+              Done
+            </button>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Floating View Controls */}
       <div className="absolute bottom-6 right-4 z-20 flex flex-col gap-1.5">
@@ -535,6 +787,12 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
           <span>Lat: {mouseCoords.lat.toFixed(6)}°</span>
           <span className="mx-1.5 text-[#333]">|</span>
           <span>Lng: {mouseCoords.lng.toFixed(6)}°</span>
+          {rubberbandDistM !== null && (
+            <>
+              <span className="mx-1.5 text-[#333]">|</span>
+              <span className="text-amber-400 font-bold">Drafting: {rubberbandDistM} m</span>
+            </>
+          )}
         </div>
       )}
     </div>
