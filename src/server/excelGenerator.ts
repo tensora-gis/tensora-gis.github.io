@@ -1,12 +1,6 @@
 import ExcelJS from 'exceljs';
-import { decimalToDMS } from '../utils/geoUtils';
 import { generateHydrologySnapshot, SnapshotParams } from './snapshotGenerator';
 
-const HEADER_FILL = {
-  type: 'pattern' as const,
-  pattern: 'solid' as const,
-  fgColor: { argb: 'FF0F172A' },
-};
 const LABEL_FILL = {
   type: 'pattern' as const,
   pattern: 'solid' as const,
@@ -18,16 +12,6 @@ const THIN_BORDER = {
   bottom: { style: 'thin' as const, color: { argb: 'FF94A3B8' } },
   right: { style: 'thin' as const, color: { argb: 'FF94A3B8' } },
 };
-
-function styleHeaderRow(row: ExcelJS.Row): void {
-  row.height = 26;
-  row.eachCell((cell) => {
-    cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
-    cell.fill = HEADER_FILL;
-    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-    cell.border = THIN_BORDER;
-  });
-}
 
 /** Excel worksheet names are capped at 31 chars and must be unique. */
 function uniqueSheetName(workbook: ExcelJS.Workbook, base: string): string {
@@ -42,14 +26,11 @@ function uniqueSheetName(workbook: ExcelJS.Workbook, base: string): string {
   }
 }
 
-
-
 /**
- * Builds the three-sheet workbook required by the specification:
- *   1. Hydrology Summary (the six headline values + the measured basis)
- *   2. Complete Chainage Register (every station, DMS + decimal + elevation)
- *   3. Catchment Boundary Polygon Vertices
- * with the rendered delineation snapshot embedded beneath the summary.
+ * Builds the single-sheet Hydrology Summary workbook:
+ *   - The six headline values with units
+ *   - The measured secondary parameters
+ *   - The rendered 70%-framed delineation snapshot embedded beneath the summary table.
  */
 export async function createHydrologyExcelWorkbook(
   reportData: SnapshotParams,
@@ -141,58 +122,6 @@ export async function createHydrologyExcelWorkbook(
     const imageId = workbook.addImage({ buffer: imgBuffer as never, extension: 'png' });
     ws.addImage(imageId, { tl: { col: 0, row: ws.rowCount + 1 }, ext: { width: 840, height: 574 } });
   }
-
-  // ---- Sheet 2: Complete Chainage Register -------------------------------
-  const register = workbook.addWorksheet('Chainage_Register', { views: [{ showGridLines: true }] });
-  register.columns = [
-    { width: 16, header: 'Chainage' },
-    { width: 24, header: 'Latitude (DMS)' },
-    { width: 24, header: 'Longitude (DMS)' },
-    { width: 16, header: 'Latitude (DD)' },
-    { width: 16, header: 'Longitude (DD)' },
-    { width: 18, header: 'Elevation (m MSL)' },
-  ];
-  styleHeaderRow(register.getRow(1));
-
-  const stations = reportData.chainages ?? [];
-  if (stations.length === 0) {
-    const note = register.addRow([
-      'No chainage stations were supplied with this request, so the register is empty.',
-    ]);
-    note.getCell(1).font = { name: 'Arial', size: 9, italic: true, color: { argb: 'FF64748B' } };
-  } else {
-    for (const ch of stations) {
-      register.addRow([
-        ch.formatted ?? String(ch.chainage),
-        decimalToDMS(ch.lat, true),
-        decimalToDMS(ch.lng, false),
-        Math.round(ch.lat * 1e7) / 1e7,
-        Math.round(ch.lng * 1e7) / 1e7,
-        'Not sampled',
-      ]);
-    }
-  }
-
-  // ---- Sheet 3: Catchment Boundary Vertices ------------------------------
-  const boundary = workbook.addWorksheet('Catchment_Boundary', { views: [{ showGridLines: true }] });
-  boundary.columns = [
-    { width: 10, header: 'Vertex' },
-    { width: 16, header: 'Latitude (DD)' },
-    { width: 16, header: 'Longitude (DD)' },
-    { width: 24, header: 'Latitude (DMS)' },
-    { width: 24, header: 'Longitude (DMS)' },
-  ];
-  styleHeaderRow(boundary.getRow(1));
-
-  (reportData.catchmentPolygon ?? []).forEach(([lat, lng], idx) => {
-    boundary.addRow([
-      idx + 1,
-      Math.round(lat * 1e7) / 1e7,
-      Math.round(lng * 1e7) / 1e7,
-      decimalToDMS(lat, true),
-      decimalToDMS(lng, false),
-    ]);
-  });
 
   const outBuffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(outBuffer as ArrayBuffer);

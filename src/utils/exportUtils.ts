@@ -494,53 +494,6 @@ export async function buildClientHydrologyWorkbook(
     });
   }
 
-  const register = workbook.addWorksheet('Chainage_Register', { views: [{ showGridLines: true }] });
-  register.columns = [
-    { width: 16, header: 'Chainage' },
-    { width: 24, header: 'Latitude (DMS)' },
-    { width: 24, header: 'Longitude (DMS)' },
-    { width: 16, header: 'Latitude (DD)' },
-    { width: 16, header: 'Longitude (DD)' },
-  ];
-  register.getRow(1).font = { bold: true };
-  const stations = buildSnapshotPayload(report, alignment ?? null).chainages as
-    | { chainage: number; formatted: string; lat: number; lng: number }[]
-    | undefined;
-  if (stations && stations.length > 0) {
-    for (const ch of stations) {
-      register.addRow([
-        ch.formatted ?? String(ch.chainage),
-        decimalToDMS(ch.lat, true),
-        decimalToDMS(ch.lng, false),
-        Math.round(ch.lat * 1e7) / 1e7,
-        Math.round(ch.lng * 1e7) / 1e7,
-      ]);
-    }
-  } else {
-    register.addRow(['No chainage stations were supplied with this request.']);
-  }
-
-  const boundary = workbook.addWorksheet('Catchment_Boundary', {
-    views: [{ showGridLines: true }],
-  });
-  boundary.columns = [
-    { width: 10, header: 'Vertex' },
-    { width: 16, header: 'Latitude (DD)' },
-    { width: 16, header: 'Longitude (DD)' },
-    { width: 24, header: 'Latitude (DMS)' },
-    { width: 24, header: 'Longitude (DMS)' },
-  ];
-  boundary.getRow(1).font = { bold: true };
-  (report.catchmentPolygon ?? []).forEach(([lat, lng], idx) => {
-    boundary.addRow([
-      idx + 1,
-      Math.round(lat * 1e7) / 1e7,
-      Math.round(lng * 1e7) / 1e7,
-      decimalToDMS(lat, true),
-      decimalToDMS(lng, false),
-    ]);
-  });
-
   const out = await workbook.xlsx.writeBuffer();
   return new Blob([out], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

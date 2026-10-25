@@ -255,15 +255,9 @@ console.log('\n[6] POST /api/export-excel');
   await wb.xlsx.load(buf as never);
   const names = wb.worksheets.map((w) => w.name);
   check('workbook has a hydrology summary sheet', names.some((n) => n.startsWith('CH_')), names.join(', '));
-  check('workbook has the mandated Chainage Register sheet', names.includes('Chainage_Register'), names.join(', '));
-  check('workbook has the mandated Catchment Boundary sheet', names.includes('Catchment_Boundary'), names.join(', '));
-
-  const boundary = wb.getWorksheet('Catchment_Boundary');
-  check(
-    'boundary sheet lists the polygon vertices',
-    boundary ? boundary.rowCount >= report.catchmentPolygon.length + 1 : false,
-    `rows=${boundary?.rowCount}`
-  );
+  check('workbook contains only the 1st summary sheet', wb.worksheets.length === 1, `sheets=${wb.worksheets.length}`);
+  check('Chainage Register sheet is eliminated', !names.includes('Chainage_Register'), names.join(', '));
+  check('Catchment Boundary sheet is eliminated', !names.includes('Catchment_Boundary'), names.join(', '));
 }
 
 console.log('\n[7] Excel rejects malformed requests');

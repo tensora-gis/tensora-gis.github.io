@@ -133,11 +133,10 @@ async function runVerification() {
     check('Embedded image is positioned below table', (imgInfo.range.tl.row as number) >= 15);
   }
 
-  // Verify Sheet 2 and Sheet 3
-  const regSheet = wb.getWorksheet('Chainage_Register');
-  const bndSheet = wb.getWorksheet('Catchment_Boundary');
-  check('Chainage_Register sheet exists', !!regSheet && regSheet.rowCount >= 6);
-  check('Catchment_Boundary sheet exists', !!bndSheet && bndSheet.rowCount >= samplePolygon.length);
+  // Verify Sheet 2 and Sheet 3 are eliminated: ONLY 1st sheet exists
+  check('Server workbook has exactly 1 sheet', wb.worksheets.length === 1, `Sheets count: ${wb.worksheets.length}`);
+  check('Chainage_Register sheet is eliminated', wb.getWorksheet('Chainage_Register') === undefined);
+  check('Catchment_Boundary sheet is eliminated', wb.getWorksheet('Catchment_Boundary') === undefined);
 
   console.log('\n--- 3. Testing Client-side Workbook Generation with Snapshot ---');
   const sampleReport: HydrologyReport = {
@@ -194,6 +193,9 @@ async function runVerification() {
 
   const clientSummary = clientWb.worksheets[0];
   check('Client workbook summary sheet exists', clientSummary.name.includes('37+100'));
+  check('Client workbook has exactly 1 sheet', clientWb.worksheets.length === 1, `Sheets count: ${clientWb.worksheets.length}`);
+  check('Client Chainage_Register sheet is eliminated', clientWb.getWorksheet('Chainage_Register') === undefined);
+  check('Client Catchment_Boundary sheet is eliminated', clientWb.getWorksheet('Catchment_Boundary') === undefined);
   const clientImages = clientSummary.getImages();
   check('Client summary sheet has embedded snapshot image', clientImages.length > 0, `Image count: ${clientImages.length}`);
 
