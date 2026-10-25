@@ -833,7 +833,6 @@ export const WastewaterModelling: React.FC = () => {
         onToggleFlexTables={() => setIsFlexTablesOpen((prev) => !prev)}
         onToggleProfile={() => setIsProfileOpen((prev) => !prev)}
         onApplyAutoDesign={handleApplyAutoDesign}
-        onExportExcel={handleExportExcel}
         onExportInp={handleExportInp}
         onImportInp={handleImportInp}
         onLoadDemo={handleLoadDemo}

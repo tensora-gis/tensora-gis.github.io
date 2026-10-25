@@ -764,7 +764,6 @@ export const WaterDistributionModelling: React.FC = () => {
         onSampleElevations={handleSampleAllElevations}
         onToggleFlexTables={() => setIsFlexTablesOpen((prev) => !prev)}
         onToggleProfile={() => setIsProfileOpen((prev) => !prev)}
-        onExportExcel={handleExportExcel}
         onExportInp={handleExportInp}
         onImportInp={handleImportInp}
         onLoadDemo={handleLoadDemo}

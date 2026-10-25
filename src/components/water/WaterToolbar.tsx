@@ -17,7 +17,6 @@ import {
   Mountain,
   Layers,
   Table,
-  FileSpreadsheet,
   Download,
   Upload,
   FolderOpen,
@@ -42,7 +41,6 @@ interface WaterToolbarProps {
   onSampleElevations: () => void;
   onToggleFlexTables: () => void;
   onToggleProfile: () => void;
-  onExportExcel: () => void;
   onExportInp: () => void;
   onImportInp: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onLoadDemo: () => void;
@@ -74,7 +72,6 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
   onSampleElevations,
   onToggleFlexTables,
   onToggleProfile,
-  onExportExcel,
   onExportInp,
   onImportInp,
   onLoadDemo,
@@ -209,17 +206,6 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
             <span className="font-tech text-[11px]">Auto-Design</span>
           </button>
         )}
-
-        {/* Direct Calculation Excel Export */}
-        <button
-          onClick={onExportExcel}
-          disabled={!simulationSummary}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-emerald-400 hover:text-emerald-300 font-medium text-xs transition-colors cursor-pointer disabled:opacity-40"
-          title="Export detailed calculation sheet to Microsoft Excel (.xlsx)"
-        >
-          <FileSpreadsheet className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline font-tech text-[11px]">Export (.xlsx)</span>
-        </button>
 
         <button
           onClick={onToggleFlexTables}
