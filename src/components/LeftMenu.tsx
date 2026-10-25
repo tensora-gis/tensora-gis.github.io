@@ -30,7 +30,7 @@ export const LeftMenu: React.FC<LeftMenuProps> = ({
   const tabs = [
     {
       id: 'stormwater' as const,
-      name: 'Stormwater modelling',
+      name: 'Stormwater Modelling',
       icon: CloudRain,
     },
     {
