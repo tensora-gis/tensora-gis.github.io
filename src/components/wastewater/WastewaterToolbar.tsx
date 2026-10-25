@@ -151,6 +151,8 @@ export const WastewaterToolbar: React.FC<WastewaterToolbarProps> = ({
             <option value="depth" className="bg-[#111]">Invert Depth (Manholes)</option>
             <option value="slope" className="bg-[#111]">Slope % (Pipes)</option>
             <option value="surcharge" className="bg-[#111]">Surcharge & Flooding</option>
+            <option value="h2s-risk" className="bg-[#111]">H2S Corrosion Risk</option>
+            <option value="sizing-status" className="bg-[#111]">Sizing Compliance</option>
           </select>
         </div>
       </div>

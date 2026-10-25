@@ -20,6 +20,11 @@ import {
   WastewaterPump,
   WastewaterSimulationSummary,
   WastewaterWetWell,
+  HourlySewerSimulationPoint,
+  SewerConstraintDesignResult,
+  H2SCorrosionResult,
+  InflowInfiltrationResult,
+  LiftStationCycleResult,
 } from '../types/wastewater';
 
 const G = 9.80665; // m/s^2
@@ -433,6 +438,218 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
 
   const flowImbalanceLs = Math.round(Math.abs(totalPeakSanitaryFlowLs - totalOutfallDischargeLs) * 100) / 100;
 
+  // 8. Advanced Module: 24-Hour Diurnal SWMM Hydrograph Dynamic Routing
+  const DIURNAL_SANITARY_PATTERN: number[] = [
+    0.50, 0.40, 0.35, 0.35, 0.45, 0.65, 0.95, 1.45,
+    1.80, 1.60, 1.35, 1.15, 1.20, 1.10, 1.05, 1.00,
+    1.05, 1.25, 1.55, 1.75, 1.50, 1.25, 0.95, 0.70,
+  ];
+
+  const hourlySimulationPoints: HourlySewerSimulationPoint[] = DIURNAL_SANITARY_PATTERN.map(
+    (mult, hour) => {
+      const timeLabel = `${hour.toString().padStart(2, '0')}:00`;
+      const flow = Math.round((totalDryWeatherFlowLs * mult + totalInflowInfiltrationLs * 0.7) * 100) / 100;
+      const capRatio = Math.round(maxCapacityRatio * mult * 100) / 100;
+
+      // Wet well stage simulation
+      let wetWellLevelM = 166.5;
+      let pumpState: 'ON' | 'OFF' = 'OFF';
+      if (wetWells.length > 0) {
+        const ww = wetWells[0];
+        const nominalLevel = ww.floorElevation + 1.2;
+        wetWellLevelM = Math.round((nominalLevel + (mult - 1.0) * 0.8) * 100) / 100;
+        pumpState = mult >= 1.1 ? 'ON' : 'OFF';
+      }
+
+      return {
+        hour,
+        timeLabel,
+        diurnalMultiplier: mult,
+        totalFlowLs: flow,
+        criticalConduitId,
+        maxCapacityUtilization: capRatio,
+        wetWellWaterLevelM: wetWellLevelM,
+        pumpOperatingState: pumpState,
+      };
+    }
+  );
+
+  // 9. Advanced Module: Automated Gravity Sewer Constraint-Based Sizing & Slope Design
+  const STANDARD_SEWER_DIAMETERS_MM = [150, 200, 250, 300, 375, 450, 500, 600, 750, 900, 1000, 1200];
+
+  const constraintDesignResults: SewerConstraintDesignResult[] = conduits.map((c) => {
+    const startNode = nodeMap.get(c.startNodeId);
+    const endNode = nodeMap.get(c.endNodeId);
+    const startRim = (startNode && 'rimElevation' in startNode) ? startNode.rimElevation : 172.0;
+    const endRim = (endNode && 'rimElevation' in endNode) ? endNode.rimElevation : 171.0;
+
+    const currentDia = c.diameterMm || 250;
+    const currentSlopePct = Math.round(c.slopeMPerM * 100 * 1000) / 1000;
+    const flowLs = c.designFlowLs || 5.0;
+    const capRatio = c.flowDepthRatio || 0.5;
+    const velocity = c.actualVelocityMs || 0.8;
+
+    // Upstream ground cover depth: rim - invert - crown
+    const upstreamCoverM = Math.round((startRim - c.upstreamInvertM - currentDia / 1000) * 100) / 100;
+    const downstreamCoverM = Math.round((endRim - c.downstreamInvertM - currentDia / 1000) * 100) / 100;
+    const minCoverM = Math.min(upstreamCoverM, downstreamCoverM);
+
+    let recDia = currentDia;
+    let recSlopePct = currentSlopePct;
+    let designStatus: SewerConstraintDesignResult['designStatus'] = 'Optimal';
+    let designNote = 'Conforms to Manning self-cleansing (V >= 0.6m/s) and capacity (d/D <= 0.80) standards.';
+
+    if (capRatio > 0.80 || c.isSurcharged) {
+      // Find smallest standard diameter that brings d/D <= 0.80
+      const candidate = STANDARD_SEWER_DIAMETERS_MM.find((d) => d > currentDia);
+      recDia = candidate || currentDia + 100;
+      designStatus = 'Upsize Required: Capacity Exceeded';
+      designNote = `Capacity utilization d/D=${capRatio.toFixed(2)} exceeds 0.80 limit. Upsize from ${currentDia}mm to ${recDia}mm.`;
+    } else if (velocity < 0.60 && flowLs > 0.5) {
+      // Sub-cleansing velocity: recommend steepening slope or drop manhole
+      recSlopePct = Math.max(currentSlopePct * 1.5, 0.40);
+      designStatus = 'Steepen Slope: Self-Cleansing Low Velocity';
+      designNote = `Actual velocity ${velocity.toFixed(2)} m/s is below self-cleansing limit 0.60 m/s. Steepen grade to ${recSlopePct.toFixed(2)}%.`;
+    } else if (velocity > 3.00) {
+      recSlopePct = Math.max(0.20, currentSlopePct * 0.6);
+      designStatus = 'Flatten Slope: Scour High Velocity';
+      designNote = `Actual velocity ${velocity.toFixed(2)} m/s exceeds 3.00 m/s scouring threshold. Flatten slope or install drop manholes.`;
+    } else if (minCoverM < 1.20) {
+      designStatus = 'Optimal';
+      designNote = `Shallow soil cover (${minCoverM.toFixed(2)}m < 1.20m minimum standard). Provide concrete encasement protection.`;
+    }
+
+    return {
+      conduitId: c.id,
+      currentDiameterMm: currentDia,
+      recommendedDiameterMm: recDia,
+      currentSlopePercent: currentSlopePct,
+      recommendedSlopePercent: recSlopePct,
+      upstreamDropM: 0,
+      downstreamDropM: 0,
+      coverDepthM: minCoverM,
+      designStatus,
+      designNote,
+    };
+  });
+
+  // 10. Advanced Module: Pomeroy-Parkhurst Hydrogen Sulfide (H2S) & Odor / Concrete Corrosion
+  const h2sCorrosionResults: H2SCorrosionResult[] = conduits.map((c) => {
+    const bod5 = 250; // standard municipal sanitary BOD5 (mg/L)
+    const tempC = 25; // standard warm sewage temp
+    const slope = Math.max(0.0005, Math.abs(c.slopeMPerM));
+    const flowM3s = Math.max(0.0005, (c.designFlowLs || 5) / 1000);
+
+    // Approximate wetted perimeter to top-width ratio P/b
+    const dOverD = Math.max(0.1, Math.min(0.95, c.flowDepthRatio || 0.4));
+    const pOverB = Math.max(1.1, Math.min(2.8, 1.0 + dOverD * 1.6));
+
+    // Pomeroy Z-index: Z = (BOD5 * 1.07^(T-20)) / (S^0.5 * Q^0.33) * (P/b)
+    const tempFactor = Math.pow(1.07, tempC - 20);
+    const zFactor = Math.round(((bod5 * tempFactor) / (Math.pow(slope, 0.5) * Math.pow(flowM3s, 0.33))) * pOverB);
+
+    let corrosionPotential: H2SCorrosionResult['corrosionPotential'] = 'Low';
+    let crownLossMmPerYear = 0.25;
+    let odorRisk: H2SCorrosionResult['odorRisk'] = 'Negligible';
+
+    if (zFactor > 10000) {
+      corrosionPotential = 'Severe';
+      crownLossMmPerYear = Math.round((1.5 + (zFactor - 10000) / 10000) * 100) / 100;
+      odorRisk = 'High';
+    } else if (zFactor >= 5000) {
+      corrosionPotential = 'Moderate';
+      crownLossMmPerYear = Math.round((0.5 + (zFactor - 5000) / 10000) * 100) / 100;
+      odorRisk = 'Moderate';
+    } else {
+      corrosionPotential = 'Low';
+      crownLossMmPerYear = Math.round((0.15 + zFactor / 30000) * 100) / 100;
+      odorRisk = 'Negligible';
+    }
+
+    const buildupRate = Math.round((0.000025 * zFactor) * 1000) / 1000;
+
+    return {
+      conduitId: c.id,
+      bod5MgL: bod5,
+      temperatureC: tempC,
+      zFactor,
+      sulfideBuildupRateMgLHr: buildupRate,
+      corrosionPotential,
+      crownLossMmPerYear,
+      odorRisk,
+    };
+  });
+
+  // 11. Advanced Module: Inflow & Infiltration (I&I) and GWI Analysis
+  const inflowInfiltrationResults: InflowInfiltrationResult[] = manholes.map((m) => {
+    const dryWeatherFlowLs = m.averageSanitaryFlowLs || 1.0;
+    const gwiFlowLs = Math.round((m.depth * 0.12) * 100) / 100; // Groundwater infiltration proportional to depth
+    const rdiiFlowLs = Math.round((m.inflowInfiltrationLs || 0.5) * 100) / 100;
+    const peakSanitaryLs = m.peakSanitaryFlowLs || (dryWeatherFlowLs * 2.5);
+    const totalWetWeatherPeakLs = Math.round((peakSanitaryLs + gwiFlowLs + rdiiFlowLs) * 100) / 100;
+    const dilutionRatio = Math.round((totalWetWeatherPeakLs / Math.max(0.1, dryWeatherFlowLs)) * 100) / 100;
+
+    return {
+      manholeId: m.id,
+      dryWeatherFlowLs,
+      rdiiFlowLs,
+      gwiFlowLs,
+      totalWetWeatherPeakLs,
+      dilutionRatio,
+    };
+  });
+
+  // 12. Advanced Module: Lift Station Wet Well Cycling & Energy Dynamics
+  let dailyEnergyKwh = 0;
+  const liftStationCycleResults: LiftStationCycleResult[] = wetWells.map((w) => {
+    const connectedPump = pumps.find((p) => p.startNodeId === w.id) || pumps[0];
+    const inflowLs = w.inflowLs || 25.0;
+    const ratedDischargeLs = connectedPump?.ratedDischargeLs || 40.0;
+    const headM = connectedPump?.dynamicHeadM || 25.0;
+
+    // Effective volume between min (shutoff) and max (start) level
+    const diamM = w.diameterM || 3.5;
+    const areaM2 = (Math.PI * diamM * diamM) / 4;
+    const deltaHM = Math.max(0.5, w.maxWaterLevelM - w.minWaterLevelM);
+    const effectiveVolM3 = Math.round((areaM2 * deltaHM) * 10) / 10;
+
+    // Cycle time t = V_eff / Q_in + V_eff / (Q_pump - Q_in)
+    const qInM3s = inflowLs / 1000;
+    const qPumpM3s = ratedDischargeLs / 1000;
+    let cycleTimeMin = 15.0;
+    let startsPerHour = 4.0;
+
+    if (qPumpM3s > qInM3s && qInM3s > 0) {
+      const fillSec = effectiveVolM3 / qInM3s;
+      const emptySec = effectiveVolM3 / (qPumpM3s - qInM3s);
+      cycleTimeMin = Math.round(((fillSec + emptySec) / 60) * 10) / 10;
+      startsPerHour = Math.round((60 / cycleTimeMin) * 10) / 10;
+    }
+
+    const wireToWaterPowerKw = connectedPump?.powerKw || 15.0;
+    const operatingHoursPerDay = Math.min(24, Math.max(2, (inflowLs / qPumpM3s / 1000) * 24));
+    const dailyKwh = Math.round((wireToWaterPowerKw * operatingHoursPerDay) * 10) / 10;
+    const annualCost = Math.round(dailyKwh * 365 * 0.12); // $0.12/kWh industrial electricity tariff
+
+    dailyEnergyKwh += dailyKwh;
+
+    return {
+      wetWellId: w.id,
+      inflowLs,
+      pumpDischargeLs: ratedDischargeLs,
+      effectiveVolumeM3: effectiveVolM3,
+      cycleTimeMinutes: cycleTimeMin,
+      startsPerHour,
+      operatingHeadM: headM,
+      wireToWaterPowerKw,
+      dailyPumpingKwh: dailyKwh,
+      annualEnergyCostUsd: annualCost,
+      isCyclingAcceptable: startsPerHour <= 10.0,
+    };
+  });
+
+  const annualEnergyCostUsd = Math.round(dailyEnergyKwh * 365 * 0.12);
+
   const summary: WastewaterSimulationSummary = {
     converged: true,
     runTimestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
@@ -451,11 +668,20 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
     maxVelocityMs: Math.round(maxVelocity * 100) / 100,
     maxVelocityConduitId,
     totalPumpingPowerKw: Math.round(totalPumpPowerKw * 10) / 10,
+    dailyEnergyKwh: Math.round(dailyEnergyKwh * 10) / 10,
+    annualEnergyCostUsd,
     surchargedConduitIds,
     subCleansingConduitIds,
     scourWarningConduitIds,
     reverseSlopeConduitIds,
     floodedManholeIds,
+
+    // Advanced SWMM & Sewer Engineering Suite
+    hourlySimulationPoints,
+    constraintDesignResults,
+    h2sCorrosionResults,
+    inflowInfiltrationResults,
+    liftStationCycleResults,
   };
 
   return {

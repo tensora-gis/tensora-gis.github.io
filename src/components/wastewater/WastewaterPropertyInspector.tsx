@@ -7,6 +7,7 @@ import {
   WastewaterPump,
   WastewaterForceMain,
   WastewaterOutfall,
+  WastewaterSimulationSummary,
 } from '../../types/wastewater';
 import { sampleWastewaterGroundElevation } from '../../utils/wastewaterTerrainService';
 import {
@@ -22,6 +23,7 @@ import {
 
 interface WastewaterPropertyInspectorProps {
   element: WastewaterNetworkElement | null;
+  summary?: WastewaterSimulationSummary | null;
   onClose: () => void;
   onUpdateElement: (updated: WastewaterNetworkElement) => void;
   onDeleteElement: (id: string, type: WastewaterNetworkElement['type']) => void;
@@ -29,6 +31,7 @@ interface WastewaterPropertyInspectorProps {
 
 export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorProps> = ({
   element,
+  summary,
   onClose,
   onUpdateElement,
   onDeleteElement,
@@ -283,6 +286,23 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
                       : 'FREE-FLOW'}
                   </span>
                 </div>
+
+                {(() => {
+                  const ii = (summary?.inflowInfiltrationResults || []).find((i) => i.manholeId === element.id);
+                  if (!ii) return null;
+                  return (
+                    <div className="pt-2 border-t border-[#1e1e1e] space-y-1">
+                      <div className="flex justify-between text-xs text-[#a3a3a3]">
+                        <span>GWI Infiltration:</span>
+                        <span className="text-white font-bold">{ii.gwiFlowLs.toFixed(2)} L/s</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-[#a3a3a3]">
+                        <span>Wet/Dry Dilution:</span>
+                        <span className="text-sky-400 font-bold">{ii.dilutionRatio.toFixed(1)}x</span>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </>
@@ -445,6 +465,44 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
                     {(element as WastewaterConduit).flowDepthRatio?.toFixed(2)}
                   </span>
                 </div>
+
+                {/* Advanced Diagnostics: H2S & Sizing */}
+                {(() => {
+                  const h2s = (summary?.h2sCorrosionResults || []).find((h) => h.conduitId === element.id);
+                  const opt = (summary?.constraintDesignResults || []).find((o) => o.conduitId === element.id);
+                  return (
+                    <>
+                      {h2s && (
+                        <div className="pt-2 border-t border-[#1e1e1e] space-y-1">
+                          <div className="flex justify-between text-xs text-[#a3a3a3]">
+                            <span>H2S Risk:</span>
+                            <span
+                              className={
+                                h2s.corrosionPotential === 'Severe'
+                                  ? 'text-red-400 font-bold'
+                                  : h2s.corrosionPotential === 'Moderate'
+                                  ? 'text-amber-400 font-bold'
+                                  : 'text-emerald-400 font-bold'
+                              }
+                            >
+                              {h2s.corrosionPotential} (Z={h2s.zFactor})
+                            </span>
+                          </div>
+                          <div className="flex justify-between text-xs text-[#a3a3a3]">
+                            <span>Crown Loss:</span>
+                            <span className="text-white font-mono">{h2s.crownLossMmPerYear.toFixed(2)} mm/yr</span>
+                          </div>
+                        </div>
+                      )}
+                      {opt && opt.designStatus !== 'Optimal' && (
+                        <div className="pt-2 border-t border-[#1e1e1e] space-y-1">
+                          <span className="text-[10px] uppercase font-tech text-amber-400 font-bold">Optimization Alert:</span>
+                          <p className="text-[10px] text-[#bbb] font-mono leading-tight">{opt.designNote}</p>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             )}
           </>

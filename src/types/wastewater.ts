@@ -177,6 +177,69 @@ export interface WastewaterNetwork {
   outfalls: WastewaterOutfall[];
 }
 
+export interface HourlySewerSimulationPoint {
+  hour: number;
+  timeLabel: string;
+  diurnalMultiplier: number;
+  totalFlowLs: number;
+  criticalConduitId: string;
+  maxCapacityUtilization: number;
+  wetWellWaterLevelM: number;
+  pumpOperatingState: 'ON' | 'OFF';
+}
+
+export interface SewerConstraintDesignResult {
+  conduitId: string;
+  currentDiameterMm: number;
+  recommendedDiameterMm: number;
+  currentSlopePercent: number;
+  recommendedSlopePercent: number;
+  upstreamDropM: number;
+  downstreamDropM: number;
+  coverDepthM: number;
+  designStatus:
+    | 'Optimal'
+    | 'Upsize Required: Capacity Exceeded'
+    | 'Steepen Slope: Self-Cleansing Low Velocity'
+    | 'Flatten Slope: Scour High Velocity'
+    | 'Drop Manhole Required';
+  designNote: string;
+}
+
+export interface H2SCorrosionResult {
+  conduitId: string;
+  bod5MgL: number;
+  temperatureC: number;
+  zFactor: number;
+  sulfideBuildupRateMgLHr: number;
+  corrosionPotential: 'Low' | 'Moderate' | 'Severe';
+  crownLossMmPerYear: number;
+  odorRisk: 'Negligible' | 'Moderate' | 'High';
+}
+
+export interface InflowInfiltrationResult {
+  manholeId: string;
+  dryWeatherFlowLs: number;
+  rdiiFlowLs: number; // Rainfall-Derived Inflow & Infiltration
+  gwiFlowLs: number; // Groundwater Infiltration
+  totalWetWeatherPeakLs: number;
+  dilutionRatio: number;
+}
+
+export interface LiftStationCycleResult {
+  wetWellId: string;
+  inflowLs: number;
+  pumpDischargeLs: number;
+  effectiveVolumeM3: number;
+  cycleTimeMinutes: number;
+  startsPerHour: number;
+  operatingHeadM: number;
+  wireToWaterPowerKw: number;
+  dailyPumpingKwh: number;
+  annualEnergyCostUsd: number;
+  isCyclingAcceptable: boolean; // startsPerHour <= 10
+}
+
 /**
  * Wastewater Simulation Executive Summary
  */
@@ -198,11 +261,20 @@ export interface WastewaterSimulationSummary {
   maxVelocityMs: number;
   maxVelocityConduitId?: string;
   totalPumpingPowerKw: number;
+  dailyEnergyKwh?: number;
+  annualEnergyCostUsd?: number;
   surchargedConduitIds: string[];
   subCleansingConduitIds: string[]; // V < 0.6 m/s
   scourWarningConduitIds: string[]; // V > 3.0 m/s
   reverseSlopeConduitIds: string[];
   floodedManholeIds: string[];
+
+  // Advanced SWMM & Sewer Suite Modules
+  hourlySimulationPoints?: HourlySewerSimulationPoint[];
+  constraintDesignResults?: SewerConstraintDesignResult[];
+  h2sCorrosionResults?: H2SCorrosionResult[];
+  inflowInfiltrationResults?: InflowInfiltrationResult[];
+  liftStationCycleResults?: LiftStationCycleResult[];
 }
 
 export type ActiveWastewaterTool =
@@ -222,4 +294,6 @@ export type WastewaterThematicDisplay =
   | 'velocity' // pipe velocity
   | 'depth' // manhole invert depth
   | 'slope' // pipe slope %
-  | 'surcharge'; // surcharged / flood status
+  | 'surcharge' // surcharged / flood status
+  | 'h2s-risk' // H2S Pomeroy-Parkhurst corrosion risk
+  | 'sizing-status'; // Constraint design sizing compliance

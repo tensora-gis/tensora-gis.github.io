@@ -11,12 +11,14 @@ import {
   WastewaterPump,
   WastewaterForceMain,
   WastewaterOutfall,
+  WastewaterSimulationSummary,
 } from '../../types/wastewater';
 import { calculateWastewaterDistanceM } from '../../utils/wastewaterTerrainService';
 import { Crosshair } from 'lucide-react';
 
 interface WastewaterMapViewportProps {
   network: WastewaterNetwork;
+  summary?: WastewaterSimulationSummary | null;
   activeTool: ActiveWastewaterTool;
   thematicDisplay: WastewaterThematicDisplay;
   selectedElement: WastewaterNetworkElement | null;
@@ -34,6 +36,7 @@ interface WastewaterMapViewportProps {
 
 export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
   network,
+  summary,
   activeTool,
   thematicDisplay,
   selectedElement,
@@ -267,6 +270,17 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         else color = '#10b981';
       } else if (thematicDisplay === 'surcharge') {
         color = c.isSurcharged ? '#ef4444' : '#10b981';
+      } else if (thematicDisplay === 'h2s-risk') {
+        const h2s = (summary?.h2sCorrosionResults || []).find((h) => h.conduitId === c.id);
+        if (h2s?.corrosionPotential === 'Severe') color = '#ef4444';
+        else if (h2s?.corrosionPotential === 'Moderate') color = '#f59e0b';
+        else color = '#10b981';
+      } else if (thematicDisplay === 'sizing-status') {
+        const opt = (summary?.constraintDesignResults || []).find((o) => o.conduitId === c.id);
+        if (opt?.designStatus === 'Upsize Required: Capacity Exceeded') color = '#ef4444';
+        else if (opt?.designStatus === 'Steepen Slope: Self-Cleansing Low Velocity') color = '#f59e0b';
+        else if (opt?.designStatus === 'Flatten Slope: Scour High Velocity') color = '#a855f7';
+        else color = '#10b981';
       }
 
       if (isSelected) {
@@ -290,6 +304,9 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         }
       });
 
+      const conduitH2s = (summary?.h2sCorrosionResults || []).find((h) => h.conduitId === c.id);
+      const conduitOpt = (summary?.constraintDesignResults || []).find((o) => o.conduitId === c.id);
+
       polyline.bindTooltip(
         `<div style="font-family: monospace; font-size: 11px;">
           <strong>${c.label || c.id}</strong><br/>
@@ -297,7 +314,9 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
           Length: ${c.lengthM.toFixed(1)} m | Slope: ${(c.slopeMPerM * 100).toFixed(3)}%<br/>
           ${c.designFlowLs !== undefined ? `Flow Q: <strong>${c.designFlowLs.toFixed(2)} L/s</strong><br/>` : ''}
           ${c.actualVelocityMs !== undefined ? `Velocity: <strong>${c.actualVelocityMs.toFixed(2)} m/s</strong><br/>` : ''}
-          ${c.flowDepthRatio !== undefined ? `Fullness d/D: <strong>${c.flowDepthRatio.toFixed(2)}</strong>` : ''}
+          ${c.flowDepthRatio !== undefined ? `Fullness d/D: <strong>${c.flowDepthRatio.toFixed(2)}</strong><br/>` : ''}
+          ${conduitH2s ? `H2S Risk: <strong>${conduitH2s.corrosionPotential} (Z=${conduitH2s.zFactor})</strong><br/>` : ''}
+          ${conduitOpt ? `Sizing: <strong>${conduitOpt.designStatus}</strong>` : ''}
         </div>`,
         { sticky: true }
       );
@@ -666,6 +685,50 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
           <div className="flex items-center gap-1.5 text-xs">
             <span className="w-4 h-1 bg-[#ef4444]" />
             <span>&gt; 3.0 m/s (High Scour)</span>
+          </div>
+        </div>
+      )}
+
+      {thematicDisplay === 'h2s-risk' && (
+        <div className="absolute bottom-4 left-4 z-20 bg-[#111]/95 border border-[#222] rounded-lg p-2.5 text-[11px] font-mono shadow-xl backdrop-blur flex flex-col gap-1">
+          <span className="text-[10px] uppercase font-tech text-[#737373] font-bold">
+            H2S Corrosion Risk Legend (Pomeroy Z)
+          </span>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#10b981]" />
+            <span>Z &lt; 5000 (Low Risk)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#f59e0b]" />
+            <span>5000 - 10000 (Moderate Risk)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#ef4444]" />
+            <span>Z &gt; 10000 (Severe Corrosion)</span>
+          </div>
+        </div>
+      )}
+
+      {thematicDisplay === 'sizing-status' && (
+        <div className="absolute bottom-4 left-4 z-20 bg-[#111]/95 border border-[#222] rounded-lg p-2.5 text-[11px] font-mono shadow-xl backdrop-blur flex flex-col gap-1">
+          <span className="text-[10px] uppercase font-tech text-[#737373] font-bold">
+            Sizing Optimization Legend
+          </span>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#10b981]" />
+            <span>Optimal (Capacity &amp; Velocity OK)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#ef4444]" />
+            <span>Upsize Required (d/D &gt; 0.80)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#f59e0b]" />
+            <span>Steepen Slope (V &lt; 0.60 m/s)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-4 h-1 bg-[#a855f7]" />
+            <span>Flatten Slope (V &gt; 3.0 m/s)</span>
           </div>
         </div>
       )}

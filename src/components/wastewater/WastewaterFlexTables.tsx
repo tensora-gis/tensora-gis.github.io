@@ -6,12 +6,15 @@ import {
   WastewaterConduit,
   WastewaterWetWell,
   WastewaterPump,
+  WastewaterForceMain,
   WastewaterOutfall,
+  WastewaterSimulationSummary,
 } from '../../types/wastewater';
 import { X, Table, Search, Download, Trash2, FileSpreadsheet, Plus } from 'lucide-react';
 
 interface WastewaterFlexTablesProps {
   network: WastewaterNetwork;
+  summary?: WastewaterSimulationSummary | null;
   onUpdateElement: (elem: WastewaterNetworkElement) => void;
   onSelectElement: (elem: WastewaterNetworkElement) => void;
   onDeleteElement: (id: string, type: WastewaterNetworkElement['type']) => void;
@@ -19,10 +22,19 @@ interface WastewaterFlexTablesProps {
   onExportExcel?: () => void;
 }
 
-type ActiveTableTab = 'manholes' | 'conduits' | 'pumps' | 'outfalls';
+type ActiveTableTab =
+  | 'manholes'
+  | 'conduits'
+  | 'pumps'
+  | 'forcemains'
+  | 'outfalls'
+  | 'sizing'
+  | 'h2s'
+  | 'eps';
 
 export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
   network,
+  summary,
   onUpdateElement,
   onSelectElement,
   onDeleteElement,
@@ -55,10 +67,30 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
       network.pumps.forEach((p) => {
         csv += `${p.id},Pump,${p.label},-,-,${p.ratedDischargeLs},${p.dynamicHeadM},${p.powerKw ?? 0}\n`;
       });
+    } else if (activeTab === 'forcemains') {
+      csv = 'ID,Label,FromNode,ToNode,Length(m),Diameter(mm),Material,Velocity(m/s),FrictionLoss(m)\n';
+      network.forceMains.forEach((fm) => {
+        csv += `${fm.id},${fm.label},${fm.startNodeId},${fm.endNodeId},${fm.lengthM},${fm.diameterMm},${fm.material},${fm.velocityMs ?? ''},${fm.frictionHeadlossM ?? ''}\n`;
+      });
     } else if (activeTab === 'outfalls') {
       csv = 'ID,Label,Latitude,Longitude,InvertElev(m),WaterLevel(m),Discharge(L/s)\n';
       network.outfalls.forEach((o) => {
         csv += `${o.id},${o.label},${o.lat},${o.lng},${o.invertElevation},${o.receivingWaterElevation},${o.totalDischargeLs ?? ''}\n`;
+      });
+    } else if (activeTab === 'sizing') {
+      csv = 'ConduitID,CurrentDia(mm),RecommendedDia(mm),CurrentSlope(%),RecommendedSlope(%),CoverDepth(m),DesignStatus,Note\n';
+      (summary?.constraintDesignResults || []).forEach((s) => {
+        csv += `${s.conduitId},${s.currentDiameterMm},${s.recommendedDiameterMm},${s.currentSlopePercent},${s.recommendedSlopePercent},${s.coverDepthM},${s.designStatus},"${s.designNote}"\n`;
+      });
+    } else if (activeTab === 'h2s') {
+      csv = 'ConduitID,BOD5(mg/L),Temp(C),ZFactor,SulfideRate(mg/L.hr),OdorRisk,CrownLoss(mm/yr),CorrosionPotential\n';
+      (summary?.h2sCorrosionResults || []).forEach((h) => {
+        csv += `${h.conduitId},${h.bod5MgL},${h.temperatureC},${h.zFactor},${h.sulfideBuildupRateMgLHr},${h.odorRisk},${h.crownLossMmPerYear},${h.corrosionPotential}\n`;
+      });
+    } else if (activeTab === 'eps') {
+      csv = 'Hour,Time,Multiplier,TotalFlow(L/s),CriticalConduit,MaxCapacity(d/D),WetWellLevel(m),PumpState\n';
+      (summary?.hourlySimulationPoints || []).forEach((e) => {
+        csv += `${e.hour},${e.timeLabel},${e.diurnalMultiplier},${e.totalFlowLs},${e.criticalConduitId},${e.maxCapacityUtilization},${e.wetWellWaterLevelM},${e.pumpOperatingState}\n`;
       });
     }
 
@@ -82,19 +114,23 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
           </div>
 
           {/* Table Tab Switcher */}
-          <div className="flex items-center gap-1 bg-[#0a0a0a] p-0.5 rounded-lg border border-[#222]">
+          <div className="flex items-center gap-1 bg-[#0a0a0a] p-0.5 rounded-lg border border-[#222] overflow-x-auto max-w-2xl">
             {(
               [
                 ['manholes', `Manholes (${network.manholes.length})`],
                 ['conduits', `Conduits (${network.conduits.length})`],
                 ['pumps', `Pumps & Lift (${network.wetWells.length + network.pumps.length})`],
+                ['forcemains', `Force Mains (${network.forceMains.length})`],
                 ['outfalls', `Outfalls (${network.outfalls.length})`],
+                ['sizing', `Pipe Sizing (${summary?.constraintDesignResults?.length || 0})`],
+                ['h2s', `H2S Risk (${summary?.h2sCorrosionResults?.length || 0})`],
+                ['eps', `24-Hr Dynamic (${summary?.hourlySimulationPoints?.length || 0}h)`],
               ] as const
             ).map(([tabId, label]) => (
               <button
                 key={tabId}
                 onClick={() => setActiveTab(tabId)}
-                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
+                className={`px-2.5 py-1 rounded text-xs font-medium transition-colors cursor-pointer whitespace-nowrap ${
                   activeTab === tabId
                     ? 'bg-amber-500 text-[#0a0a0a] font-bold'
                     : 'text-[#888] hover:text-white'
@@ -661,6 +697,201 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* 5. Force Mains Table */}
+        {activeTab === 'forcemains' && (
+          <table className="w-full text-left border-collapse min-w-[750px]">
+            <thead className="bg-[#141414] sticky top-0 text-[#888] text-[11px] font-tech uppercase border-b border-[#222]">
+              <tr>
+                <th className="p-2 border-r border-[#222]">ID</th>
+                <th className="p-2 border-r border-[#222]">Label</th>
+                <th className="p-2 border-r border-[#222]">From Station</th>
+                <th className="p-2 border-r border-[#222]">To Node</th>
+                <th className="p-2 border-r border-[#222]">Diameter (mm)</th>
+                <th className="p-2 border-r border-[#222]">Material</th>
+                <th className="p-2 border-r border-[#222]">Length (m)</th>
+                <th className="p-2 border-r border-[#222]">Velocity (m/s)</th>
+                <th className="p-2 border-r border-[#222]">Headloss (m)</th>
+                <th className="p-2 text-center w-12">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1e1e1e] text-[11px]">
+              {network.forceMains.map((fm) => (
+                <tr
+                  key={fm.id}
+                  onClick={() => onSelectElement(fm)}
+                  className="hover:bg-[#1a1a1a] cursor-pointer"
+                >
+                  <td className="p-2 font-bold text-sky-400 border-r border-[#1e1e1e]">{fm.id}</td>
+                  <td className="p-1 border-r border-[#1e1e1e]">
+                    <input
+                      type="text"
+                      value={fm.label}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onUpdateElement({ ...fm, label: e.target.value })}
+                      className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                    />
+                  </td>
+                  <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{fm.startNodeId}</td>
+                  <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{fm.endNodeId}</td>
+                  <td className="p-1 border-r border-[#1e1e1e]">
+                    <input
+                      type="number"
+                      step="25"
+                      value={fm.diameterMm}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onUpdateElement({ ...fm, diameterMm: parseInt(e.target.value) || 150 })}
+                      className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
+                    />
+                  </td>
+                  <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{fm.material}</td>
+                  <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{fm.lengthM}m</td>
+                  <td className="p-2 text-white font-mono border-r border-[#1e1e1e]">{fm.velocityMs?.toFixed(2) ?? '-'}</td>
+                  <td className="p-2 text-amber-400 font-mono border-r border-[#1e1e1e]">{fm.frictionHeadlossM?.toFixed(1) ?? '-'}</td>
+                  <td className="p-2 text-center">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteElement(fm.id, 'force-main');
+                      }}
+                      className="text-[#666] hover:text-red-400 p-0.5 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* 6. Pipe Sizing & Optimization Table */}
+        {activeTab === 'sizing' && (
+          <table className="w-full text-left border-collapse min-w-[750px]">
+            <thead className="bg-[#141414] sticky top-0 text-[#888] text-[11px] font-tech uppercase border-b border-[#222]">
+              <tr>
+                <th className="p-2 border-r border-[#222]">Conduit ID</th>
+                <th className="p-2 border-r border-[#222]">Current Diam (mm)</th>
+                <th className="p-2 border-r border-[#222]">Optimized Diam (mm)</th>
+                <th className="p-2 border-r border-[#222]">Slope (%)</th>
+                <th className="p-2 border-r border-[#222]">Soil Cover (m)</th>
+                <th className="p-2 border-r border-[#222]">Design Status</th>
+                <th className="p-2">Engineering Recommendation</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1e1e1e] text-[11px]">
+              {(summary?.constraintDesignResults || []).map((s) => (
+                <tr key={s.conduitId} className="hover:bg-[#1a1a1a]">
+                  <td className="p-2 font-bold text-sky-400 border-r border-[#1e1e1e]">{s.conduitId}</td>
+                  <td className="p-2 text-white border-r border-[#1e1e1e]">{s.currentDiameterMm} mm</td>
+                  <td className="p-2 font-bold text-amber-400 border-r border-[#1e1e1e]">{s.recommendedDiameterMm} mm</td>
+                  <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{s.currentSlopePercent.toFixed(3)}%</td>
+                  <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{s.coverDepthM.toFixed(2)} m</td>
+                  <td className="p-2 border-r border-[#1e1e1e]">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        s.designStatus === 'Optimal'
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : s.designStatus.includes('Upsize')
+                          ? 'bg-red-500/20 text-red-400'
+                          : 'bg-amber-500/20 text-amber-400'
+                      }`}
+                    >
+                      {s.designStatus}
+                    </span>
+                  </td>
+                  <td className="p-2 text-[#bbb] font-mono text-[10px]">{s.designNote}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* 7. H2S Corrosion & Odor Table */}
+        {activeTab === 'h2s' && (
+          <table className="w-full text-left border-collapse min-w-[750px]">
+            <thead className="bg-[#141414] sticky top-0 text-[#888] text-[11px] font-tech uppercase border-b border-[#222]">
+              <tr>
+                <th className="p-2 border-r border-[#222]">Conduit ID</th>
+                <th className="p-2 border-r border-[#222]">BOD5 (mg/L)</th>
+                <th className="p-2 border-r border-[#222]">Temp (°C)</th>
+                <th className="p-2 border-r border-[#222]">Pomeroy Z-Factor</th>
+                <th className="p-2 border-r border-[#222]">Sulfide Buildup (mg/L·hr)</th>
+                <th className="p-2 border-r border-[#222]">Odor Potential</th>
+                <th className="p-2 border-r border-[#222]">Crown Loss (mm/yr)</th>
+                <th className="p-2">Corrosion Potential</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1e1e1e] text-[11px]">
+              {(summary?.h2sCorrosionResults || []).map((h) => (
+                <tr key={h.conduitId} className="hover:bg-[#1a1a1a]">
+                  <td className="p-2 font-bold text-sky-400 border-r border-[#1e1e1e]">{h.conduitId}</td>
+                  <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{h.bod5MgL} mg/L</td>
+                  <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{h.temperatureC}°C</td>
+                  <td className="p-2 font-mono font-bold text-white border-r border-[#1e1e1e]">{h.zFactor}</td>
+                  <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{h.sulfideBuildupRateMgLHr.toFixed(3)}</td>
+                  <td className="p-2 border-r border-[#1e1e1e]">{h.odorRisk}</td>
+                  <td className="p-2 font-mono text-amber-400 border-r border-[#1e1e1e]">{h.crownLossMmPerYear.toFixed(2)} mm/yr</td>
+                  <td className="p-2">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        h.corrosionPotential === 'Severe'
+                          ? 'bg-red-500/20 text-red-400'
+                          : h.corrosionPotential === 'Moderate'
+                          ? 'bg-amber-500/20 text-amber-400'
+                          : 'bg-emerald-500/20 text-emerald-400'
+                      }`}
+                    >
+                      {h.corrosionPotential}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* 8. 24-Hour Diurnal SWMM Table */}
+        {activeTab === 'eps' && (
+          <table className="w-full text-left border-collapse min-w-[750px]">
+            <thead className="bg-[#141414] sticky top-0 text-[#888] text-[11px] font-tech uppercase border-b border-[#222]">
+              <tr>
+                <th className="p-2 border-r border-[#222]">Hour</th>
+                <th className="p-2 border-r border-[#222]">Time</th>
+                <th className="p-2 border-r border-[#222]">Multiplier</th>
+                <th className="p-2 border-r border-[#222]">System Flow (L/s)</th>
+                <th className="p-2 border-r border-[#222]">Critical Conduit</th>
+                <th className="p-2 border-r border-[#222]">Peak d/D</th>
+                <th className="p-2 border-r border-[#222]">Wet Well Water Level</th>
+                <th className="p-2">Lift Pump Duty</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1e1e1e] text-[11px]">
+              {(summary?.hourlySimulationPoints || []).map((e) => (
+                <tr key={e.hour} className="hover:bg-[#1a1a1a]">
+                  <td className="p-2 font-mono text-[#aaa] border-r border-[#1e1e1e]">{e.hour}</td>
+                  <td className="p-2 font-bold text-white border-r border-[#1e1e1e]">{e.timeLabel}</td>
+                  <td className="p-2 font-mono text-sky-400 border-r border-[#1e1e1e]">{e.diurnalMultiplier.toFixed(2)}x</td>
+                  <td className="p-2 text-white font-mono border-r border-[#1e1e1e]">{e.totalFlowLs.toFixed(2)} L/s</td>
+                  <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{e.criticalConduitId}</td>
+                  <td className="p-2 font-mono font-bold text-amber-400 border-r border-[#1e1e1e]">{e.maxCapacityUtilization.toFixed(2)}</td>
+                  <td className="p-2 text-[#aaa] border-r border-[#1e1e1e]">{e.wetWellWaterLevelM.toFixed(2)} m MSL</td>
+                  <td className="p-2">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        e.pumpOperatingState === 'ON'
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : 'bg-zinc-800 text-[#888]'
+                      }`}
+                    >
+                      {e.pumpOperatingState === 'ON' ? '⚡ RUNNING' : 'OFFLINE'}
+                    </span>
                   </td>
                 </tr>
               ))}

@@ -694,6 +694,7 @@ export const WastewaterModelling: React.FC = () => {
       <div className="flex-1 flex overflow-hidden relative">
         <WastewaterMapViewport
           network={network}
+          summary={simulationSummary}
           activeTool={activeTool}
           thematicDisplay={thematicDisplay}
           selectedElement={selectedElement}
@@ -715,6 +716,7 @@ export const WastewaterModelling: React.FC = () => {
         {selectedElement && (
           <WastewaterPropertyInspector
             element={selectedElement}
+            summary={simulationSummary}
             onClose={() => setSelectedElement(null)}
             onUpdateElement={handleUpdateElement}
             onDeleteElement={handleDeleteElement}
@@ -726,6 +728,7 @@ export const WastewaterModelling: React.FC = () => {
       {isFlexTablesOpen && (
         <WastewaterFlexTables
           network={network}
+          summary={simulationSummary}
           onUpdateElement={handleUpdateElement}
           onSelectElement={setSelectedElement}
           onDeleteElement={handleDeleteElement}

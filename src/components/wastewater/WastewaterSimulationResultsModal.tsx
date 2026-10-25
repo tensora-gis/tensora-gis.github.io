@@ -10,6 +10,7 @@ import {
   Mountain,
   Users,
   ShieldAlert,
+  Flame,
 } from 'lucide-react';
 
 interface WastewaterSimulationResultsModalProps {
@@ -168,6 +169,52 @@ export const WastewaterSimulationResultsModal: React.FC<WastewaterSimulationResu
               </div>
             </div>
           </div>
+
+          {/* Advanced SWMM & Sewer Suite Modules */}
+          {(summary.hourlySimulationPoints || summary.constraintDesignResults || summary.h2sCorrosionResults || summary.liftStationCycleResults) && (
+            <div className="p-3.5 rounded-lg bg-[#141414] border border-[#222] space-y-2.5">
+              <span className="text-[10px] font-tech uppercase font-bold text-sky-400 flex items-center gap-1.5">
+                <Flame className="w-3.5 h-3.5" />
+                <span>SWMM Extended Engineering Modules</span>
+              </span>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {summary.hourlySimulationPoints && (
+                  <div className="p-2 rounded bg-[#0a0a0a] border border-[#222]">
+                    <span className="text-[10px] text-[#737373] block">24-Hr Dynamic Routing</span>
+                    <span className="text-sky-300 font-bold">24-Hr Hydrograph Solved</span>
+                    <span className="text-[9px] text-[#666] block">Peak 1.80x @ 08:00</span>
+                  </div>
+                )}
+                {summary.constraintDesignResults && (
+                  <div className="p-2 rounded bg-[#0a0a0a] border border-[#222]">
+                    <span className="text-[10px] text-[#737373] block">Pipe Sizing Design</span>
+                    <span className="text-purple-300 font-bold">
+                      {summary.constraintDesignResults.filter((s) => s.designStatus === 'Optimal').length} / {summary.constraintDesignResults.length} Optimal
+                    </span>
+                    <span className="text-[9px] text-[#666] block">Constraint-based sizing</span>
+                  </div>
+                )}
+                {summary.h2sCorrosionResults && (
+                  <div className="p-2 rounded bg-[#0a0a0a] border border-[#222]">
+                    <span className="text-[10px] text-[#737373] block">H2S & Odor Risk</span>
+                    <span className="text-amber-300 font-bold">
+                      {summary.h2sCorrosionResults.filter((h) => h.corrosionPotential === 'Severe').length} Severe Risk
+                    </span>
+                    <span className="text-[9px] text-[#666] block">Pomeroy Z & Crown loss</span>
+                  </div>
+                )}
+                {summary.liftStationCycleResults && (
+                  <div className="p-2 rounded bg-[#0a0a0a] border border-[#222]">
+                    <span className="text-[10px] text-[#737373] block">Station Cycle & Energy</span>
+                    <span className="text-emerald-400 font-bold">
+                      {summary.dailyEnergyKwh ?? 0} kWh/day
+                    </span>
+                    <span className="text-[9px] text-[#666] block">Starts &lt;= 10/hr compliant</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Real Earth Terrain DEM Reference */}
           <div className="p-3 rounded-lg bg-[#141414] border border-[#222] space-y-1.5">

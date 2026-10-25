@@ -29,9 +29,16 @@ export function exportToSwmmInp(network: WastewaterNetwork): string {
   lines.push('[OPTIONS]');
   lines.push('FLOW_UNITS           LPS');
   lines.push('INFILTRATION         CURVE_NUMBER');
-  lines.push('FLOW_ROUTING         KINEMATIC');
+  lines.push('FLOW_ROUTING         DYNAMICWAVE');
   lines.push('START_DATE           01/01/2026');
   lines.push('START_TIME           00:00:00');
+  lines.push('REPORT_START_DATE    01/01/2026');
+  lines.push('REPORT_START_TIME    00:00:00');
+  lines.push('END_DATE             01/02/2026');
+  lines.push('END_TIME             00:00:00');
+  lines.push('WET_STEP             00:05:00');
+  lines.push('DRY_STEP             01:00:00');
+  lines.push('ROUTING_STEP         00:00:15');
   lines.push('');
 
   // 1. Manholes as Junctions
@@ -100,7 +107,26 @@ export function exportToSwmmInp(network: WastewaterNetwork): string {
   }
   lines.push('');
 
-  // 7. Coordinates
+  // 7. Dry Weather Sanitary Flows
+  lines.push('[DWF]');
+  lines.push(';;Node           Constituent      Baseline   Patterns');
+  for (const m of network.manholes) {
+    const id = m.id.padEnd(16);
+    const baseFlow = (m.averageSanitaryFlowLs || (m.population * 135) / 86400).toFixed(2).padStart(10);
+    lines.push(`${id} FLOW             ${baseFlow} DIURNAL_SANITARY`);
+  }
+  lines.push('');
+
+  // 8. Diurnal Time Patterns
+  lines.push('[PATTERNS]');
+  lines.push(';;Name           Type       Multipliers');
+  lines.push('DIURNAL_SANITARY HOURLY     0.50 0.40 0.35 0.35 0.45 0.65');
+  lines.push('DIURNAL_SANITARY            0.95 1.45 1.80 1.60 1.35 1.15');
+  lines.push('DIURNAL_SANITARY            1.20 1.10 1.05 1.00 1.05 1.25');
+  lines.push('DIURNAL_SANITARY            1.55 1.75 1.50 1.25 0.95 0.70');
+  lines.push('');
+
+  // 9. Coordinates
   lines.push('[COORDINATES]');
   lines.push(';;Node           X-Coord (Lng)    Y-Coord (Lat)   ');
   for (const m of network.manholes) {
@@ -228,6 +254,15 @@ export function parseSwmmInp(text: string, filename = 'Imported_Sewer_Model.inp'
         lengthM,
         slopeMPerM: 0.005,
       });
+    } else if (currentSection === '[DWF]') {
+      const id = tokens[0];
+      const baseline = parseFloat(tokens[2]);
+      if (Number.isFinite(baseline)) {
+        const mh = manholes.find((m) => m.id === id);
+        if (mh) {
+          mh.baseDryWeatherFlowLs = baseline;
+        }
+      }
     }
   }
 
