@@ -355,7 +355,7 @@ export function createHillsideSteepSewerNetwork(): WastewaterNetwork {
       },
       {
         id: 'CO-102',
-        label: 'Steep Trunk Sewer',
+        label: 'Steep Trunk Sewer (Drop Manhole Inlet)',
         type: 'conduit',
         startNodeId: 'MH-102',
         endNodeId: 'MH-103',
@@ -363,9 +363,9 @@ export function createHillsideSteepSewerNetwork(): WastewaterNetwork {
         material: 'PVC',
         manningN: 0.010,
         upstreamInvertM: 175.5,
-        downstreamInvertM: 169.8,
+        downstreamInvertM: 171.0,
         lengthM: 310,
-        slopeMPerM: 0.0184,
+        slopeMPerM: 0.0145,
       },
       {
         id: 'CO-103',

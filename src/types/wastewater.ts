@@ -57,6 +57,12 @@ export interface WastewaterManhole extends BaseWastewaterElement {
   surchargeDepthM?: number;
   isSurcharged?: boolean;
   isFlooding?: boolean;
+  /** Whether an incoming sewer pipe drops into the chamber from > 0.6m above invert */
+  hasDropConnection?: boolean;
+  /** Drop height if drop connection exists (m) */
+  dropHeightM?: number;
+  /** Tributary contributing catchment area (ha) for combined/I&I estimation */
+  catchmentAreaHa?: number;
 }
 
 /**
@@ -94,6 +100,14 @@ export interface WastewaterConduit extends BaseWastewaterElement {
   scourVelocityOk?: boolean; // V <= 3.0 m/s
   isSurcharged?: boolean; // d/D > 1.0
   isReverseSlope?: boolean; // slope <= 0
+  /** Bed shear stress / tractive force tau = gamma * Rh * S (N/m^2 or Pa) */
+  tractiveForcePa?: number;
+  /** Tractive force compliance (tau >= 1.5 - 2.0 Pa for inorganic and organic self-cleansing) */
+  tractiveForceOk?: boolean;
+  /** Whether the pipe enters downstream manhole as a drop structure */
+  isDropInlet?: boolean;
+  /** Drop distance into receiving structure (m) */
+  dropHeightM?: number;
 }
 
 /**
@@ -125,6 +139,16 @@ export interface WastewaterPump extends BaseWastewaterElement {
   dynamicHeadM: number; // Total dynamic pumping head TDH (m)
   efficiencyPercent: number; // Standard: 70-80%
   powerKw?: number;
+  /** Zero-flow shutoff head H0 (m) for multipoint pump performance curve */
+  shutoffHeadM?: number;
+  /** Maximum runout flow capacity (L/s) */
+  maxFlowLs?: number;
+  /** Actual operating flow point at intersection with system head curve (L/s) */
+  operatingFlowLs?: number;
+  /** Actual operating head point at intersection with system head curve (m) */
+  operatingHeadM?: number;
+  /** Variable Frequency Drive (VFD) speed multiplier factor (0.5 to 1.2) */
+  vfdSpeedRatio?: number;
 }
 
 /**
@@ -169,6 +193,8 @@ export interface WastewaterNetwork {
   name: string;
   description?: string;
   units: 'SI';
+  /** SWMM Flow Routing solver engine */
+  routingMethod?: 'DYNAMICWAVE' | 'KINEMATIC' | 'STEADY';
   manholes: WastewaterManhole[];
   conduits: WastewaterConduit[];
   wetWells: WastewaterWetWell[];
@@ -246,6 +272,7 @@ export interface LiftStationCycleResult {
 export interface WastewaterSimulationSummary {
   converged: boolean;
   runTimestamp: string;
+  routingMethod?: 'DYNAMICWAVE' | 'KINEMATIC' | 'STEADY';
   totalPopulation: number;
   totalDryWeatherFlowLs: number;
   totalPeakSanitaryFlowLs: number;
@@ -260,6 +287,9 @@ export interface WastewaterSimulationSummary {
   minVelocityConduitId?: string;
   maxVelocityMs: number;
   maxVelocityConduitId?: string;
+  minTractiveForcePa?: number;
+  minTractiveForceConduitId?: string;
+  dropManholeCount?: number;
   totalPumpingPowerKw: number;
   dailyEnergyKwh?: number;
   annualEnergyCostUsd?: number;

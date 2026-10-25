@@ -29,7 +29,7 @@ export function exportToSwmmInp(network: WastewaterNetwork): string {
   lines.push('[OPTIONS]');
   lines.push('FLOW_UNITS           LPS');
   lines.push('INFILTRATION         CURVE_NUMBER');
-  lines.push('FLOW_ROUTING         DYNAMICWAVE');
+  lines.push(`FLOW_ROUTING         ${network.routingMethod || 'DYNAMICWAVE'}`);
   lines.push('START_DATE           01/01/2026');
   lines.push('START_TIME           00:00:00');
   lines.push('REPORT_START_DATE    01/01/2026');
@@ -107,6 +107,21 @@ export function exportToSwmmInp(network: WastewaterNetwork): string {
   }
   lines.push('');
 
+  // 6b. Pump Head-Discharge Curves
+  lines.push('[CURVES]');
+  lines.push(';;Name           Type       X-Value (Head)   Y-Value (Flow)');
+  for (const p of network.pumps) {
+    const h0 = p.shutoffHeadM || (p.dynamicHeadM ? p.dynamicHeadM * 1.33 : 33);
+    const hRated = p.dynamicHeadM || 25;
+    const qRated = p.ratedDischargeLs || 30;
+    const qMax = p.maxFlowLs || qRated * 1.45;
+    lines.push(`PUMP_CURVE_1     Pump1      ${h0.toFixed(2).padEnd(16)} 0.00`);
+    lines.push(`PUMP_CURVE_1                ${hRated.toFixed(2).padEnd(16)} ${qRated.toFixed(2)}`);
+    lines.push(`PUMP_CURVE_1                ${(hRated * 0.5).toFixed(2).padEnd(16)} ${qMax.toFixed(2)}`);
+    break; // Define standard curve
+  }
+  lines.push('');
+
   // 7. Dry Weather Sanitary Flows
   lines.push('[DWF]');
   lines.push(';;Node           Constituent      Baseline   Patterns');
@@ -158,6 +173,7 @@ export function parseSwmmInp(text: string, filename = 'Imported_Sewer_Model.inp'
   const xsections = new Map<string, number>(); // conduitId -> diameterMm
 
   let currentSection = '';
+  let routingMethod: 'DYNAMICWAVE' | 'KINEMATIC' | 'STEADY' = 'DYNAMICWAVE';
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
@@ -171,7 +187,14 @@ export function parseSwmmInp(text: string, filename = 'Imported_Sewer_Model.inp'
     const tokens = line.split(/\s+/);
     if (tokens.length < 2) continue;
 
-    if (currentSection === '[COORDINATES]') {
+    if (currentSection === '[OPTIONS]') {
+      if (tokens[0].toUpperCase() === 'FLOW_ROUTING') {
+        const method = tokens[1].toUpperCase();
+        if (method.includes('KINEMATIC')) routingMethod = 'KINEMATIC';
+        else if (method.includes('STEADY')) routingMethod = 'STEADY';
+        else routingMethod = 'DYNAMICWAVE';
+      }
+    } else if (currentSection === '[COORDINATES]') {
       const id = tokens[0];
       const lng = parseFloat(tokens[1]);
       const lat = parseFloat(tokens[2]);
@@ -254,6 +277,22 @@ export function parseSwmmInp(text: string, filename = 'Imported_Sewer_Model.inp'
         lengthM,
         slopeMPerM: 0.005,
       });
+    } else if (currentSection === '[PUMPS]') {
+      const id = tokens[0];
+      const startNodeId = tokens[1];
+      const endNodeId = tokens[2];
+      const status = tokens[4]?.toUpperCase() === 'OFF' ? 'OFF' : 'ON';
+      pumps.push({
+        id,
+        label: `Pump ${id}`,
+        type: 'pump',
+        startNodeId,
+        endNodeId,
+        status,
+        ratedDischargeLs: 35.0,
+        dynamicHeadM: 22.0,
+        efficiencyPercent: 75,
+      });
     } else if (currentSection === '[DWF]') {
       const id = tokens[0];
       const baseline = parseFloat(tokens[2]);
@@ -298,6 +337,7 @@ export function parseSwmmInp(text: string, filename = 'Imported_Sewer_Model.inp'
   return {
     name: filename.replace(/\.[^/.]+$/, ''),
     units: 'SI',
+    routingMethod,
     manholes,
     conduits,
     wetWells,

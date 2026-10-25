@@ -20,9 +20,12 @@ interface ProfileStationPoint {
   distanceM: number;
   rimElevation: number;
   invertElevation: number;
+  crownElevation: number;
   waterElevation: number;
   conduitDiameterMm?: number;
   flowDepthRatio?: number;
+  hasDrop?: boolean;
+  dropHeightM?: number;
 }
 
 export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = ({
@@ -84,15 +87,22 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
           )
         : undefined;
 
+      const diaM = (conduit?.diameterMm || 250) / 1000;
+      const hasDrop = 'hasDropConnection' in node ? Boolean((node as WastewaterManhole).hasDropConnection) : false;
+      const dropHeight = 'dropHeightM' in node ? (node as WastewaterManhole).dropHeightM || 0 : 0;
+
       points.push({
         id: node.id,
         label: node.label,
         distanceM: Math.round(cumulativeDist * 10) / 10,
         rimElevation: rim,
         invertElevation: inv,
+        crownElevation: Math.round((inv + diaM) * 100) / 100,
         waterElevation: Math.max(inv, hgl),
         conduitDiameterMm: conduit?.diameterMm,
         flowDepthRatio: conduit?.flowDepthRatio,
+        hasDrop,
+        dropHeightM: dropHeight,
       });
     }
 
@@ -153,6 +163,11 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
     ''
   );
 
+  const crownPath = profileData.reduce(
+    (acc, p, idx) => `${acc} ${idx === 0 ? 'M' : 'L'} ${getX(p.distanceM)} ${getY(p.crownElevation)}`,
+    ''
+  );
+
   const hglPath = profileData.reduce(
     (acc, p, idx) => `${acc} ${idx === 0 ? 'M' : 'L'} ${getX(p.distanceM)} ${getY(p.waterElevation)}`,
     ''
@@ -183,6 +198,10 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
             <div className="flex items-center gap-1.5">
               <span className="w-3 h-0.5 bg-[#f59e0b]" />
               <span className="text-[#a3a3a3] text-[11px]">Sewer Invert Bed</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-0.5 bg-[#a16207] border-t border-dashed" />
+              <span className="text-[#a3a3a3] text-[11px]">Pipe Crown</span>
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-3 h-0.5 bg-[#38bdf8]" />
@@ -302,6 +321,16 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
             strokeLinejoin="round"
           />
 
+          {/* Pipe Crown */}
+          <path
+            d={crownPath}
+            fill="none"
+            stroke="#a16207"
+            strokeWidth="1.5"
+            strokeDasharray="3,3"
+            strokeLinejoin="round"
+          />
+
           {/* Hydraulic Grade Line (HGL) */}
           <path
             d={hglPath}
@@ -312,7 +341,7 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
             strokeLinejoin="round"
           />
 
-          {/* Data Points */}
+          {/* Data Points & Drop Badges */}
           {profileData.map((p) => (
             <g key={`point-${p.id}`}>
               <circle
@@ -331,6 +360,30 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
                 stroke="#0a0a0a"
                 strokeWidth="1.5"
               />
+              {p.hasDrop && (
+                <g key={`drop-badge-${p.id}`}>
+                  <rect
+                    x={getX(p.distanceM) - 24}
+                    y={getY(p.invertElevation) - 18}
+                    width="48"
+                    height="13"
+                    rx="2"
+                    fill="#451a03"
+                    stroke="#f59e0b"
+                    strokeWidth="1"
+                  />
+                  <text
+                    x={getX(p.distanceM)}
+                    y={getY(p.invertElevation) - 8}
+                    fill="#fef08a"
+                    fontSize="8"
+                    fontFamily="monospace"
+                    textAnchor="middle"
+                  >
+                    Drop {p.dropHeightM?.toFixed(1)}m
+                  </text>
+                </g>
+              )}
             </g>
           ))}
         </svg>

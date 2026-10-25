@@ -267,13 +267,15 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
     }
   });
 
-  // 3. Compute conduit gravity Manning hydraulics
+  // 3. Compute conduit gravity Manning hydraulics & tractive force
   let maxCapacityRatio = 0;
   let criticalConduitId = conduits[0]?.id || '';
   let minVelocity = 999;
   let minVelocityConduitId = '';
   let maxVelocity = 0;
   let maxVelocityConduitId = '';
+  let minTractiveForce = 999;
+  let minTractiveForceConduitId = '';
   let totalGravityLength = 0;
 
   const surchargedConduitIds: string[] = [];
@@ -331,6 +333,23 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
     c.froudeNumber = hydraulics.froudeNumber;
     c.isSurcharged = hydraulics.isSurcharged;
 
+    // Tractive force / bed shear stress: tau = gamma * Rh * S (Pa)
+    const tauPa = 9810 * hydraulics.hydraulicRadiusM * Math.max(0.0001, Math.abs(slope));
+    c.tractiveForcePa = Math.round(tauPa * 100) / 100;
+    c.tractiveForceOk = c.tractiveForcePa >= 1.50;
+
+    // Drop connection detection into downstream structure
+    if (endNode && 'invertElevation' in endNode) {
+      const dropM = c.downstreamInvertM - endNode.invertElevation;
+      if (dropM > 0.60) {
+        c.isDropInlet = true;
+        c.dropHeightM = Math.round(dropM * 100) / 100;
+      } else {
+        c.isDropInlet = false;
+        c.dropHeightM = 0;
+      }
+    }
+
     // Design compliance checks
     c.selfCleansingOk = hydraulics.velocityMs >= 0.60;
     c.scourVelocityOk = hydraulics.velocityMs <= 3.00;
@@ -347,14 +366,19 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
       maxVelocity = hydraulics.velocityMs;
       maxVelocityConduitId = c.id;
     }
+    if (hydraulics.velocityMs > 0 && c.tractiveForcePa < minTractiveForce) {
+      minTractiveForce = c.tractiveForcePa;
+      minTractiveForceConduitId = c.id;
+    }
 
     if (hydraulics.isSurcharged) surchargedConduitIds.push(c.id);
     if (!c.selfCleansingOk && (c.designFlowLs || 0) > 0.5) subCleansingConduitIds.push(c.id);
     if (!c.scourVelocityOk) scourWarningConduitIds.push(c.id);
   });
 
-  // 4. Trace Hydraulic Grade Line (HGL) and surcharge elevations at Manholes
+  // 4. Trace Hydraulic Grade Line (HGL), drop connections and surcharge elevations at Manholes
   const floodedManholeIds: string[] = [];
+  let dropManholeCount = 0;
 
   manholes.forEach((m) => {
     const incomingConduits = upstreamConduitsByNode.get(m.id) || [];
@@ -368,6 +392,19 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
     outgoingConduits.forEach((c) => {
       if ((c.flowDepthM || 0) > maxPipeWaterDepth) maxPipeWaterDepth = c.flowDepthM!;
     });
+
+    // Check for drop manhole connection (incoming invert > 0.60m above manhole invert)
+    const incomingDrops = incomingConduits
+      .map((c) => c.downstreamInvertM - m.invertElevation)
+      .filter((d) => d > 0.60);
+    if (incomingDrops.length > 0) {
+      m.hasDropConnection = true;
+      m.dropHeightM = Math.round(Math.max(...incomingDrops) * 100) / 100;
+      dropManholeCount++;
+    } else {
+      m.hasDropConnection = false;
+      m.dropHeightM = 0;
+    }
 
     m.totalInflowLs = Math.round((cumulativeFlowAtNode.get(m.id) || m.peakSanitaryFlowLs || 0) * 100) / 100;
     m.waterDepthM = Math.round(maxPipeWaterDepth * 100) / 100;
@@ -392,7 +429,7 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
     }
   });
 
-  // 5. Pumping Station Hydraulics & Wet Well Continuity
+  // 5. Pumping Station Hydraulics, Head Curve Intersection & Wet Well Continuity
   let totalPumpPowerKw = 0;
   pumps.forEach((p) => {
     const suctionInflow = cumulativeFlowAtNode.get(p.startNodeId) || 0;
@@ -401,16 +438,46 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
       wetWell.inflowLs = Math.round(suctionInflow * 100) / 100;
     }
 
+    // SWMM 3-point pump head-discharge curve parameters
+    const ratedQ = p.ratedDischargeLs || 30;
+    const ratedH = p.dynamicHeadM || 25;
+    const shutoffH = p.shutoffHeadM || Math.round(ratedH * 1.33 * 10) / 10;
+    p.shutoffHeadM = shutoffH;
+    p.maxFlowLs = p.maxFlowLs || Math.round(ratedQ * 1.45 * 10) / 10;
+
+    // Determine system static lift (discharge elevation - suction floor elevation)
+    const targetNode = nodeMap.get(p.endNodeId);
+    const zDischarge = targetNode
+      ? ('invertElevation' in targetNode ? targetNode.invertElevation : ('rimElevation' in targetNode ? targetNode.rimElevation : 170))
+      : 170;
+    const zSuction = wetWell ? wetWell.floorElevation : 165;
+    const staticLiftM = Math.max(2, zDischarge - zSuction);
+
+    // Connected force main friction curve impedance Ksys
+    const connectedFm = forceMains.find((f) => f.startNodeId === p.endNodeId || f.startNodeId === p.startNodeId);
+    const fmDiaM = Math.max(0.05, (connectedFm?.diameterMm || 150) / 1000);
+    const fmLenM = connectedFm?.lengthM || 100;
+    const fmC = connectedFm?.cFactor || 120;
+    const kSys = (10.67 * Math.pow(0.001 / fmC, 1.852) * Math.pow(fmDiaM, -4.87) * fmLenM);
+
+    // Compute operating point intersection of pump curve and system head curve
+    const pumpCurveSlope = (shutoffH - ratedH) / Math.max(1, ratedQ * ratedQ);
+    const qOp = Math.sqrt(Math.max(1, shutoffH - staticLiftM) / Math.max(0.00001, pumpCurveSlope + kSys));
+    const hOp = staticLiftM + kSys * qOp * qOp;
+
+    p.operatingFlowLs = Math.round(qOp * 10) / 10;
+    p.operatingHeadM = Math.round(hOp * 10) / 10;
+
     if (p.status === 'ON') {
-      const qM3s = (p.ratedDischargeLs || 30) / 1000;
-      const hM = p.dynamicHeadM || 25;
+      const qM3s = (p.operatingFlowLs || ratedQ) / 1000;
+      const hM = p.operatingHeadM || ratedH;
       const eff = Math.max(0.2, (p.efficiencyPercent || 75) / 100);
       const kw = (9.81 * qM3s * hM) / eff;
       p.powerKw = Math.round(kw * 10) / 10;
       totalPumpPowerKw += p.powerKw;
 
       // Transfer pumped sanitary flows downstream to target node (outfall or confluence chamber)
-      const pumpedFlowLs = suctionInflow > 0 ? suctionInflow : (p.ratedDischargeLs || 30);
+      const pumpedFlowLs = suctionInflow > 0 ? suctionInflow : (p.operatingFlowLs || ratedQ);
       const targetId = p.endNodeId;
       const existing = cumulativeFlowAtNode.get(targetId) || 0;
       cumulativeFlowAtNode.set(targetId, existing + pumpedFlowLs);
@@ -681,10 +748,14 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
     totalForceMainLengthM: Math.round(totalForceMainLength * 10) / 10,
     maxCapacityUtilizationRatio: Math.round(maxCapacityRatio * 100) / 100,
     criticalConduitId,
+    routingMethod: network.routingMethod || 'DYNAMICWAVE',
     minVelocityMs: minVelocity === 999 ? 0 : Math.round(minVelocity * 100) / 100,
     minVelocityConduitId,
     maxVelocityMs: Math.round(maxVelocity * 100) / 100,
     maxVelocityConduitId,
+    minTractiveForcePa: minTractiveForce === 999 ? 0 : Math.round(minTractiveForce * 100) / 100,
+    minTractiveForceConduitId,
+    dropManholeCount,
     totalPumpingPowerKw: Math.round(totalPumpPowerKw * 10) / 10,
     dailyEnergyKwh: Math.round(dailyEnergyKwh * 10) / 10,
     annualEnergyCostUsd,
@@ -713,5 +784,38 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
       outfalls,
     },
     summary,
+  };
+}
+
+/**
+ * Automatically applies constraint-based recommended diameters and slopes
+ * to all gravity conduits in the network to resolve capacity exceedance and low velocity.
+ */
+export function applyAutoDesignSizing(
+  network: WastewaterNetwork,
+  recommendations: SewerConstraintDesignResult[]
+): WastewaterNetwork {
+  const recMap = new Map(recommendations.map((r) => [r.conduitId, r]));
+
+  const updatedConduits = network.conduits.map((c) => {
+    const rec = recMap.get(c.id);
+    if (!rec) return { ...c };
+
+    const newDia = rec.recommendedDiameterMm;
+    const newSlopeMPerM = rec.recommendedSlopePercent / 100;
+    // Keep upstream invert fixed, recalculate downstream invert from recommended slope
+    const newDownstreamInvert = Math.round((c.upstreamInvertM - newSlopeMPerM * c.lengthM) * 100) / 100;
+
+    return {
+      ...c,
+      diameterMm: newDia,
+      slopeMPerM: newSlopeMPerM,
+      downstreamInvertM: newDownstreamInvert,
+    };
+  });
+
+  return {
+    ...network,
+    conduits: updatedConduits,
   };
 }

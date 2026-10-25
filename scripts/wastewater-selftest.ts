@@ -203,6 +203,48 @@ check(
 );
 
 // ---------------------------------------------------------------------------
+console.log('\n[6] Testing Tractive Force, Drop Manholes & Auto-Design Sizing');
+// ---------------------------------------------------------------------------
+
+import { applyAutoDesignSizing } from '../src/utils/wastewaterHydraulicsEngine';
+
+const testNet = createHillsideSteepSewerNetwork();
+const { updatedNetwork: solvedHillside, summary: hillsideSummary } = simulateWastewaterNetwork(testNet);
+
+check(
+  'Tractive bed shear stress tau is computed on all conduits',
+  solvedHillside.conduits.every((c) => typeof c.tractiveForcePa === 'number' && c.tractiveForcePa >= 0)
+);
+
+check(
+  'Drop structures detected on hillside network with drop manholes',
+  (hillsideSummary.dropManholeCount ?? 0) > 0 && solvedHillside.manholes.some((m) => m.hasDropConnection)
+);
+
+const { updatedNetwork: solvedMunicipal } = simulateWastewaterNetwork(createMunicipalWastewaterNetwork());
+check(
+  'Pump operating duty point computed with system head curve',
+  solvedMunicipal.pumps.length > 0 &&
+    solvedMunicipal.pumps.every(
+      (p) => typeof p.operatingFlowLs === 'number' && typeof p.operatingHeadM === 'number' && p.operatingHeadM > 0
+    )
+);
+
+check(
+  'Auto-design pipe sizing generates recommendations and can be applied',
+  Boolean(hillsideSummary.constraintDesignResults && hillsideSummary.constraintDesignResults.length > 0)
+);
+
+if (hillsideSummary.constraintDesignResults) {
+  const sizedNet = applyAutoDesignSizing(testNet, hillsideSummary.constraintDesignResults);
+  const reSim = simulateWastewaterNetwork(sizedNet);
+  check(
+    'Applied auto-designed network successfully re-simulates without error',
+    reSim.summary.converged === true
+  );
+}
+
+// ---------------------------------------------------------------------------
 console.log('\n======================================================');
 console.log(`Summary: ${passed} passed, ${failed} failed`);
 console.log('======================================================\n');

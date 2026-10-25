@@ -292,6 +292,14 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
                       : 'FREE-FLOW'}
                   </span>
                 </div>
+                {(element as WastewaterManhole).hasDropConnection && (
+                  <div className="flex justify-between text-xs text-[#a3a3a3]">
+                    <span>Drop Structure:</span>
+                    <span className="text-amber-400 font-bold font-mono">
+                      {(element as WastewaterManhole).dropHeightM?.toFixed(2)}m Drop
+                    </span>
+                  </div>
+                )}
 
                 {(() => {
                   const ii = (summary?.inflowInfiltrationResults || []).find((i) => i.manholeId === element.id);
@@ -471,6 +479,26 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
                     {(element as WastewaterConduit).flowDepthRatio?.toFixed(2)}
                   </span>
                 </div>
+                <div className="flex justify-between text-xs text-[#a3a3a3]">
+                  <span>Tractive Shear:</span>
+                  <span
+                    className={
+                      ((element as WastewaterConduit).tractiveForcePa ?? 0) < 1.5
+                        ? 'text-amber-400 font-bold'
+                        : 'text-emerald-400 font-bold'
+                    }
+                  >
+                    {((element as WastewaterConduit).tractiveForcePa ?? 0).toFixed(2)} Pa
+                  </span>
+                </div>
+                {(element as WastewaterConduit).isDropInlet && (
+                  <div className="flex justify-between text-xs text-[#a3a3a3]">
+                    <span>Drop Outlet:</span>
+                    <span className="text-amber-400 font-bold font-mono">
+                      {((element as WastewaterConduit).dropHeightM ?? 0).toFixed(2)}m Drop
+                    </span>
+                  </div>
+                )}
 
                 {/* Advanced Diagnostics: H2S & Sizing */}
                 {(() => {
@@ -661,9 +689,23 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
               </div>
             </div>
 
-            <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#222] flex justify-between text-xs text-[#a3a3a3]">
-              <span>Motor Power:</span>
-              <span className="text-amber-400 font-bold">{(element as WastewaterPump).powerKw ?? 0} kW</span>
+            <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#222] space-y-1.5 text-xs text-[#a3a3a3]">
+              <div className="flex justify-between">
+                <span>Motor Power:</span>
+                <span className="text-amber-400 font-bold">{(element as WastewaterPump).powerKw ?? 0} kW</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Operating Duty Flow:</span>
+                <span className="text-emerald-400 font-bold font-mono">
+                  {(element as WastewaterPump).operatingFlowLs ?? (element as WastewaterPump).ratedDischargeLs} L/s
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Operating Duty Head:</span>
+                <span className="text-emerald-400 font-bold font-mono">
+                  {(element as WastewaterPump).operatingHeadM ?? (element as WastewaterPump).dynamicHeadM} m
+                </span>
+              </div>
             </div>
           </>
         )}

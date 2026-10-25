@@ -34,7 +34,10 @@ import {
   createMunicipalWastewaterNetwork,
   ARBITRARY_WASTEWATER_DEMOS,
 } from '../data/sampleWastewaterNetworks';
-import { simulateWastewaterNetwork } from '../utils/wastewaterHydraulicsEngine';
+import {
+  simulateWastewaterNetwork,
+  applyAutoDesignSizing,
+} from '../utils/wastewaterHydraulicsEngine';
 import { downloadWastewaterExcel } from '../utils/wastewaterExcelExport';
 import {
   sampleWastewaterGroundElevation,
@@ -88,6 +91,8 @@ export const WastewaterModelling: React.FC = () => {
   const [simulationSummary, setSimulationSummary] = useState<WastewaterSimulationSummary | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [isSamplingElevation, setIsSamplingElevation] = useState(false);
+  const [routingMethod, setRoutingMethod] = useState<'DYNAMICWAVE' | 'KINEMATIC' | 'STEADY'>('DYNAMICWAVE');
+  const [epsHour, setEpsHour] = useState<number>(12);
 
   // Profile Route Selection
   const [profileRouteNodeIds, setProfileRouteNodeIds] = useState<string[]>([
@@ -143,6 +148,30 @@ export const WastewaterModelling: React.FC = () => {
   const handleExportExcel = useCallback(async () => {
     if (!simulationSummary) return;
     await downloadWastewaterExcel(network, simulationSummary);
+  }, [network, simulationSummary]);
+
+  const handleSelectRoutingMethod = useCallback(
+    (method: 'DYNAMICWAVE' | 'KINEMATIC' | 'STEADY') => {
+      setRoutingMethod(method);
+      const netWithMethod: WastewaterNetwork = { ...network, routingMethod: method };
+      setNetwork(netWithMethod);
+      try {
+        const { updatedNetwork, summary } = simulateWastewaterNetwork(netWithMethod);
+        setNetwork(updatedNetwork);
+        setSimulationSummary(summary);
+      } catch (err) {
+        console.error('Error re-simulating with routing method:', err);
+      }
+    },
+    [network]
+  );
+
+  const handleApplyAutoDesign = useCallback(() => {
+    if (!simulationSummary?.constraintDesignResults) return;
+    const updated = applyAutoDesignSizing(network, simulationSummary.constraintDesignResults);
+    const { updatedNetwork, summary } = simulateWastewaterNetwork(updated);
+    setNetwork(updatedNetwork);
+    setSimulationSummary(summary);
   }, [network, simulationSummary]);
 
   // Bulk DEM Elevation Sampling
@@ -797,15 +826,21 @@ export const WastewaterModelling: React.FC = () => {
         onSelectTool={setActiveTool}
         thematicDisplay={thematicDisplay}
         onSelectThematic={setThematicDisplay}
+        routingMethod={routingMethod}
+        onSelectRoutingMethod={handleSelectRoutingMethod}
         onRunSimulation={handleRunSimulation}
         onSampleElevations={handleSampleAllElevations}
         onToggleFlexTables={() => setIsFlexTablesOpen((prev) => !prev)}
         onToggleProfile={() => setIsProfileOpen((prev) => !prev)}
+        onOpenReport={() => setIsSummaryModalOpen(true)}
+        onApplyAutoDesign={handleApplyAutoDesign}
         onExportExcel={handleExportExcel}
         onExportInp={handleExportInp}
         onImportInp={handleImportInp}
         onLoadDemo={handleLoadDemo}
         onClear={handleClear}
+        epsHour={epsHour}
+        onSelectEpsHour={setEpsHour}
         simulationSummary={simulationSummary}
         isSimulating={isSimulating}
         isSamplingElevation={isSamplingElevation}
@@ -874,9 +909,12 @@ export const WastewaterModelling: React.FC = () => {
       {/* 4. Calculation Results Summary Modal */}
       {isSummaryModalOpen && (
         <WastewaterSimulationResultsModal
+          network={network}
           summary={simulationSummary}
           onClose={() => setIsSummaryModalOpen(false)}
           onExportExcel={handleExportExcel}
+          onExportInp={handleExportInp}
+          onApplyAutoDesign={handleApplyAutoDesign}
         />
       )}
     </div>

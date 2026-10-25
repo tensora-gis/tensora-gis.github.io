@@ -109,7 +109,7 @@ export async function generateWastewaterExcel(
   sumSheet.addRow(['Total Effluent Outfall Discharge:', `${summary.totalOutfallDischargeLs} L/s`, 'Sewage Pumps Installed:', network.pumps.length]);
   sumSheet.addRow(['Mass Continuity Imbalance:', `${summary.flowImbalanceLs} L/s`, 'Pressurized Force Mains:', network.forceMains.length]);
   sumSheet.addRow(['Elevation Datum Source:', 'Copernicus GLO-30 / SRTM 30m DEM (Open-Meteo)', 'Total Gravity Sewer Length:', `${summary.totalGravityConduitLengthM} m`]);
-  sumSheet.addRow(['Hydraulic Calculation Engine:', "SWMM 5.2 & Manning's Hydraulic Solver", 'Calculation Timestamp:', summary.runTimestamp]);
+  sumSheet.addRow(['Hydraulic Calculation Engine:', `SWMM 5.2 Solver (${summary.routingMethod || 'DYNAMICWAVE'})`, 'Calculation Timestamp:', summary.runTimestamp]);
 
   sumSheet.addRow([]);
 
@@ -170,6 +170,7 @@ export async function generateWastewaterExcel(
     { header: 'Water Depth (m)', key: 'wDepth', width: 14 },
     { header: 'HGL Elev (m MSL)', key: 'hgl', width: 16 },
     { header: 'Surcharge (m)', key: 'sur', width: 14 },
+    { header: 'Drop Structure', key: 'drop', width: 18 },
     { header: 'Status', key: 'status', width: 16 },
   ];
 
@@ -204,6 +205,7 @@ export async function generateWastewaterExcel(
       wDepth: m.waterDepthM ?? 0,
       hgl: m.waterElevationM ?? 0,
       sur: m.surchargeDepthM ?? 0,
+      drop: m.hasDropConnection ? `Yes (${m.dropHeightM}m drop)` : 'Direct Invert',
       status: statusText,
     });
     row.font = regularFont;
@@ -244,6 +246,8 @@ export async function generateWastewaterExcel(
     { header: 'Hyd Radius (m)', key: 'rh', width: 14 },
     { header: 'Froude No.', key: 'fr', width: 12 },
     { header: 'Regime', key: 'regime', width: 14 },
+    { header: 'Tractive Shear (Pa)', key: 'tau', width: 18 },
+    { header: 'Tractive Check', key: 'tauCheck', width: 18 },
     { header: 'Cleansing Check', key: 'clean', width: 16 },
     { header: 'Scour Check', key: 'scour', width: 14 },
   ];
@@ -281,6 +285,8 @@ export async function generateWastewaterExcel(
       rh: c.hydraulicRadiusM ?? 0,
       fr: c.froudeNumber ?? 0,
       regime,
+      tau: c.tractiveForcePa ?? 0,
+      tauCheck: c.tractiveForceOk ? 'OK (tau >= 1.5 Pa)' : 'Low Tractive (< 1.5 Pa)',
       clean: c.selfCleansingOk ? 'OK (V >= 0.6 m/s)' : 'DEFICIT (< 0.6 m/s)',
       scour: c.scourVelocityOk ? 'Safe (V <= 3.0 m/s)' : 'SCOUR RISK (> 3.0 m/s)',
     });

@@ -21,6 +21,10 @@ import {
   Upload,
   FolderOpen,
   ArrowRightCircle,
+  Activity,
+  Wrench,
+  Clock,
+  Cpu,
 } from 'lucide-react';
 
 const PumpToolIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -35,15 +39,21 @@ interface WastewaterToolbarProps {
   onSelectTool: (tool: ActiveWastewaterTool) => void;
   thematicDisplay: WastewaterThematicDisplay;
   onSelectThematic: (thematic: WastewaterThematicDisplay) => void;
+  routingMethod?: 'DYNAMICWAVE' | 'KINEMATIC' | 'STEADY';
+  onSelectRoutingMethod?: (method: 'DYNAMICWAVE' | 'KINEMATIC' | 'STEADY') => void;
   onRunSimulation: () => void;
   onSampleElevations: () => void;
   onToggleFlexTables: () => void;
   onToggleProfile: () => void;
+  onOpenReport: () => void;
+  onApplyAutoDesign?: () => void;
   onExportExcel: () => void;
   onExportInp: () => void;
   onImportInp: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onLoadDemo: () => void;
   onClear: () => void;
+  epsHour?: number;
+  onSelectEpsHour?: (hour: number) => void;
   simulationSummary: WastewaterSimulationSummary | null;
   isSimulating: boolean;
   isSamplingElevation: boolean;
@@ -64,15 +74,21 @@ export const WastewaterToolbar: React.FC<WastewaterToolbarProps> = ({
   onSelectTool,
   thematicDisplay,
   onSelectThematic,
+  routingMethod = 'DYNAMICWAVE',
+  onSelectRoutingMethod,
   onRunSimulation,
   onSampleElevations,
   onToggleFlexTables,
   onToggleProfile,
+  onOpenReport,
+  onApplyAutoDesign,
   onExportExcel,
   onExportInp,
   onImportInp,
   onLoadDemo,
   onClear,
+  epsHour = 12,
+  onSelectEpsHour,
   simulationSummary,
   isSimulating,
   isSamplingElevation,
@@ -125,11 +141,28 @@ export const WastewaterToolbar: React.FC<WastewaterToolbarProps> = ({
           onClick={onRunSimulation}
           disabled={isSimulating || (elementCounts.manholes === 0 && elementCounts.conduits === 0)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md disabled:opacity-50 transition-all cursor-pointer"
-          title="Compute gravity Manning hydraulics, velocities, capacity and export calculations to Excel (.xlsx)"
+          title="Compute SWMM gravity Manning hydraulics, velocities, capacity and export calculations"
         >
           <Play className="w-3.5 h-3.5 fill-current" />
           <span>{isSimulating ? 'Computing...' : 'Compute Hydraulics'}</span>
         </button>
+
+        {/* SWMM Flow Routing Solver Option */}
+        {onSelectRoutingMethod && (
+          <div className="flex items-center gap-1 bg-[#0a0a0a] px-2 py-1 rounded-lg border border-[#222] text-xs">
+            <Cpu className="w-3.5 h-3.5 text-sky-400" />
+            <span className="text-[10px] text-[#737373] uppercase font-tech mr-1">Solver:</span>
+            <select
+              value={routingMethod}
+              onChange={(e) => onSelectRoutingMethod(e.target.value as any)}
+              className="bg-transparent text-sky-300 font-bold text-[11px] font-mono focus:outline-none cursor-pointer"
+            >
+              <option value="DYNAMICWAVE" className="bg-[#111]">Dynamic Wave (SWMM)</option>
+              <option value="KINEMATIC" className="bg-[#111]">Kinematic Wave</option>
+              <option value="STEADY" className="bg-[#111]">Steady State / EPS</option>
+            </select>
+          </div>
+        )}
 
         {/* DEM Elevation Query */}
         <button
@@ -165,17 +198,41 @@ export const WastewaterToolbar: React.FC<WastewaterToolbarProps> = ({
         </div>
       </div>
 
-      {/* 3. Hydraulic Workspace Tools */}
+      {/* 3. Hydraulic Workspace Tools & Advanced Modules */}
       <div className="flex items-center gap-1.5">
+        {/* Auto-Design Pipe Sizing */}
+        {onApplyAutoDesign && (
+          <button
+            onClick={onApplyAutoDesign}
+            disabled={!simulationSummary}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-300 hover:text-purple-200 font-medium text-xs transition-colors cursor-pointer disabled:opacity-40"
+            title="Auto-Design gravity sewer pipe diameters and slopes to satisfy velocity and capacity constraints"
+          >
+            <Wrench className="w-3.5 h-3.5" />
+            <span className="font-tech text-[11px]">Auto-Design</span>
+          </button>
+        )}
+
+        {/* Detailed Engineering Calculation Report Modal */}
+        <button
+          onClick={onOpenReport}
+          disabled={!simulationSummary}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 hover:text-amber-200 font-medium text-xs transition-colors cursor-pointer disabled:opacity-40"
+          title="Open complete detailed engineering calculation report and SWMM diagnostic tables"
+        >
+          <Activity className="w-3.5 h-3.5" />
+          <span className="font-tech text-[11px]">Detailed Report</span>
+        </button>
+
         {/* Direct Calculation Excel Export */}
         <button
           onClick={onExportExcel}
           disabled={!simulationSummary}
           className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-emerald-400 hover:text-emerald-300 font-medium text-xs transition-colors cursor-pointer disabled:opacity-40"
-          title="Export detailed calculation sheet to Microsoft Excel (.xlsx)"
+          title="Export detailed 10-sheet calculation sheet to Microsoft Excel (.xlsx)"
         >
           <FileSpreadsheet className="w-3.5 h-3.5" />
-          <span className="font-tech text-[11px]">Export Calculation (.xlsx)</span>
+          <span className="hidden sm:inline font-tech text-[11px]">Export (.xlsx)</span>
         </button>
 
         <button
@@ -248,6 +305,56 @@ export const WastewaterToolbar: React.FC<WastewaterToolbarProps> = ({
           <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
+
+      {/* EPS 24-Hour Diurnal Timeline Bar (displayed when Steady/EPS mode or when simulation has hourly points) */}
+      {routingMethod === 'STEADY' && simulationSummary?.hourlySimulationPoints && onSelectEpsHour && (
+        <div className="w-full flex items-center justify-between gap-3 px-3 py-1.5 mt-1 bg-[#0a0a0c] border border-[#222] rounded-lg text-xs font-mono">
+          <div className="flex items-center gap-2">
+            <Clock className="w-3.5 h-3.5 text-sky-400" />
+            <span className="text-white font-bold font-tech text-[11px] uppercase">
+              EPS Diurnal Time: {epsHour.toString().padStart(2, '0')}:00
+            </span>
+            <span className="text-amber-400 font-bold">
+              ({simulationSummary.hourlySimulationPoints[epsHour]?.diurnalMultiplier.toFixed(2)}x Diurnal)
+            </span>
+          </div>
+
+          <div className="flex-1 max-w-md flex items-center gap-2">
+            <span className="text-[10px] text-[#666]">00:00</span>
+            <input
+              type="range"
+              min="0"
+              max="23"
+              step="1"
+              value={epsHour}
+              onChange={(e) => onSelectEpsHour(parseInt(e.target.value))}
+              className="w-full accent-amber-500 cursor-pointer"
+            />
+            <span className="text-[10px] text-[#666]">23:00</span>
+          </div>
+
+          <div className="flex items-center gap-3 text-[11px]">
+            <span className="text-[#888]">
+              Flow:{' '}
+              <strong className="text-white">
+                {simulationSummary.hourlySimulationPoints[epsHour]?.totalFlowLs.toFixed(1)} L/s
+              </strong>
+            </span>
+            <span className="text-[#888]">
+              Pump:{' '}
+              <strong
+                className={
+                  simulationSummary.hourlySimulationPoints[epsHour]?.pumpOperatingState === 'ON'
+                    ? 'text-emerald-400'
+                    : 'text-[#666]'
+                }
+              >
+                {simulationSummary.hourlySimulationPoints[epsHour]?.pumpOperatingState}
+              </strong>
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
