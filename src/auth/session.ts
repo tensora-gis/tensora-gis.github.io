@@ -5,9 +5,6 @@
  * payload for display purposes; authenticity is verified server-side by the
  * Apps Script web app (see docs/AUTH_SETUP.md) before a row reaches the sheet.
  */
-/** Shape of the credential issued by the GIS button (ambient types in types/auth-globals.d.ts). */
-type garneredCredential = { credential: string };
-
 export interface AuthSession {
   sub: string;
   name: string;

@@ -1,12 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import {
   WaterDistributionNetwork,
-  WaterJunction,
-  WaterPipe,
   WaterReservoir,
   WaterTank,
 } from '../../types/waterDistribution';
-import { X, TrendingUp, AlertTriangle, Layers, Zap, ShieldAlert } from 'lucide-react';
+import { X, TrendingUp, ShieldAlert } from 'lucide-react';
 
 interface WaterProfileViewerProps {
   network: WaterDistributionNetwork;

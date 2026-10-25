@@ -1,5 +1,4 @@
 import { CorridorAlignment, HydrologyReport } from '../types/hydrology';
-import { decimalToDMS } from './geoUtils';
 import { generateClientHydrologySnapshot } from './stormwaterSnapshot';
 
 const LABEL_FILL = {

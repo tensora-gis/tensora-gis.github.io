@@ -13,7 +13,6 @@ function cellSpacingForRadius(radiusM: number): number {
 }
 
 const FORMATION_HALF_WIDTH_M = 12;
-const FORMATION_GRADE = 0.003;
 const CULVERT_OPENING_HALF_LENGTH_M = 30;
 const CULVERT_TOE_SEARCH_M = 90;
 
@@ -22,7 +21,6 @@ const STREAM_BUFFER_HALF_WIDTH_M = 30;
 
 export const MIN_REQUIRED_DROP_M = 5;
 const MIN_DEM_COVERAGE = 0.8;
-const MIN_BASIN_CELLS = 20;
 
 interface DemCell {
   r: number;

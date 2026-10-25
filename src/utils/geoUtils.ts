@@ -103,6 +103,18 @@ export function haversineDistanceM(lat1: number, lon1: number, lat2: number, lon
 }
 
 /**
+ * Calculates geodesic surface distance between two points in meters, rounded to 1 decimal place.
+ */
+export function calculateGeodesicDistanceM(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  return Math.round(haversineDistanceM(lat1, lon1, lat2, lon2) * 10) / 10;
+}
+
+/**
  * Calculates initial bearing between two coordinates in degrees (0 - 360)
  */
 export function calculateBearing(lat1: number, lon1: number, lat2: number, lon2: number): number {

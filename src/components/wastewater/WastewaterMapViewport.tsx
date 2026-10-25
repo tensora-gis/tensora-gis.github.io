@@ -5,15 +5,9 @@ import {
   WastewaterThematicDisplay,
   WastewaterNetworkElement,
   WastewaterNetwork,
-  WastewaterManhole,
-  WastewaterConduit,
-  WastewaterWetWell,
-  WastewaterPump,
-  WastewaterForceMain,
-  WastewaterOutfall,
   WastewaterSimulationSummary,
 } from '../../types/wastewater';
-import { calculateWastewaterDistanceM, sampleWastewaterGroundElevation } from '../../utils/wastewaterTerrainService';
+import { sampleWastewaterGroundElevation } from '../../utils/wastewaterTerrainService';
 import { Crosshair } from 'lucide-react';
 
 interface WastewaterMapViewportProps {

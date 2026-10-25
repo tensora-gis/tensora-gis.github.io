@@ -13,12 +13,7 @@ import { sampleGroundElevation } from '../../utils/waterTerrainService';
 import {
   X,
   Mountain,
-  Ruler,
-  Activity,
-  Layers,
-  Sliders,
   SlidersHorizontal,
-  CheckCircle2,
   AlertTriangle,
   CircleDot,
   GitCommit,

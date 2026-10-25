@@ -17,16 +17,8 @@ export interface TerrainPoint {
   distanceFromStartM: number;
 }
 
-// In-memory cache for fast point lookups
-const waterDemCache = new Map<string, number>();
-
-function getCoordKey(lat: number, lng: number): string {
-  return `${lat.toFixed(5)},${lng.toFixed(5)}`;
-}
-
 /**
- * Directly queries Open-Meteo Global Elevation API (Copernicus GLO-30 / SRTM 30m).
- * Fully CORS compatible and provides true ground elevations above Mean Sea Level.
+ * Queries real Earth DEM (Copernicus GLO-30 / SRTM 30m) via multi-provider elevation service.
  */
 export async function fetchRealEarthElevations(
   points: { lat: number; lng: number }[]
@@ -35,87 +27,16 @@ export async function fetchRealEarthElevations(
     return { elevations: [], provider: 'none' };
   }
 
-  const results: (number | null)[] = new Array(points.length).fill(null);
-  const uncachedIndices: number[] = [];
+  const result = await fetchBulkElevations(points);
+  const provider =
+    result.providers.length > 0
+      ? `Copernicus GLO-30 / SRTM (${result.providers.join(', ')})`
+      : 'Copernicus GLO-30 / SRTM';
 
-  // Check cache first
-  points.forEach((p, idx) => {
-    const key = getCoordKey(p.lat, p.lng);
-    if (waterDemCache.has(key)) {
-      results[idx] = waterDemCache.get(key)!;
-    } else {
-      uncachedIndices.push(idx);
-    }
-  });
-
-  if (uncachedIndices.length === 0) {
-    return { elevations: results, provider: 'Copernicus GLO-30 / SRTM (Open-Meteo Cache)' };
-  }
-
-  let providerUsed = 'Copernicus GLO-30 / SRTM (Open-Meteo)';
-
-  // Batch query Open-Meteo in chunks of up to 100 coordinates
-  const chunkSize = 100;
-  for (let i = 0; i < uncachedIndices.length; i += chunkSize) {
-    const chunkIdxs = uncachedIndices.slice(i, i + chunkSize);
-    const chunkPoints = chunkIdxs.map((idx) => points[idx]);
-    const lats = chunkPoints.map((p) => p.lat.toFixed(6)).join(',');
-    const lngs = chunkPoints.map((p) => p.lng.toFixed(6)).join(',');
-    const url = `https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lngs}`;
-
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 15000);
-      const res = await fetch(url, {
-        headers: { Accept: 'application/json' },
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data?.elevation) && data.elevation.length === chunkPoints.length) {
-          data.elevation.forEach((val: unknown, k: number) => {
-            if (typeof val === 'number' && isFinite(val) && val > -450 && val < 9000) {
-              const rounded = Math.round(val * 10) / 10;
-              const origIdx = chunkIdxs[k];
-              results[origIdx] = rounded;
-              waterDemCache.set(getCoordKey(chunkPoints[k].lat, chunkPoints[k].lng), rounded);
-            }
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('Open-Meteo elevation direct query warning, attempting fallback:', err);
-    }
-  }
-
-  // If any points failed or timed out, query local fallback bulk elevation engine
-  const missingIndices = results
-    .map((v, idx) => (v === null ? idx : null))
-    .filter((idx): idx is number => idx !== null);
-
-  if (missingIndices.length > 0) {
-    try {
-      const fallbackPoints = missingIndices.map((idx) => points[idx]);
-      const fbResult = await fetchBulkElevations(fallbackPoints);
-      missingIndices.forEach((origIdx, fbIdx) => {
-        const v = fbResult.elevations[fbIdx];
-        if (v !== null && isFinite(v)) {
-          const rounded = Math.round(v * 10) / 10;
-          results[origIdx] = rounded;
-          waterDemCache.set(getCoordKey(points[origIdx].lat, points[origIdx].lng), rounded);
-        }
-      });
-      if (fbResult.providers.length > 0) {
-        providerUsed = `Copernicus GLO-30 / SRTM (${fbResult.providers.join(', ')})`;
-      }
-    } catch (err) {
-      console.error('Fallback elevation resolution error:', err);
-    }
-  }
-
-  return { elevations: results, provider: providerUsed };
+  return {
+    elevations: result.elevations.map((e) => (e !== null ? Math.round(e * 10) / 10 : null)),
+    provider,
+  };
 }
 
 /**
@@ -229,14 +150,4 @@ export async function sampleTerrainAlongSegment(
   }));
 }
 
-/**
- * Calculates geodesic surface distance between two points in meters.
- */
-export function calculateGeodesicDistanceM(
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number
-): number {
-  return Math.round(haversineDistanceM(lat1, lng1, lat2, lng2) * 10) / 10;
-}
+export { calculateGeodesicDistanceM } from './geoUtils';

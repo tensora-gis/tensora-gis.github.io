@@ -10,11 +10,6 @@ import type ExcelJS from 'exceljs';
 import {
   WaterDistributionNetwork,
   SimulationSummary,
-  WaterJunction,
-  WaterPipe,
-  WaterPump,
-  WaterReservoir,
-  WaterTank,
 } from '../types/waterDistribution';
 
 export async function buildWaterExcelWorkbook(

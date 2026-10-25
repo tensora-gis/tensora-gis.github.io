@@ -2,11 +2,8 @@ import React, { useMemo } from 'react';
 import {
   WastewaterNetwork,
   WastewaterManhole,
-  WastewaterConduit,
-  WastewaterWetWell,
-  WastewaterOutfall,
 } from '../../types/wastewater';
-import { X, TrendingUp, AlertTriangle } from 'lucide-react';
+import { X, TrendingUp } from 'lucide-react';
 
 interface WastewaterProfileViewerProps {
   network: WastewaterNetwork;

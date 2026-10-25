@@ -5,7 +5,6 @@ import {
   WastewaterConduit,
   WastewaterWetWell,
   WastewaterPump,
-  WastewaterForceMain,
   WastewaterOutfall,
   WastewaterSimulationSummary,
 } from '../../types/wastewater';

@@ -11,21 +11,17 @@ import {
   Activity,
   FileSpreadsheet,
   Mountain,
-  Users,
   ShieldAlert,
   Flame,
   Download,
   Printer,
   Wrench,
-  Clock,
-  Waves,
   Database,
   TrendingUp,
   Droplets,
   Zap,
   Gauge,
   Shield,
-  Layers,
 } from 'lucide-react';
 
 interface WaterSimulationResultsModalProps {

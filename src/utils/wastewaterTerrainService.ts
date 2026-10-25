@@ -6,7 +6,6 @@
  */
 
 import { fetchRealEarthElevations, sampleGroundElevation } from './waterTerrainService';
-import { haversineDistanceM } from './geoUtils';
 import { WastewaterNetwork } from '../types/wastewater';
 
 export interface WastewaterTerrainProfilePoint {
@@ -19,12 +18,7 @@ export interface WastewaterTerrainProfilePoint {
 /**
  * Samples real ground elevation for a coordinate point and returns height above MSL.
  */
-export async function sampleWastewaterGroundElevation(
-  lat: number,
-  lng: number
-): Promise<number | null> {
-  return await sampleGroundElevation(lat, lng);
-}
+export const sampleWastewaterGroundElevation = sampleGroundElevation;
 
 /**
  * Samples real ground elevations in batch for all wastewater nodes (manholes, wet wells, outfalls).
@@ -135,14 +129,4 @@ export async function sampleAllWastewaterElevations(
   };
 }
 
-/**
- * Calculates geodesic surface distance between two points in meters.
- */
-export function calculateWastewaterDistanceM(
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number
-): number {
-  return Math.round(haversineDistanceM(lat1, lng1, lat2, lng2) * 10) / 10;
-}
+export { calculateGeodesicDistanceM as calculateWastewaterDistanceM } from './geoUtils';

@@ -11,7 +11,6 @@ import {
   WastewaterConduit,
   WastewaterWetWell,
   WastewaterPump,
-  WastewaterForceMain,
   WastewaterOutfall,
 } from '../types/wastewater';
 

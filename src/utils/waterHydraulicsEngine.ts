@@ -770,7 +770,10 @@ export function computeTransientSurgeAnalysis(
 
     const len = Math.max(10, pipe.length);
     const tc = (2 * len) / a; // Acoustic pipeline reflection period
-    const v0 = Math.abs(pipe.velocity ?? 1.0);
+    const flowLps = Math.abs(flows.get(pipe.id) ?? pipe.flow ?? 0);
+    const areaM2 = (Math.PI * Math.pow(pipe.diameter / 1000, 2)) / 4;
+    const computedV = areaM2 > 0 ? (flowLps / 1000) / areaM2 : 0;
+    const v0 = pipe.velocity !== undefined && pipe.velocity !== 0 ? Math.abs(pipe.velocity) : (computedV > 0 ? computedV : 1.0);
 
     // 2. Joukowsky surge head Delta H (m)
     // For rapid event (closureTime <= tc): full Joukowsky a * V / g

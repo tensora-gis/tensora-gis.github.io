@@ -16,7 +16,6 @@ import {
   createMunicipalWastewaterNetwork,
   createHillsideSteepSewerNetwork,
   createCoastalDualLiftNetwork,
-  createIndustrialParkSewerNetwork,
   ARBITRARY_WASTEWATER_DEMOS,
 } from '../src/data/sampleWastewaterNetworks';
 import { simulateWastewaterNetwork } from '../src/utils/wastewaterHydraulicsEngine';
@@ -63,7 +62,7 @@ ARBITRARY_WASTEWATER_DEMOS.forEach((demoDef, idx) => {
   const { updatedNetwork, summary } = simulateWastewaterNetwork(net);
   check(
     `Demo ${idx + 1} (${demoDef.name}): Solves hydraulics and converges`,
-    summary.converged === true
+    summary.converged === true && updatedNetwork.conduits.length > 0
   );
   check(
     `Demo ${idx + 1} (${demoDef.name}): Effluent discharge > 0`,
@@ -108,7 +107,6 @@ console.log('\n[3] Testing Model Deletion & Cascading Cleanliness');
 
 let netWithLift = createMunicipalWastewaterNetwork();
 const initialWetWellId = netWithLift.wetWells[0].id;
-const initialOutfallId = netWithLift.outfalls[0].id;
 
 // Simulate user deleting Wet Well WW-1
 const updatedAfterWwDelete: WastewaterNetwork = {

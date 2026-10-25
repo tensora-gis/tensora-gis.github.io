@@ -20,7 +20,6 @@
 import { createHighlandMunicipalNetwork } from '../src/data/sampleWaterNetworks';
 import { simulateWaterNetwork, applyWaterPipeOptimization, computeTransientSurgeAnalysis } from '../src/utils/waterHydraulicsEngine';
 import { buildWaterExcelWorkbook } from '../src/utils/waterExcelExport';
-import { WaterDistributionNetwork } from '../src/types/waterDistribution';
 
 function assert(condition: boolean, message: string) {
   if (!condition) {

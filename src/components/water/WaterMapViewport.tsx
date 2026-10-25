@@ -5,14 +5,9 @@ import {
   MapThematicDisplay,
   NetworkElement,
   WaterDistributionNetwork,
-  WaterJunction,
-  WaterPipe,
-  WaterPump,
-  WaterReservoir,
-  WaterTank,
 } from '../../types/waterDistribution';
-import { calculateGeodesicDistanceM, sampleGroundElevation } from '../../utils/waterTerrainService';
-import { Layers, ZoomIn, ZoomOut, Crosshair, AlertTriangle } from 'lucide-react';
+import { sampleGroundElevation } from '../../utils/waterTerrainService';
+import { Crosshair } from 'lucide-react';
 
 interface WaterMapViewportProps {
   network: WaterDistributionNetwork;

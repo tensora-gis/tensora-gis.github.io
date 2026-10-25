@@ -2,15 +2,9 @@ import React, { useState } from 'react';
 import {
   WastewaterNetworkElement,
   WastewaterNetwork,
-  WastewaterManhole,
-  WastewaterConduit,
-  WastewaterWetWell,
-  WastewaterPump,
-  WastewaterForceMain,
-  WastewaterOutfall,
   WastewaterSimulationSummary,
 } from '../../types/wastewater';
-import { X, Table, Search, Download, Trash2, FileSpreadsheet, Plus } from 'lucide-react';
+import { X, Table, Search, Download, Trash2, FileSpreadsheet } from 'lucide-react';
 
 interface WastewaterFlexTablesProps {
   network: WastewaterNetwork;

@@ -18,11 +18,9 @@ import {
   Printer,
   Wrench,
   Clock,
-  Waves,
   Database,
   TrendingUp,
   Droplets,
-  Zap,
 } from 'lucide-react';
 
 interface WastewaterSimulationResultsModalProps {

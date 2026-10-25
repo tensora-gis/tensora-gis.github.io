@@ -12,17 +12,6 @@ import type ExcelJS from 'exceljs';
 import {
   WastewaterNetwork,
   WastewaterSimulationSummary,
-  WastewaterManhole,
-  WastewaterConduit,
-  WastewaterWetWell,
-  WastewaterPump,
-  WastewaterForceMain,
-  WastewaterOutfall,
-  HourlySewerSimulationPoint,
-  SewerConstraintDesignResult,
-  H2SCorrosionResult,
-  InflowInfiltrationResult,
-  LiftStationCycleResult,
 } from '../types/wastewater';
 
 export async function generateWastewaterExcel(

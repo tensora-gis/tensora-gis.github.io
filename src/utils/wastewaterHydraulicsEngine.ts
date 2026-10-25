@@ -13,11 +13,9 @@
 
 import {
   WastewaterConduit,
-  WastewaterForceMain,
   WastewaterManhole,
   WastewaterNetwork,
   WastewaterOutfall,
-  WastewaterPump,
   WastewaterSimulationSummary,
   WastewaterWetWell,
   HourlySewerSimulationPoint,
@@ -82,13 +80,11 @@ export function solveManningPartialFlow(
 } {
   const S = Math.max(0.0001, slopeMPerM);
   const D = diameterM;
-  const r = D / 2;
 
   // Full-pipe properties
   const aFull = (Math.PI * D * D) / 4;
   const rhFull = D / 4;
   const qFullM3s = (1.0 / manningN) * aFull * Math.pow(rhFull, 2 / 3) * Math.sqrt(S);
-  const vFull = qFullM3s / aFull;
 
   if (dischargeM3s <= 0.000001) {
     return {

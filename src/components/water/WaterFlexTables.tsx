@@ -2,15 +2,9 @@ import React, { useState } from 'react';
 import {
   NetworkElement,
   WaterDistributionNetwork,
-  WaterJunction,
-  WaterPipe,
-  WaterPump,
-  WaterReservoir,
-  WaterTank,
-  WaterValve,
   SimulationSummary,
 } from '../../types/waterDistribution';
-import { X, Table, Search, Download, Trash2, FileSpreadsheet, SlidersHorizontal, Flame } from 'lucide-react';
+import { X, Table, Search, Download, Trash2, FileSpreadsheet } from 'lucide-react';
 
 interface WaterFlexTablesProps {
   network: WaterDistributionNetwork;
