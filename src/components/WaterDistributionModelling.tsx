@@ -37,27 +37,13 @@ import {
 } from '../utils/waterTerrainService';
 import { exportToEpanetInp, parseEpanetInp } from '../utils/epanetParser';
 import { downloadWaterHydraulicExcel } from '../utils/waterExcelExport';
+import { getNextId } from '../utils/idUtils';
 import { WaterToolbar } from './water/WaterToolbar';
 import { WaterMapViewport } from './water/WaterMapViewport';
 import { WaterPropertyInspector } from './water/WaterPropertyInspector';
 import { WaterFlexTables } from './water/WaterFlexTables';
 import { WaterProfileViewer } from './water/WaterProfileViewer';
 import { WaterSimulationResultsModal } from './water/WaterSimulationResultsModal';
-
-// Helper to generate guaranteed non-colliding sequential IDs even across delete/add operations
-function getNextId(prefix: string, existingIds: string[]): string {
-  let maxNum = 0;
-  for (const id of existingIds) {
-    if (id.startsWith(prefix)) {
-      const numStr = id.slice(prefix.length);
-      const n = parseInt(numStr, 10);
-      if (!isNaN(n) && n > maxNum) {
-        maxNum = n;
-      }
-    }
-  }
-  return `${prefix}${maxNum + 1}`;
-}
 
 export const WaterDistributionModelling: React.FC = () => {
   // Network Model State

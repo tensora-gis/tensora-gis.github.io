@@ -45,6 +45,7 @@ import {
   calculateWastewaterDistanceM,
 } from '../utils/wastewaterTerrainService';
 import { exportToSwmmInp, parseSwmmInp } from '../utils/swmmParser';
+import { getNextId } from '../utils/idUtils';
 
 import { WastewaterToolbar } from './wastewater/WastewaterToolbar';
 import { WastewaterMapViewport } from './wastewater/WastewaterMapViewport';
@@ -52,21 +53,6 @@ import { WastewaterPropertyInspector } from './wastewater/WastewaterPropertyInsp
 import { WastewaterFlexTables } from './wastewater/WastewaterFlexTables';
 import { WastewaterProfileViewer } from './wastewater/WastewaterProfileViewer';
 import { WastewaterSimulationResultsModal } from './wastewater/WastewaterSimulationResultsModal';
-
-// Helper to generate guaranteed non-colliding sequential IDs even across delete/add operations
-function getNextId(prefix: string, existingIds: string[]): string {
-  let maxNum = 0;
-  for (const id of existingIds) {
-    if (id.startsWith(prefix)) {
-      const numStr = id.slice(prefix.length);
-      const n = parseInt(numStr, 10);
-      if (!isNaN(n) && n > maxNum) {
-        maxNum = n;
-      }
-    }
-  }
-  return `${prefix}${maxNum + 1}`;
-}
 
 export const WastewaterModelling: React.FC = () => {
   // Demo Model Cycle Index

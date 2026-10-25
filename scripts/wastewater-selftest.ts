@@ -21,6 +21,7 @@ import {
 import { simulateWastewaterNetwork } from '../src/utils/wastewaterHydraulicsEngine';
 import { exportToSwmmInp, parseSwmmInp } from '../src/utils/swmmParser';
 import { WastewaterNetwork } from '../src/types/wastewater';
+import { getNextId } from '../src/utils/idUtils';
 
 let passed = 0;
 let failed = 0;
@@ -152,20 +153,6 @@ check(
 // ---------------------------------------------------------------------------
 console.log('\n[4] Testing Guaranteed Non-Colliding ID Generation After Deletions');
 // ---------------------------------------------------------------------------
-
-function getNextId(prefix: string, existingIds: string[]): string {
-  let maxNum = 0;
-  for (const id of existingIds) {
-    if (id.startsWith(prefix)) {
-      const numStr = id.slice(prefix.length);
-      const n = parseInt(numStr, 10);
-      if (!isNaN(n) && n > maxNum) {
-        maxNum = n;
-      }
-    }
-  }
-  return `${prefix}${maxNum + 1}`;
-}
 
 const existingManholes = ['MH-1', 'MH-2', 'MH-3', 'MH-4', 'MH-5', 'MH-6'];
 // Delete MH-1 and MH-3

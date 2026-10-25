@@ -8,8 +8,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Compass, TriangleAlert } from 'lucide-react';
-import { isAuthConfigured } from './session';
-import { AuthSession } from './session';
+import { isAuthConfigured, AuthSession } from './session';
 
 const GIS_POLL_MS = 100;
 
