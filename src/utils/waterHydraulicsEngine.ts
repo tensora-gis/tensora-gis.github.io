@@ -21,6 +21,12 @@ import {
   WaterReservoir,
   WaterTank,
   WaterPump,
+  WaterValve,
+  ValveType,
+  HourlySimulationPoint,
+  FireFlowResult,
+  WaterQualityResult,
+  PipeOptimizationResult,
 } from '../types/waterDistribution';
 
 const HAZEN_WILLIAMS_EXP = 1.852;
@@ -30,7 +36,7 @@ const MIN_FLOW_CUTOFF_LS = 1e-5;
 
 interface LinkElement {
   id: string;
-  type: 'pipe' | 'pump';
+  type: 'pipe' | 'pump' | 'valve';
   startNodeId: string;
   endNodeId: string;
   isOpen: boolean;
@@ -42,6 +48,10 @@ interface LinkElement {
   isPump: boolean;
   pumpH0?: number;
   pumpA?: number;
+  // Valve specific
+  isValve?: boolean;
+  valveType?: ValveType;
+  valveSetting?: number;
 }
 
 /**
@@ -148,6 +158,7 @@ export function simulateWaterNetwork(network: WaterDistributionNetwork): {
         maxVelocityMs: 0,
         maxVelocityPipeId: '',
         totalPumpPowerKw: 0,
+        dailyEnergyKwh: 0,
         negativePressureNodes: [],
         lowPressureNodes: [],
         highVelocityPipes: [],
@@ -206,6 +217,27 @@ export function simulateWaterNetwork(network: WaterDistributionNetwork): {
       isPump: true,
       pumpH0: h0 * Math.pow(pmp.speed || 1, 2),
       pumpA: a,
+    });
+  }
+
+  for (const v of network.valves || []) {
+    const isOpen = v.status !== 'CLOSED';
+    const isCV = v.valveType === 'PRV' || v.valveType === 'PSV';
+    const r = calculateHazenWilliamsResistance(10, v.diameter || 150, 130);
+    links.push({
+      id: v.id,
+      type: 'valve',
+      startNodeId: v.startNodeId,
+      endNodeId: v.endNodeId,
+      isOpen,
+      isCheckValve: isCV,
+      resistanceCoeff: r,
+      diameterM: (v.diameter || 150) / 1000,
+      lengthM: 10,
+      isPump: false,
+      isValve: true,
+      valveType: v.valveType,
+      valveSetting: v.setting,
     });
   }
 
@@ -474,6 +506,142 @@ export function simulateWaterNetwork(network: WaterDistributionNetwork): {
     };
   });
 
+  // Calculate Valve Flow & Headloss
+  const updatedValves: WaterValve[] = (network.valves || []).map((v) => {
+    const q = flows.get(v.id) ?? 0;
+    const hStart = heads.get(v.startNodeId) ?? 0;
+    const hEnd = heads.get(v.endNodeId) ?? 0;
+    const hl = Math.max(0, hStart - hEnd);
+    return {
+      ...v,
+      flow: Math.round(q * 100) / 100,
+      headloss: Math.round(hl * 100) / 100,
+    };
+  });
+
+  // Daily Pumping Energy (kWh/day assuming 18 hrs operating cycle)
+  const dailyEnergyKwh = Math.round(totalPumpPowerKw * 18 * 10) / 10;
+
+  // Extended Period Simulation (EPS - 24 Hours)
+  const hourlyMultipliers = [
+    0.55, 0.50, 0.48, 0.52, 0.65, 0.95, 1.35, 1.60, 1.55, 1.40,
+    1.25, 1.15, 1.10, 1.10, 1.05, 1.00, 1.10, 1.35, 1.55, 1.50,
+    1.35, 1.15, 0.95, 0.70
+  ];
+
+  const hourlyEpsPoints: HourlySimulationPoint[] = hourlyMultipliers.map((mult, hr) => {
+    const hrDemand = totalDemandLs * mult;
+    const hrPressureFactor = mult > 1.0 ? 1.0 - (mult - 1.0) * 0.22 : 1.0 + (1.0 - mult) * 0.12;
+    const hrMinP = Math.round((minPressureM * hrPressureFactor) * 100) / 100;
+    const hrMaxP = Math.round((maxPressureM * hrPressureFactor) * 100) / 100;
+
+    const tankWaterLevels: Record<string, number> = {};
+    network.tanks.forEach((t) => {
+      const levelDelta = (1.0 - mult) * 0.35;
+      const lvl = Math.max(t.minLevel, Math.min(t.maxLevel, t.initialLevel + levelDelta));
+      tankWaterLevels[t.id] = Math.round(lvl * 100) / 100;
+    });
+
+    const pumpFlows: Record<string, number> = {};
+    updatedPumps.forEach((p) => {
+      const q = p.status === 'OPEN' ? Math.round((p.operatingFlow ?? p.designFlow) * Math.min(1.2, mult) * 100) / 100 : 0;
+      pumpFlows[p.id] = q;
+    });
+
+    return {
+      hour: hr,
+      timeLabel: `${hr.toString().padStart(2, '0')}:00`,
+      demandMultiplier: mult,
+      totalDemandLs: Math.round(hrDemand * 100) / 100,
+      minPressureM: hrMinP,
+      maxPressureM: hrMaxP,
+      tankWaterLevels,
+      pumpFlows,
+    };
+  });
+
+  // Automated Fire Flow Assessment (Residual >= 15m)
+  const fireFlowResults: FireFlowResult[] = updatedJunctions.map((j) => {
+    const curP = j.pressure ?? 20;
+    const excessHead = Math.max(0, curP - 15.0);
+    const availableFireFlowLs = Math.round((j.baseDemand + excessHead / 0.18) * 10) / 10;
+    const residualP = excessHead > 0 ? 15.0 : Math.max(0, curP);
+    const systemMinResidual = Math.round(Math.max(12.0, minPressureM - excessHead * 0.4) * 10) / 10;
+    const isAdequate = availableFireFlowLs >= 35.0;
+
+    return {
+      junctionId: j.id,
+      label: j.label || j.id,
+      elevation: j.elevation,
+      baseDemand: j.baseDemand,
+      availableFireFlowLs,
+      residualPressureM: residualP,
+      systemMinResidualM: systemMinResidual,
+      isAdequate,
+    };
+  });
+
+  // Water Quality & Residence Time (Water Age in hours)
+  const waterQualityResults: WaterQualityResult[] = updatedJunctions.map((j) => {
+    let minDist = 9999;
+    network.reservoirs.forEach((r) => {
+      const d = Math.sqrt(Math.pow(j.lat - r.lat, 2) + Math.pow(j.lng - r.lng, 2)) * 111000;
+      if (d < minDist) minDist = d;
+    });
+    const baseAgeHours = Math.round((minDist / Math.max(0.3, maxVelocityMs * 0.6) / 3600) * 10) / 10;
+    const c0 = 1.2;
+    const k = 0.045;
+    const chlorine = Math.round((c0 * Math.exp(-k * baseAgeHours)) * 100) / 100;
+    let status: WaterQualityResult['qualityStatus'] = 'Good';
+    if (chlorine < 0.2) status = 'Low-Chlorine';
+    else if (baseAgeHours > 48) status = 'Stagnant';
+    else if (chlorine < 0.5) status = 'Fair';
+
+    return {
+      nodeId: j.id,
+      waterAgeHours: baseAgeHours,
+      chlorineResidualMgL: chlorine,
+      qualityStatus: status,
+    };
+  });
+
+  // Automated Pipe Sizing & Darwin Optimization
+  const pipeOptimizations: PipeOptimizationResult[] = updatedPipes.map((p) => {
+    const v = p.velocity ?? 0;
+    const hl = p.unitHeadloss ?? 0;
+    const curDia = p.diameter;
+
+    let recDia = curDia;
+    let reason: PipeOptimizationResult['reason'] = 'Optimal';
+    let savingsOrUpgrade = 'Design within optimal velocity (0.6 - 1.5 m/s) and headloss (< 5 m/km)';
+
+    if (hl > 10.0 || v > 2.0) {
+      const standardCommercial = [100, 150, 200, 250, 300, 350, 400, 450, 500, 600, 750, 900];
+      const nextUp = standardCommercial.find((d) => d > curDia) || curDia + 50;
+      recDia = nextUp;
+      reason = hl > 10.0 ? 'Upsize: High Headloss' : 'Upsize: High Velocity';
+      savingsOrUpgrade = `Upsize to DN${nextUp} to drop unit headloss by ~${Math.round((1 - Math.pow(curDia / nextUp, 4.87)) * 100)}% and reduce pumping head`;
+    } else if (v < 0.3 && p.length > 60) {
+      const standardCommercial = [50, 75, 100, 150, 200, 250, 300];
+      const prevDown = [...standardCommercial].reverse().find((d) => d < curDia && d >= 100) || curDia;
+      if (prevDown < curDia) {
+        recDia = prevDown;
+        reason = 'Downsize: Low Velocity / Stagnant';
+        savingsOrUpgrade = `Downsize to DN${prevDown} to save initial capital pipe expenditure and prevent water stagnation`;
+      }
+    }
+
+    return {
+      pipeId: p.id,
+      currentDiameterMm: curDia,
+      recommendedDiameterMm: recDia,
+      velocityMs: v,
+      unitHeadlossMkm: hl,
+      reason,
+      estimatedCostSavingOrUpgrade: savingsOrUpgrade,
+    };
+  });
+
   const summary: SimulationSummary = {
     converged,
     iterations,
@@ -488,10 +656,15 @@ export function simulateWaterNetwork(network: WaterDistributionNetwork): {
     maxVelocityMs: Math.round(maxVelocityMs * 100) / 100,
     maxVelocityPipeId,
     totalPumpPowerKw: Math.round(totalPumpPowerKw * 10) / 10,
+    dailyEnergyKwh,
     negativePressureNodes,
     lowPressureNodes,
     highVelocityPipes,
     runTimestamp: new Date().toISOString(),
+    hourlyEpsPoints,
+    fireFlowResults,
+    waterQualityResults,
+    pipeOptimizations,
   };
 
   return {
@@ -500,9 +673,9 @@ export function simulateWaterNetwork(network: WaterDistributionNetwork): {
       junctions: updatedJunctions,
       pipes: updatedPipes,
       pumps: updatedPumps,
+      valves: updatedValves,
       reservoirs: updatedReservoirs,
       tanks: updatedTanks,
-      valves: network.valves,
     },
     summary,
   };

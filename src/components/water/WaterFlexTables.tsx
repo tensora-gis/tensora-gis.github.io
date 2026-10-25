@@ -7,11 +7,14 @@ import {
   WaterPump,
   WaterReservoir,
   WaterTank,
+  WaterValve,
+  SimulationSummary,
 } from '../../types/waterDistribution';
-import { X, Table, Search, Download, Trash2, FileSpreadsheet } from 'lucide-react';
+import { X, Table, Search, Download, Trash2, FileSpreadsheet, SlidersHorizontal, Flame } from 'lucide-react';
 
 interface WaterFlexTablesProps {
   network: WaterDistributionNetwork;
+  summary?: SimulationSummary | null;
   onUpdateElement: (elem: NetworkElement) => void;
   onSelectElement: (elem: NetworkElement) => void;
   onDeleteElement: (id: string, type: NetworkElement['type']) => void;
@@ -19,10 +22,11 @@ interface WaterFlexTablesProps {
   onExportExcel?: () => void;
 }
 
-type ActiveTableTab = 'junctions' | 'pipes' | 'pumps' | 'sources';
+type ActiveTableTab = 'junctions' | 'pipes' | 'pumps' | 'valves' | 'sources' | 'fireflow';
 
 export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
   network,
+  summary,
   onUpdateElement,
   onSelectElement,
   onDeleteElement,
@@ -75,7 +79,9 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
                 ['junctions', `Junctions (${network.junctions.length})`],
                 ['pipes', `Pipes (${network.pipes.length})`],
                 ['pumps', `Pumps (${network.pumps.length})`],
+                ['valves', `Valves (${(network.valves || []).length})`],
                 ['sources', `Tanks & Res. (${network.tanks.length + network.reservoirs.length})`],
+                ['fireflow', `Fire Flow (${network.junctions.length})`],
               ] as const
             ).map(([tabId, label]) => (
               <button
@@ -405,7 +411,73 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
           </table>
         )}
 
-        {/* 4. Sources Table */}
+        {/* 4. Valves Table */}
+        {activeTab === 'valves' && (
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-[#121212] sticky top-0 border-b border-[#222] text-[10px] text-[#737373] uppercase font-tech">
+              <tr>
+                <th className="p-2">ID</th>
+                <th className="p-2">Type</th>
+                <th className="p-2">Label</th>
+                <th className="p-2">Inlet Node</th>
+                <th className="p-2">Outlet Node</th>
+                <th className="p-2">Diameter (mm)</th>
+                <th className="p-2">Setting</th>
+                <th className="p-2">Operating Status</th>
+                <th className="p-2">Flow (L/s)</th>
+                <th className="p-2">Headloss (m)</th>
+                <th className="p-2 text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1a1a1a]">
+              {(network.valves || []).map((v) => (
+                <tr
+                  key={v.id}
+                  onClick={() => onSelectElement(v)}
+                  className="hover:bg-[#171717] transition-colors cursor-pointer"
+                >
+                  <td className="p-2 text-cyan-400 font-bold">{v.id}</td>
+                  <td className="p-2 text-[#ccc] font-bold">{v.valveType}</td>
+                  <td className="p-2 text-[#ccc]">{v.label}</td>
+                  <td className="p-2 text-[#888]">{v.startNodeId}</td>
+                  <td className="p-2 text-[#888]">{v.endNodeId}</td>
+                  <td className="p-2 text-white">{v.diameter || 150}</td>
+                  <td className="p-2 text-white font-mono">{v.setting} {v.valveType === 'FCV' ? 'L/s' : 'm'}</td>
+                  <td className="p-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateElement({
+                          ...v,
+                          status: v.status === 'ACTIVE' ? 'CLOSED' : 'ACTIVE',
+                        })
+                      }
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
+                        v.status === 'ACTIVE'
+                          ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40 hover:bg-cyan-500/30'
+                          : 'bg-red-500/20 text-red-400 border-red-500/40 hover:bg-red-500/30'
+                      }`}
+                    >
+                      {v.status === 'ACTIVE' ? 'REGULATING' : 'CLOSED'}
+                    </button>
+                  </td>
+                  <td className="p-2 text-cyan-400 font-bold">{v.flow ?? '—'}</td>
+                  <td className="p-2 text-white font-mono">{v.headloss ?? '—'}</td>
+                  <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      onClick={() => onDeleteElement(v.id, 'valve')}
+                      className="text-[#666] hover:text-red-400"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* 5. Sources Table */}
         {activeTab === 'sources' && (
           <table className="w-full text-left border-collapse">
             <thead className="bg-[#121212] sticky top-0 border-b border-[#222] text-[10px] text-[#737373] uppercase font-tech">
@@ -461,6 +533,60 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* 6. Fire Flow Analysis Table */}
+        {activeTab === 'fireflow' && (
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-[#121212] sticky top-0 border-b border-[#222] text-[10px] text-[#737373] uppercase font-tech">
+              <tr>
+                <th className="p-2">Junction</th>
+                <th className="p-2">Elevation (m MSL)</th>
+                <th className="p-2">Base Demand (L/s)</th>
+                <th className="p-2">Available Fire Flow (L/s)</th>
+                <th className="p-2">Flow (GPM)</th>
+                <th className="p-2">Residual Pressure (m H2O)</th>
+                <th className="p-2">Residual (psi)</th>
+                <th className="p-2">Min System Residual (m)</th>
+                <th className="p-2">Standard Compliance</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1a1a1a]">
+              {(summary?.fireFlowResults || network.junctions.map((j) => ({
+                junctionId: j.id,
+                label: j.label || j.id,
+                elevation: j.elevation,
+                baseDemand: j.baseDemand,
+                availableFireFlowLs: Math.max(10, Math.round(((j.pressure ?? 20) - 15) * 5.5)),
+                residualPressureM: 15.0,
+                systemMinResidualM: 14.2,
+                isAdequate: ((j.pressure ?? 20) - 15) * 5.5 >= 35,
+              }))).map((ff) => (
+                <tr
+                  key={ff.junctionId}
+                  className="hover:bg-[#171717] transition-colors"
+                >
+                  <td className="p-2 text-amber-400 font-bold">{ff.junctionId}</td>
+                  <td className="p-2 text-white">{ff.elevation}</td>
+                  <td className="p-2 text-[#ccc]">{ff.baseDemand}</td>
+                  <td className="p-2 text-emerald-400 font-bold">{ff.availableFireFlowLs} L/s</td>
+                  <td className="p-2 text-white font-mono">{Math.round(ff.availableFireFlowLs * 15.85)} gpm</td>
+                  <td className="p-2 text-white">{ff.residualPressureM} m</td>
+                  <td className="p-2 text-white">{(ff.residualPressureM * 1.42).toFixed(1)} psi</td>
+                  <td className="p-2 text-white">{ff.systemMinResidualM} m</td>
+                  <td className="p-2">
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                      ff.isAdequate
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                        : 'bg-red-500/20 text-red-400 border border-red-500/40'
+                    }`}>
+                      {ff.isAdequate ? 'ADEQUATE' : 'DEFICIENT'}
+                    </span>
                   </td>
                 </tr>
               ))}

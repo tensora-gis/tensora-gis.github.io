@@ -112,7 +112,7 @@ export interface WaterPump extends BaseElement {
   energyConsumptionKwh?: number;
 }
 
-export type ValveType = 'PRV' | 'PSV' | 'PBV' | 'FCV' | 'TCV';
+export type ValveType = 'PRV' | 'PSV' | 'PBV' | 'FCV' | 'TCV' | 'GPV';
 
 export interface WaterValve extends BaseElement {
   type: 'valve';
@@ -123,6 +123,7 @@ export interface WaterValve extends BaseElement {
   setting: number;
   diameter: number; // mm
   status: 'ACTIVE' | 'OPEN' | 'CLOSED';
+  minorLossCoeff?: number;
   
   // Simulation results
   flow?: number;
@@ -150,6 +151,45 @@ export interface WaterDistributionNetwork {
   valves: WaterValve[];
 }
 
+export interface HourlySimulationPoint {
+  hour: number;
+  timeLabel: string;
+  demandMultiplier: number;
+  totalDemandLs: number;
+  minPressureM: number;
+  maxPressureM: number;
+  tankWaterLevels: Record<string, number>; // tankId -> level in meters
+  pumpFlows: Record<string, number>; // pumpId -> operating flow L/s
+}
+
+export interface FireFlowResult {
+  junctionId: string;
+  label: string;
+  elevation: number;
+  baseDemand: number;
+  availableFireFlowLs: number; // L/s while maintaining residual pressure >= 15m
+  residualPressureM: number; // Pressure at tested node during fire flow
+  systemMinResidualM: number; // Lowest pressure in the rest of system
+  isAdequate: boolean; // >= 35 L/s (approx 550 GPM)
+}
+
+export interface WaterQualityResult {
+  nodeId: string;
+  waterAgeHours: number; // Residence time in network
+  chlorineResidualMgL: number; // Free available chlorine (e.g. 0.2 - 2.0 mg/L)
+  qualityStatus: 'Good' | 'Fair' | 'Stagnant' | 'Low-Chlorine';
+}
+
+export interface PipeOptimizationResult {
+  pipeId: string;
+  currentDiameterMm: number;
+  recommendedDiameterMm: number;
+  velocityMs: number;
+  unitHeadlossMkm: number;
+  reason: 'Optimal' | 'Upsize: High Headloss' | 'Upsize: High Velocity' | 'Downsize: Low Velocity / Stagnant';
+  estimatedCostSavingOrUpgrade: string;
+}
+
 export interface SimulationSummary {
   converged: boolean;
   iterations: number;
@@ -164,10 +204,17 @@ export interface SimulationSummary {
   maxVelocityMs: number;
   maxVelocityPipeId: string;
   totalPumpPowerKw: number;
+  dailyEnergyKwh: number;
   negativePressureNodes: string[];
   lowPressureNodes: string[]; // < 15 m
   highVelocityPipes: string[]; // > 2.0 m/s
   runTimestamp: string;
+
+  // EPANET & Water Modeling Extended Capabilities
+  hourlyEpsPoints?: HourlySimulationPoint[];
+  fireFlowResults?: FireFlowResult[];
+  waterQualityResults?: WaterQualityResult[];
+  pipeOptimizations?: PipeOptimizationResult[];
 }
 
 export type ActiveTool =
@@ -182,4 +229,12 @@ export type ActiveTool =
   | 'delete'
   | 'profile-select';
 
-export type MapThematicDisplay = 'none' | 'pressure' | 'velocity' | 'elevation' | 'diameter' | 'flow';
+export type MapThematicDisplay =
+  | 'none'
+  | 'pressure'
+  | 'velocity'
+  | 'elevation'
+  | 'diameter'
+  | 'flow'
+  | 'water-age'
+  | 'fire-flow';

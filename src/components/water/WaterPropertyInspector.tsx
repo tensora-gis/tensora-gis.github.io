@@ -6,6 +6,8 @@ import {
   WaterPump,
   WaterReservoir,
   WaterTank,
+  WaterValve,
+  ValveType,
 } from '../../types/waterDistribution';
 import { sampleGroundElevation } from '../../utils/waterTerrainService';
 import {
@@ -15,6 +17,7 @@ import {
   Activity,
   Layers,
   Sliders,
+  SlidersHorizontal,
   CheckCircle2,
   AlertTriangle,
   CircleDot,
@@ -59,6 +62,7 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
             {element.type === 'reservoir' && <Waves className="w-3.5 h-3.5" />}
             {element.type === 'tank' && <Database className="w-3.5 h-3.5" />}
             {element.type === 'pump' && <Zap className="w-3.5 h-3.5" />}
+            {element.type === 'valve' && <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />}
           </div>
           <div className="flex flex-col">
             <span className="text-xs font-bold text-white font-tech uppercase tracking-wider">
@@ -536,6 +540,110 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
                 className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
               />
             </div>
+          </>
+        )}
+
+        {/* --- VALVE SPECIFIC --- */}
+        {element.type === 'valve' && (
+          <>
+            <div>
+              <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1">
+                Valve Type
+              </label>
+              <select
+                value={(element as WaterValve).valveType}
+                onChange={(e) =>
+                  onUpdateElement({
+                    ...element,
+                    valveType: e.target.value as ValveType,
+                  })
+                }
+                className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
+              >
+                <option value="PRV">PRV (Pressure Reducing Valve)</option>
+                <option value="PSV">PSV (Pressure Sustaining Valve)</option>
+                <option value="PBV">PBV (Pressure Breaker Valve)</option>
+                <option value="FCV">FCV (Flow Control Valve)</option>
+                <option value="TCV">TCV (Throttle Control Valve)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1">
+                {(element as WaterValve).valveType === 'FCV'
+                  ? 'Target Flow Rate (L/s)'
+                  : (element as WaterValve).valveType === 'TCV'
+                  ? 'Minor Loss Coeff (K)'
+                  : 'Pressure Setting (m H2O)'}
+              </label>
+              <input
+                type="number"
+                step="0.5"
+                value={(element as WaterValve).setting}
+                onChange={(e) =>
+                  onUpdateElement({
+                    ...element,
+                    setting: parseFloat(e.target.value) || 0,
+                  })
+                }
+                className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1">
+                Valve Diameter (mm)
+              </label>
+              <input
+                type="number"
+                step="25"
+                value={(element as WaterValve).diameter || 150}
+                onChange={(e) =>
+                  onUpdateElement({
+                    ...element,
+                    diameter: parseFloat(e.target.value) || 150,
+                  })
+                }
+                className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1">
+                Operating Status
+              </label>
+              <select
+                value={(element as WaterValve).status}
+                onChange={(e) =>
+                  onUpdateElement({
+                    ...element,
+                    status: e.target.value as WaterValve['status'],
+                  })
+                }
+                className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-cyan-500"
+              >
+                <option value="ACTIVE">ACTIVE (Regulating)</option>
+                <option value="OPEN">OPEN (Full Bypass)</option>
+                <option value="CLOSED">CLOSED (Isolated)</option>
+              </select>
+            </div>
+
+            {/* Results */}
+            {(element as WaterValve).flow !== undefined && (
+              <div className="mt-3 p-3 rounded-lg bg-[#0a0a0a] border border-[#222] space-y-1.5">
+                <span className="text-[10px] font-tech font-bold uppercase tracking-wider text-cyan-400">
+                  Computed Valve Hydraulics
+                </span>
+                <div className="flex justify-between text-xs text-[#a3a3a3]">
+                  <span>Discharge Through Flow:</span>
+                  <span className="font-mono text-white font-bold">{(element as WaterValve).flow} L/s</span>
+                </div>
+                <div className="flex justify-between text-xs text-[#a3a3a3]">
+                  <span>Valve Headloss:</span>
+                  <span className="font-mono text-white">{(element as WaterValve).headloss} m</span>
+                </div>
+              </div>
+            )}
           </>
         )}
 

@@ -11,6 +11,7 @@ import {
   WaterReservoir,
   WaterTank,
   WaterPump,
+  WaterValve,
 } from '../types/waterDistribution';
 
 /**
@@ -81,6 +82,22 @@ export function exportToEpanetInp(network: WaterDistributionNetwork): string {
   }
   lines.push('');
 
+  if (network.valves && network.valves.length > 0) {
+    lines.push('[VALVES]');
+    lines.push(';ID              Node1            Node2            Diam(mm)   Type     Setting    MinorLoss');
+    for (const v of network.valves) {
+      const id = v.id.padEnd(16);
+      const n1 = v.startNodeId.padEnd(16);
+      const n2 = v.endNodeId.padEnd(16);
+      const diam = (v.diameter || 150).toFixed(0).padStart(10);
+      const vtype = (v.valveType || 'PRV').padEnd(8);
+      const setting = (v.setting || 0).toFixed(2).padStart(10);
+      const minor = (v.minorLossCoeff || 0).toFixed(2).padStart(10);
+      lines.push(`${id} ${n1} ${n2} ${diam} ${vtype} ${setting} ${minor}`);
+    }
+    lines.push('');
+  }
+
   lines.push('[COORDINATES]');
   lines.push(';Node            X-Coord (Lng)    Y-Coord (Lat)');
   for (const j of network.junctions) {
@@ -118,6 +135,7 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
   const tanks: WaterTank[] = [];
   const pipes: WaterPipe[] = [];
   const pumps: WaterPump[] = [];
+  const valves: WaterValve[] = [];
   const coords = new Map<string, { lat: number; lng: number }>();
 
   let currentSection = '';
@@ -246,6 +264,29 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
         });
         break;
       }
+
+      case 'VALVES': {
+        const id = tokens[0];
+        const n1 = tokens[1];
+        const n2 = tokens[2];
+        const diam = parseFloat(tokens[3]) || 150;
+        const vType = (tokens[4] || 'PRV').toUpperCase() as WaterValve['valveType'];
+        const setting = parseFloat(tokens[5]) || 0;
+        const minor = parseFloat(tokens[6]) || 0;
+        valves.push({
+          id,
+          label: id,
+          type: 'valve',
+          startNodeId: n1,
+          endNodeId: n2,
+          diameter: diam,
+          valveType: ['PRV', 'PSV', 'PBV', 'FCV', 'TCV', 'GPV'].includes(vType) ? vType : 'PRV',
+          setting,
+          minorLossCoeff: minor,
+          status: 'ACTIVE',
+        });
+        break;
+      }
     }
   }
 
@@ -281,6 +322,6 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
     tanks,
     pipes,
     pumps,
-    valves: [],
+    valves,
   };
 }

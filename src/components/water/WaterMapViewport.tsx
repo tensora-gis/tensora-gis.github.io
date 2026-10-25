@@ -26,6 +26,8 @@ interface WaterMapViewportProps {
   onAddTank: (lat: number, lng: number) => void;
   onAddPump: (startNodeId: string, endNodeId: string) => void;
   onAddPumpOnGround?: (lat: number, lng: number) => void;
+  onAddValve?: (startNodeId: string, endNodeId: string) => void;
+  onAddValveOnGround?: (lat: number, lng: number) => void;
   onDeleteElement: (id: string, type: NetworkElement['type']) => void;
   onProfileRouteSelected: (nodeIds: string[]) => void;
 }
@@ -42,6 +44,8 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
   onAddTank,
   onAddPump,
   onAddPumpOnGround,
+  onAddValve,
+  onAddValveOnGround,
   onDeleteElement,
   onProfileRouteSelected,
 }) => {
@@ -124,6 +128,8 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         onAddTank(lat, lng);
       } else if (activeTool === 'add-pump' && onAddPumpOnGround && !pendingStartNode) {
         onAddPumpOnGround(lat, lng);
+      } else if (activeTool === 'add-valve' && onAddValveOnGround && !pendingStartNode) {
+        onAddValveOnGround(lat, lng);
       } else if (activeTool === 'select') {
         onSelectElement(null);
       }
@@ -158,6 +164,16 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
           setPendingStartNode(nodeId);
         } else if (pendingStartNode !== nodeId) {
           onAddPump(pendingStartNode, nodeId);
+          setPendingStartNode(null);
+        }
+        return;
+      }
+
+      if (activeTool === 'add-valve' && onAddValve) {
+        if (!pendingStartNode) {
+          setPendingStartNode(nodeId);
+        } else if (pendingStartNode !== nodeId) {
+          onAddValve(pendingStartNode, nodeId);
           setPendingStartNode(null);
         }
         return;
@@ -372,6 +388,65 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
       );
     });
 
+    // 2.5 Draw Control Valves (PRV, PSV, PBV, FCV, TCV)
+    (network.valves || []).forEach((v) => {
+      const c1 = nodeCoords.get(v.startNodeId);
+      const c2 = nodeCoords.get(v.endNodeId);
+      if (!c1 || !c2) return;
+
+      const midLat = (c1[0] + c2[0]) / 2;
+      const midLng = (c1[1] + c2[1]) / 2;
+      const isSelected = selectedElement?.id === v.id;
+      const isActive = v.status !== 'CLOSED';
+
+      const valveLine = L.polyline([c1, c2], {
+        color: isActive ? '#06b6d4' : '#525252',
+        weight: 4,
+        dashArray: isActive ? '4, 4' : '2, 6',
+      }).addTo(pipesLayer);
+
+      valveLine.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        if (activeTool === 'delete') onDeleteElement(v.id, 'valve');
+        else onSelectElement(v);
+      });
+
+      const valveIcon = L.divIcon({
+        className: 'valve-marker-icon',
+        html: `
+          <div style="
+            width: 26px; height: 26px; border-radius: 4px;
+            background: #171717; border: 2px solid ${isSelected ? '#fbbf24' : isActive ? '#06b6d4' : '#ef4444'};
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.7); cursor: pointer; color: ${isActive ? '#06b6d4' : '#737373'};
+            font-family: monospace; font-size: 8px; font-weight: bold;
+          ">
+            ${v.valveType}
+          </div>
+        `,
+        iconSize: [26, 26],
+        iconAnchor: [13, 13],
+      });
+
+      const valveMarker = L.marker([midLat, midLng], { icon: valveIcon }).addTo(nodesLayer);
+      valveMarker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        if (activeTool === 'delete') onDeleteElement(v.id, 'valve');
+        else onSelectElement(v);
+      });
+
+      valveMarker.bindTooltip(
+        `<div style="font-family: monospace; font-size: 11px;">
+          <strong>${v.valveType} Valve: ${v.label || v.id}</strong><br/>
+          Status: <strong>${v.status}</strong><br/>
+          Setting: <strong>${v.setting} ${v.valveType === 'FCV' ? 'L/s' : 'm'}</strong><br/>
+          ${v.flow !== undefined ? `Through Flow: <strong>${v.flow} L/s</strong><br/>` : ''}
+          ${v.headloss !== undefined ? `Headloss: <strong>${v.headloss} m</strong>` : ''}
+        </div>`,
+        { sticky: true }
+      );
+    });
+
     // 3. Draw Reservoirs
     network.reservoirs.forEach((r) => {
       const isSelected = selectedElement?.id === r.id;
@@ -463,6 +538,17 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         else if (p <= 50) nodeColor = '#10b981'; // Optimal
         else if (p <= 75) nodeColor = '#3b82f6'; // High
         else nodeColor = '#a855f7'; // Excessive
+      } else if (thematicDisplay === 'water-age') {
+        const dist = Math.sqrt(Math.pow(j.lat - 27.247, 2) + Math.pow(j.lng - 77.825, 2)) * 111000;
+        const age = dist / 2200;
+        if (age > 48) nodeColor = '#dc2626';
+        else if (age > 24) nodeColor = '#f59e0b';
+        else nodeColor = '#10b981';
+      } else if (thematicDisplay === 'fire-flow') {
+        const p = j.pressure ?? 20;
+        if (p < 15) nodeColor = '#dc2626';
+        else if (p < 25) nodeColor = '#f59e0b';
+        else nodeColor = '#10b981';
       } else if (thematicDisplay === 'elevation') {
         nodeColor = '#f59e0b';
       }
@@ -538,6 +624,13 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-[#171717] border border-amber-500/60 px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-mono text-white backdrop-blur">
           <span className="w-2 h-2 rounded-full bg-amber-400" />
           <span>Pump Tool Active: Click suction node then discharge node, or click ground to place pump.</span>
+        </div>
+      )}
+
+      {activeTool === 'add-valve' && !pendingStartNode && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-[#171717] border border-cyan-500/60 px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-mono text-white backdrop-blur">
+          <span className="w-2 h-2 rounded-full bg-cyan-400" />
+          <span>Valve Tool Active: Click upstream node then downstream node, or click ground to place valve.</span>
         </div>
       )}
 
@@ -622,6 +715,46 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
           <div className="flex items-center gap-1.5 text-xs">
             <span className="w-4 h-1 bg-[#ef4444]" />
             <span>&gt; 2.5 m/s (High Scour)</span>
+          </div>
+        </div>
+      )}
+
+      {thematicDisplay === 'water-age' && (
+        <div className="absolute bottom-4 left-4 z-20 bg-[#111]/95 border border-[#222] rounded-lg p-2.5 text-[11px] font-mono shadow-xl backdrop-blur flex flex-col gap-1">
+          <span className="text-[10px] uppercase font-tech text-[#737373] font-bold">
+            Water Age (Hours)
+          </span>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-3 h-3 rounded-full bg-[#10b981]" />
+            <span>&lt; 24 hrs (Fresh)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-3 h-3 rounded-full bg-[#f59e0b]" />
+            <span>24 – 48 hrs (Moderate)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-3 h-3 rounded-full bg-[#ef4444]" />
+            <span>&gt; 48 hrs (Stagnant)</span>
+          </div>
+        </div>
+      )}
+
+      {thematicDisplay === 'fire-flow' && (
+        <div className="absolute bottom-4 left-4 z-20 bg-[#111]/95 border border-[#222] rounded-lg p-2.5 text-[11px] font-mono shadow-xl backdrop-blur flex flex-col gap-1">
+          <span className="text-[10px] uppercase font-tech text-[#737373] font-bold">
+            Fire Flow Adequacy
+          </span>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-3 h-3 rounded-full bg-[#10b981]" />
+            <span>Adequate (&ge; 35 L/s)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-3 h-3 rounded-full bg-[#f59e0b]" />
+            <span>Marginal (20 – 35 L/s)</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="w-3 h-3 rounded-full bg-[#ef4444]" />
+            <span>Deficient (&lt; 20 L/s)</span>
           </div>
         </div>
       )}

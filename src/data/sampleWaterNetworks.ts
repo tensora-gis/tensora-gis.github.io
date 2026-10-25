@@ -131,7 +131,19 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         speed: 1.0,
       },
     ],
-    valves: [],
+    valves: [
+      {
+        id: 'VLV-1',
+        label: 'Industrial Zone PRV',
+        type: 'valve',
+        startNodeId: 'J-8',
+        endNodeId: 'J-4',
+        valveType: 'PRV',
+        setting: 25.0,
+        diameter: 200,
+        status: 'ACTIVE',
+      },
+    ],
     pipes: [
       // Intake suction
       {
@@ -180,19 +192,6 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         startNodeId: 'J-3',
         endNodeId: 'J-8',
         length: 360,
-        diameter: 200,
-        roughness: 120,
-        minorLossCoeff: 0.2,
-        status: 'OPEN',
-      },
-      // East Industrial to Commercial
-      {
-        id: 'P-5',
-        label: 'East Cross Connector',
-        type: 'pipe',
-        startNodeId: 'J-8',
-        endNodeId: 'J-4',
-        length: 220,
         diameter: 200,
         roughness: 120,
         minorLossCoeff: 0.2,

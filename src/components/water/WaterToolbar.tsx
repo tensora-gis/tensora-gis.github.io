@@ -11,6 +11,7 @@ import {
   Waves,
   Database,
   Zap,
+  SlidersHorizontal,
   Trash2,
   TrendingUp,
   Play,
@@ -48,6 +49,7 @@ interface WaterToolbarProps {
     tanks: number;
     reservoirs: number;
     pumps: number;
+    valves?: number;
   };
 }
 
@@ -79,6 +81,7 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
     { id: 'add-reservoir', label: 'Reservoir', icon: Waves },
     { id: 'add-tank', label: 'Tank', icon: Database },
     { id: 'add-pump', label: 'Pump', icon: Zap },
+    { id: 'add-valve', label: 'Valve', icon: SlidersHorizontal },
     { id: 'delete', label: 'Delete', icon: Trash2 },
     { id: 'profile-select', label: 'Profile Route', icon: TrendingUp },
   ];
@@ -149,6 +152,8 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
             <option value="flow" className="bg-[#111]">Flow (Pipes)</option>
             <option value="diameter" className="bg-[#111]">Diameter (Pipes)</option>
             <option value="elevation" className="bg-[#111]">Elevation (DEM)</option>
+            <option value="water-age" className="bg-[#111]">Water Age (Hours)</option>
+            <option value="fire-flow" className="bg-[#111]">Fire Flow (L/s)</option>
           </select>
         </div>
       </div>

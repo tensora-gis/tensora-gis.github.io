@@ -26,6 +26,7 @@ import {
   WaterPump,
   WaterReservoir,
   WaterTank,
+  WaterValve,
 } from '../types/waterDistribution';
 import { createHighlandMunicipalNetwork } from '../data/sampleWaterNetworks';
 import { simulateWaterNetwork } from '../utils/waterHydraulicsEngine';
@@ -381,6 +382,94 @@ export const WaterDistributionModelling: React.FC = () => {
     [network]
   );
 
+  const handleAddValve = useCallback(
+    (startNodeId: string, endNodeId: string) => {
+      const newId = `VLV-${(network.valves || []).length + 1}`;
+      const newValve: WaterValve = {
+        id: newId,
+        label: `PRV ${newId}`,
+        type: 'valve',
+        startNodeId,
+        endNodeId,
+        valveType: 'PRV',
+        setting: 30.0,
+        diameter: 150,
+        status: 'ACTIVE',
+      };
+
+      setNetwork((prev) => ({
+        ...prev,
+        valves: [...(prev.valves || []), newValve],
+      }));
+      setSelectedElement(newValve);
+    },
+    [network]
+  );
+
+  const handleAddValveOnGround = useCallback(
+    async (lat: number, lng: number) => {
+      const deltaLat = 0.00015;
+      const inId = `J-${network.junctions.length + 1}`;
+      const outId = `J-${network.junctions.length + 2}`;
+      const valveId = `VLV-${(network.valves || []).length + 1}`;
+
+      const jIn: WaterJunction = {
+        id: inId,
+        label: `Inlet ${inId}`,
+        type: 'junction',
+        lat: lat - deltaLat,
+        lng,
+        elevation: 170.0,
+        baseDemand: 0,
+      };
+
+      const jOut: WaterJunction = {
+        id: outId,
+        label: `Regulated ${outId}`,
+        type: 'junction',
+        lat: lat + deltaLat,
+        lng,
+        elevation: 170.0,
+        baseDemand: 5.0,
+      };
+
+      const newValve: WaterValve = {
+        id: valveId,
+        label: `Pressure Reducing Valve ${valveId}`,
+        type: 'valve',
+        startNodeId: inId,
+        endNodeId: outId,
+        valveType: 'PRV',
+        setting: 25.0,
+        diameter: 150,
+        status: 'ACTIVE',
+      };
+
+      setNetwork((prev) => ({
+        ...prev,
+        junctions: [...prev.junctions, jIn, jOut],
+        valves: [...(prev.valves || []), newValve],
+      }));
+      setSelectedElement(newValve);
+
+      try {
+        const elev = await sampleGroundElevation(lat, lng);
+        if (elev !== null) {
+          const rounded = Math.round(elev * 10) / 10;
+          setNetwork((prev) => ({
+            ...prev,
+            junctions: prev.junctions.map((j) =>
+              j.id === inId || j.id === outId ? { ...j, elevation: rounded } : j
+            ),
+          }));
+        }
+      } catch (err) {
+        console.error('Error sampling ground elevation for valve station:', err);
+      }
+    },
+    [network]
+  );
+
   const handleUpdateElement = useCallback((updated: NetworkElement) => {
     setNetwork((prev) => {
       let next = prev;
@@ -411,6 +500,13 @@ export const WaterDistributionModelling: React.FC = () => {
             r.id === updated.id ? (updated as WaterReservoir) : r
           ),
         };
+      } else if (updated.type === 'valve') {
+        next = {
+          ...prev,
+          valves: (prev.valves || []).map((v) =>
+            v.id === updated.id ? (updated as WaterValve) : v
+          ),
+        };
       }
 
       if (simulationSummary) {
@@ -420,6 +516,7 @@ export const WaterDistributionModelling: React.FC = () => {
           ...updatedNetwork.junctions,
           ...updatedNetwork.pipes,
           ...updatedNetwork.pumps,
+          ...(updatedNetwork.valves || []),
           ...updatedNetwork.reservoirs,
           ...updatedNetwork.tanks,
         ].find((el) => el.id === updated.id);
@@ -446,6 +543,7 @@ export const WaterDistributionModelling: React.FC = () => {
             junctions: prev.junctions.filter((j) => j.id !== id),
             pipes: prev.pipes.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
             pumps: prev.pumps.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
+            valves: (prev.valves || []).filter((v) => v.startNodeId !== id && v.endNodeId !== id),
           };
         }
         if (type === 'pipe') {
@@ -454,11 +552,16 @@ export const WaterDistributionModelling: React.FC = () => {
         if (type === 'pump') {
           return { ...prev, pumps: prev.pumps.filter((p) => p.id !== id) };
         }
+        if (type === 'valve') {
+          return { ...prev, valves: (prev.valves || []).filter((v) => v.id !== id) };
+        }
         if (type === 'tank') {
           return {
             ...prev,
             tanks: prev.tanks.filter((t) => t.id !== id),
             pipes: prev.pipes.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
+            pumps: prev.pumps.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
+            valves: (prev.valves || []).filter((v) => v.startNodeId !== id && v.endNodeId !== id),
           };
         }
         if (type === 'reservoir') {
@@ -466,6 +569,8 @@ export const WaterDistributionModelling: React.FC = () => {
             ...prev,
             reservoirs: prev.reservoirs.filter((r) => r.id !== id),
             pipes: prev.pipes.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
+            pumps: prev.pumps.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
+            valves: (prev.valves || []).filter((v) => v.startNodeId !== id && v.endNodeId !== id),
           };
         }
         return prev;
@@ -544,6 +649,7 @@ export const WaterDistributionModelling: React.FC = () => {
     tanks: network.tanks.length,
     reservoirs: network.reservoirs.length,
     pumps: network.pumps.length,
+    valves: (network.valves || []).length,
   };
 
   return (
@@ -585,6 +691,8 @@ export const WaterDistributionModelling: React.FC = () => {
           onAddTank={handleAddTank}
           onAddPump={handleAddPump}
           onAddPumpOnGround={handleAddPumpOnGround}
+          onAddValve={handleAddValve}
+          onAddValveOnGround={handleAddValveOnGround}
           onDeleteElement={handleDeleteElement}
           onProfileRouteSelected={(nodes) => {
             setProfileRouteNodeIds(nodes);
@@ -606,6 +714,7 @@ export const WaterDistributionModelling: React.FC = () => {
       {isFlexTablesOpen && (
         <WaterFlexTables
           network={network}
+          summary={simulationSummary}
           onUpdateElement={handleUpdateElement}
           onSelectElement={setSelectedElement}
           onDeleteElement={handleDeleteElement}

@@ -116,7 +116,8 @@ export async function generateWaterHydraulicExcel(
   sumSheet.addRow(['Maximum Service Pressure:', `${summary.maxPressureM} m H2O (${(summary.maxPressureM * 1.42).toFixed(1)} psi)`, 'Storage Tanks:', network.tanks.length]);
   sumSheet.addRow(['Maximum Pressure Location:', `Node ${summary.maxPressureNodeId || 'N/A'}`, 'Intake Reservoirs:', network.reservoirs.length]);
   sumSheet.addRow(['Maximum Pipe Velocity:', `${summary.maxVelocityMs} m/s`, 'Booster Pump Stations:', network.pumps.length]);
-  sumSheet.addRow(['Maximum Velocity Location:', `Pipe ${summary.maxVelocityPipeId || 'N/A'}`, 'Total Pumping Power:', `${summary.totalPumpPowerKw} kW`]);
+  sumSheet.addRow(['Maximum Velocity Location:', `Pipe ${summary.maxVelocityPipeId || 'N/A'}`, 'Pressure / Control Valves:', (network.valves || []).length]);
+  sumSheet.addRow(['Total Pump Power:', `${summary.totalPumpPowerKw} kW`, 'Daily Energy Consumption:', `${summary.dailyEnergyKwh || (summary.totalPumpPowerKw * 18).toFixed(1)} kWh/day`]);
 
   sumSheet.addRow([]);
 
@@ -307,24 +308,25 @@ export async function generateWaterHydraulicExcel(
   });
 
   // ==========================================
-  // SHEET 4: PUMPS & VALVES
+  // SHEET 4: PUMPS & ENERGY
   // ==========================================
-  const pumpSheet = workbook.addWorksheet('Pumps_and_Valves', {
+  const pumpSheet = workbook.addWorksheet('Pumps_and_Energy', {
     views: [{ showGridLines: true }],
   });
 
   pumpSheet.columns = [
-    { header: 'Element ID', key: 'id', width: 14 },
+    { header: 'Pump ID', key: 'id', width: 14 },
     { header: 'Description', key: 'label', width: 26 },
-    { header: 'Type', key: 'type', width: 14 },
     { header: 'Suction Node', key: 'start', width: 16 },
     { header: 'Discharge Node', key: 'end', width: 16 },
+    { header: 'Operating Status', key: 'status', width: 18 },
     { header: 'Design Flow (L/s)', key: 'desFlow', width: 18 },
     { header: 'Design Head (m)', key: 'desHead', width: 18 },
     { header: 'Operating Flow (L/s)', key: 'opFlow', width: 20 },
     { header: 'Operating Head (m)', key: 'opHead', width: 20 },
     { header: 'Motor Power (kW)', key: 'powerKw', width: 18 },
-    { header: 'Operating Status', key: 'status', width: 18 },
+    { header: 'Daily Energy (kWh)', key: 'dailyKwh', width: 20 },
+    { header: 'Est. Power Cost ($/day)', key: 'costDay', width: 22 },
   ];
 
   const pumpHeaderRow = pumpSheet.getRow(1);
@@ -336,18 +338,23 @@ export async function generateWaterHydraulicExcel(
   });
 
   network.pumps.forEach((pmp) => {
+    const isRunning = pmp.status === 'OPEN';
+    const kw = isRunning ? (pmp.powerKw ?? 0) : 0;
+    const dailyKwh = Math.round(kw * 18 * 10) / 10;
+    const cost = Math.round(dailyKwh * 0.12 * 100) / 100; // $0.12/kWh industrial tariff
     const row = pumpSheet.addRow({
       id: pmp.id,
       label: pmp.label || pmp.id,
-      type: 'BOOSTER PUMP',
       start: pmp.startNodeId,
       end: pmp.endNodeId,
+      status: isRunning ? 'RUNNING (ONLINE)' : 'STOPPED (OFFLINE)',
       desFlow: pmp.designFlow,
       desHead: pmp.designHead,
-      opFlow: pmp.operatingFlow ?? '—',
-      opHead: pmp.operatingHead ?? '—',
-      powerKw: pmp.powerKw,
-      status: pmp.status,
+      opFlow: isRunning ? (pmp.operatingFlow ?? '—') : 0,
+      opHead: isRunning ? (pmp.operatingHead ?? '—') : 0,
+      powerKw: kw,
+      dailyKwh,
+      costDay: `$${cost.toFixed(2)}`,
     });
     row.eachCell((cell) => {
       cell.font = regularFont;
@@ -356,7 +363,54 @@ export async function generateWaterHydraulicExcel(
   });
 
   // ==========================================
-  // SHEET 5: STORAGE TANKS & RESERVOIRS
+  // SHEET 5: CONTROL VALVES
+  // ==========================================
+  const valveSheet = workbook.addWorksheet('Control_Valves', {
+    views: [{ showGridLines: true }],
+  });
+
+  valveSheet.columns = [
+    { header: 'Valve ID', key: 'id', width: 14 },
+    { header: 'Valve Type', key: 'type', width: 18 },
+    { header: 'Description', key: 'label', width: 26 },
+    { header: 'Inlet Node', key: 'start', width: 16 },
+    { header: 'Outlet Node', key: 'end', width: 16 },
+    { header: 'Nominal Dia (mm)', key: 'diameter', width: 18 },
+    { header: 'Regulatory Setting', key: 'setting', width: 20 },
+    { header: 'Operational Status', key: 'status', width: 18 },
+    { header: 'Through Flow (L/s)', key: 'flow', width: 20 },
+    { header: 'Headloss (m)', key: 'headloss', width: 18 },
+  ];
+
+  const valveHeaderRow = valveSheet.getRow(1);
+  valveHeaderRow.height = 24;
+  valveHeaderRow.eachCell((cell) => {
+    cell.fill = headerFill;
+    cell.font = headerFont;
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+
+  (network.valves || []).forEach((v) => {
+    const row = valveSheet.addRow({
+      id: v.id,
+      type: `${v.valveType} (Pressure/Flow)`,
+      label: v.label || v.id,
+      start: v.startNodeId,
+      end: v.endNodeId,
+      diameter: v.diameter || 150,
+      setting: `${v.setting} ${v.valveType === 'FCV' ? 'L/s' : 'm'}`,
+      status: v.status,
+      flow: v.flow ?? '—',
+      headloss: v.headloss ?? '—',
+    });
+    row.eachCell((cell) => {
+      cell.font = regularFont;
+      cell.border = thinBorder;
+    });
+  });
+
+  // ==========================================
+  // SHEET 6: STORAGE TANKS & RESERVOIRS
   // ==========================================
   const srcSheet = workbook.addWorksheet('Sources_and_Storage', {
     views: [{ showGridLines: true }],
@@ -364,7 +418,7 @@ export async function generateWaterHydraulicExcel(
 
   srcSheet.columns = [
     { header: 'Element ID', key: 'id', width: 14 },
-    { header: 'Source Type', key: 'type', width: 18 },
+    { header: 'Source Type', key: 'type', width: 22 },
     { header: 'Description', key: 'label', width: 26 },
     { header: 'Latitude (°N)', key: 'lat', width: 16 },
     { header: 'Longitude (°E)', key: 'lng', width: 16 },
@@ -411,6 +465,175 @@ export async function generateWaterHydraulicExcel(
       head: (t.elevation + t.initialLevel).toFixed(2),
       depth: t.initialLevel,
       flow: t.netFlow ?? '—',
+    });
+    row.eachCell((cell) => {
+      cell.font = regularFont;
+      cell.border = thinBorder;
+    });
+  });
+
+  // ==========================================
+  // SHEET 7: 24-HOUR EXTENDED PERIOD SIMULATION (EPS)
+  // ==========================================
+  const epsSheet = workbook.addWorksheet('EPS_24Hr_Extended_Simulation', {
+    views: [{ showGridLines: true }],
+  });
+
+  epsSheet.columns = [
+    { header: 'Simulation Hour', key: 'hour', width: 16 },
+    { header: 'Time Label', key: 'time', width: 14 },
+    { header: 'Demand Pattern Multiplier', key: 'mult', width: 24 },
+    { header: 'Hourly System Demand (L/s)', key: 'demandLs', width: 26 },
+    { header: 'Hourly System Demand (m³/h)', key: 'demandM3h', width: 26 },
+    { header: 'Min Pressure (m H2O)', key: 'minP', width: 20 },
+    { header: 'Max Pressure (m H2O)', key: 'maxP', width: 20 },
+  ];
+
+  const epsHeaderRow = epsSheet.getRow(1);
+  epsHeaderRow.height = 24;
+  epsHeaderRow.eachCell((cell) => {
+    cell.fill = headerFill;
+    cell.font = headerFont;
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+
+  (summary.hourlyEpsPoints || []).forEach((pt) => {
+    const row = epsSheet.addRow({
+      hour: pt.hour,
+      time: pt.timeLabel,
+      mult: pt.demandMultiplier.toFixed(2),
+      demandLs: pt.totalDemandLs.toFixed(1),
+      demandM3h: (pt.totalDemandLs * 3.6).toFixed(1),
+      minP: pt.minPressureM.toFixed(2),
+      maxP: pt.maxPressureM.toFixed(2),
+    });
+    row.eachCell((cell) => {
+      cell.font = regularFont;
+      cell.border = thinBorder;
+    });
+  });
+
+  // ==========================================
+  // SHEET 8: FIRE FLOW CAPACITY REGISTER
+  // ==========================================
+  const ffSheet = workbook.addWorksheet('Fire_Flow_Capacity_Register', {
+    views: [{ showGridLines: true }],
+  });
+
+  ffSheet.columns = [
+    { header: 'Junction ID', key: 'id', width: 14 },
+    { header: 'Description', key: 'label', width: 24 },
+    { header: 'Elevation (m MSL)', key: 'elevation', width: 18 },
+    { header: 'Base Demand (L/s)', key: 'baseDemand', width: 18 },
+    { header: 'Available Fire Flow (L/s)', key: 'fireFlowLs', width: 24 },
+    { header: 'Available Fire Flow (GPM)', key: 'fireFlowGpm', width: 24 },
+    { header: 'Residual Pressure (m H2O)', key: 'resP', width: 24 },
+    { header: 'Residual Pressure (psi)', key: 'resPsi', width: 22 },
+    { header: 'Min System Residual (m)', key: 'sysMin', width: 22 },
+    { header: 'Standard Compliance', key: 'compliance', width: 22 },
+  ];
+
+  const ffHeaderRow = ffSheet.getRow(1);
+  ffHeaderRow.height = 24;
+  ffHeaderRow.eachCell((cell) => {
+    cell.fill = headerFill;
+    cell.font = headerFont;
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+
+  (summary.fireFlowResults || []).forEach((ff) => {
+    const row = ffSheet.addRow({
+      id: ff.junctionId,
+      label: ff.label,
+      elevation: ff.elevation,
+      baseDemand: ff.baseDemand,
+      fireFlowLs: ff.availableFireFlowLs.toFixed(1),
+      fireFlowGpm: Math.round(ff.availableFireFlowLs * 15.85),
+      resP: ff.residualPressureM.toFixed(2),
+      resPsi: (ff.residualPressureM * 1.42).toFixed(1),
+      sysMin: ff.systemMinResidualM.toFixed(2),
+      compliance: ff.isAdequate ? 'PASS: Municipal Adequate' : 'DEFICIENT: Residual Below 15m',
+    });
+    row.eachCell((cell) => {
+      cell.font = regularFont;
+      cell.border = thinBorder;
+    });
+  });
+
+  // ==========================================
+  // SHEET 9: WATER QUALITY & RESIDENCE TIME
+  // ==========================================
+  const wqSheet = workbook.addWorksheet('Water_Quality_and_Age', {
+    views: [{ showGridLines: true }],
+  });
+
+  wqSheet.columns = [
+    { header: 'Node ID', key: 'id', width: 14 },
+    { header: 'Water Age (Hours)', key: 'age', width: 20 },
+    { header: 'Free Chlorine Residual (mg/L)', key: 'chlorine', width: 28 },
+    { header: 'Water Quality Safety Status', key: 'status', width: 28 },
+    { header: 'Recommended Corrective Action', key: 'action', width: 34 },
+  ];
+
+  const wqHeaderRow = wqSheet.getRow(1);
+  wqHeaderRow.height = 24;
+  wqHeaderRow.eachCell((cell) => {
+    cell.fill = headerFill;
+    cell.font = headerFont;
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+
+  (summary.waterQualityResults || []).forEach((wq) => {
+    let action = 'Optimal disinfection residual maintained';
+    if (wq.qualityStatus === 'Low-Chlorine') action = 'Dosing booster chlorination required';
+    else if (wq.qualityStatus === 'Stagnant') action = 'Periodic main flushing recommended';
+    const row = wqSheet.addRow({
+      id: wq.nodeId,
+      age: wq.waterAgeHours.toFixed(1),
+      chlorine: wq.chlorineResidualMgL.toFixed(2),
+      status: wq.qualityStatus,
+      action,
+    });
+    row.eachCell((cell) => {
+      cell.font = regularFont;
+      cell.border = thinBorder;
+    });
+  });
+
+  // ==========================================
+  // SHEET 10: PIPE SIZING & OPTIMIZATION
+  // ==========================================
+  const optSheet = workbook.addWorksheet('Pipe_Sizing_Optimization', {
+    views: [{ showGridLines: true }],
+  });
+
+  optSheet.columns = [
+    { header: 'Pipe ID', key: 'id', width: 14 },
+    { header: 'Current Diameter (mm)', key: 'curDia', width: 22 },
+    { header: 'Recommended Size (DN)', key: 'recDia', width: 22 },
+    { header: 'Velocity (m/s)', key: 'vel', width: 16 },
+    { header: 'Unit Headloss (m/km)', key: 'hl', width: 20 },
+    { header: 'Design Evaluation', key: 'reason', width: 28 },
+    { header: 'Engineering Benefit & Impact', key: 'benefit', width: 42 },
+  ];
+
+  const optHeaderRow = optSheet.getRow(1);
+  optHeaderRow.height = 24;
+  optHeaderRow.eachCell((cell) => {
+    cell.fill = headerFill;
+    cell.font = headerFont;
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+
+  (summary.pipeOptimizations || []).forEach((opt) => {
+    const row = optSheet.addRow({
+      id: opt.pipeId,
+      curDia: opt.currentDiameterMm,
+      recDia: `DN${opt.recommendedDiameterMm}`,
+      vel: opt.velocityMs.toFixed(2),
+      hl: opt.unitHeadlossMkm.toFixed(2),
+      reason: opt.reason,
+      benefit: opt.estimatedCostSavingOrUpgrade,
     });
     row.eachCell((cell) => {
       cell.font = regularFont;

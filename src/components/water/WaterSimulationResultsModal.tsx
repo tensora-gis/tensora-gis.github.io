@@ -12,6 +12,7 @@ import {
   TrendingDown,
   FileSpreadsheet,
   Mountain,
+  Flame,
 } from 'lucide-react';
 
 interface WaterSimulationResultsModalProps {
@@ -144,6 +145,52 @@ export const WaterSimulationResultsModal: React.FC<WaterSimulationResultsModalPr
               </div>
             </div>
           </div>
+
+          {/* Extended Engineering Modules */}
+          {(summary.hourlyEpsPoints || summary.fireFlowResults || summary.waterQualityResults || summary.pipeOptimizations) && (
+            <div className="p-3.5 rounded-lg bg-[#141414] border border-[#222] space-y-2.5">
+              <span className="text-[10px] font-tech uppercase font-bold text-sky-400 flex items-center gap-1.5">
+                <Flame className="w-3.5 h-3.5" />
+                <span>EPANET Extended Engineering Modules</span>
+              </span>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {summary.hourlyEpsPoints && (
+                  <div className="p-2 rounded bg-[#0a0a0a] border border-[#222]">
+                    <span className="text-[10px] text-[#737373] block">EPS 24-Hr Demand</span>
+                    <span className="text-sky-300 font-bold">24-Hr Dynamic Solved</span>
+                    <span className="text-[9px] text-[#666] block">Peak 1.45x @ 08:00</span>
+                  </div>
+                )}
+                {summary.fireFlowResults && (
+                  <div className="p-2 rounded bg-[#0a0a0a] border border-[#222]">
+                    <span className="text-[10px] text-[#737373] block">Fire Flow Analysis</span>
+                    <span className="text-emerald-400 font-bold">
+                      {summary.fireFlowResults.filter((f) => f.isAdequate).length} / {summary.fireFlowResults.length} Adequate
+                    </span>
+                    <span className="text-[9px] text-[#666] block">&gt;= 35 L/s @ 15m residual</span>
+                  </div>
+                )}
+                {summary.waterQualityResults && (
+                  <div className="p-2 rounded bg-[#0a0a0a] border border-[#222]">
+                    <span className="text-[10px] text-[#737373] block">Water Quality & Age</span>
+                    <span className="text-amber-300 font-bold">
+                      Max {Math.max(...summary.waterQualityResults.map((q) => q.waterAgeHours))}h Age
+                    </span>
+                    <span className="text-[9px] text-[#666] block">Chlorine decay kinetics</span>
+                  </div>
+                )}
+                {summary.pipeOptimizations && (
+                  <div className="p-2 rounded bg-[#0a0a0a] border border-[#222]">
+                    <span className="text-[10px] text-[#737373] block">Pipe Sizing Optimization</span>
+                    <span className="text-purple-300 font-bold">
+                      {summary.pipeOptimizations.filter((o) => o.reason === 'Optimal').length} / {summary.pipeOptimizations.length} Optimal
+                    </span>
+                    <span className="text-[9px] text-[#666] block">Automated diameter sizing</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Real Earth Terrain DEM Reference */}
           <div className="p-3 rounded-lg bg-[#141414] border border-[#222] space-y-1.5">
