@@ -523,6 +523,43 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
         {/* --- PUMP --- */}
         {element.type === 'pump' && (
           <>
+            {/* Prominent Operational Switch */}
+            <div>
+              <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1.5">
+                Pump Operational Switch
+              </label>
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateElement({
+                    ...element,
+                    status: (element as WastewaterPump).status === 'ON' ? 'OFF' : 'ON',
+                  })
+                }
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                  (element as WastewaterPump).status === 'ON'
+                    ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.15)]'
+                    : 'bg-red-500/10 border-red-500/40 text-red-400'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full ${
+                      (element as WastewaterPump).status === 'ON'
+                        ? 'bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse'
+                        : 'bg-red-500'
+                    }`}
+                  />
+                  <span>
+                    {(element as WastewaterPump).status === 'ON' ? 'RUNNING (ONLINE)' : 'STOPPED (OFFLINE)'}
+                  </span>
+                </div>
+                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-[#111] border border-[#222]">
+                  {(element as WastewaterPump).status === 'ON' ? 'Switch OFF' : 'Switch ON'}
+                </span>
+              </button>
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1">

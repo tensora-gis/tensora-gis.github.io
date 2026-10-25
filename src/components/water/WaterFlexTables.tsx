@@ -347,6 +347,7 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
                 <th className="p-2">Label</th>
                 <th className="p-2">Suction Node</th>
                 <th className="p-2">Discharge Node</th>
+                <th className="p-2">Pump Switch</th>
                 <th className="p-2">Design Flow (L/s)</th>
                 <th className="p-2">Design Head (m)</th>
                 <th className="p-2">Power (kW)</th>
@@ -366,6 +367,25 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
                   <td className="p-2 text-[#ccc]">{pmp.label}</td>
                   <td className="p-2 text-[#888]">{pmp.startNodeId}</td>
                   <td className="p-2 text-[#888]">{pmp.endNodeId}</td>
+                  <td className="p-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateElement({
+                          ...pmp,
+                          status: pmp.status === 'OPEN' ? 'CLOSED' : 'OPEN',
+                        })
+                      }
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
+                        pmp.status === 'OPEN'
+                          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30'
+                          : 'bg-red-500/20 text-red-400 border-red-500/40 hover:bg-red-500/30'
+                      }`}
+                      title="Click to toggle pump operational switch"
+                    >
+                      {pmp.status === 'OPEN' ? '⚡ RUNNING' : '⭘ OFFLINE'}
+                    </button>
+                  </td>
                   <td className="p-2 text-white">{pmp.designFlow}</td>
                   <td className="p-2 text-white">{pmp.designHead}</td>
                   <td className="p-2 text-white">{pmp.powerKw}</td>

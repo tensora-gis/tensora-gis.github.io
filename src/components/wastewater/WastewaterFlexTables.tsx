@@ -87,7 +87,7 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
               [
                 ['manholes', `Manholes (${network.manholes.length})`],
                 ['conduits', `Conduits (${network.conduits.length})`],
-                ['pumps', `Lift & Sump (${network.wetWells.length + network.pumps.length})`],
+                ['pumps', `Pumps & Lift (${network.wetWells.length + network.pumps.length})`],
                 ['outfalls', `Outfalls (${network.outfalls.length})`],
               ] as const
             ).map(([tabId, label]) => (
@@ -455,6 +455,7 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                 <th className="p-2 border-r border-[#222]">ID</th>
                 <th className="p-2 border-r border-[#222]">Type</th>
                 <th className="p-2 border-r border-[#222]">Label</th>
+                <th className="p-2 border-r border-[#222]">Pump Switch</th>
                 <th className="p-2 border-r border-[#222]">Rim (m MSL)</th>
                 <th className="p-2 border-r border-[#222]">Floor / Invert (m)</th>
                 <th className="p-2 border-r border-[#222]">Rated Flow / Vol</th>
@@ -480,6 +481,7 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                       className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
                     />
                   </td>
+                  <td className="p-2 text-[#666] border-r border-[#1e1e1e] font-mono text-[10px]">—</td>
                   <td className="p-1 border-r border-[#1e1e1e]">
                     <input
                       type="number"
@@ -533,6 +535,25 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                       onChange={(e) => onUpdateElement({ ...p, label: e.target.value })}
                       className="w-full bg-[#0a0a0a] border border-[#222] rounded px-1.5 py-0.5 text-white"
                     />
+                  </td>
+                  <td className="p-2 border-r border-[#1e1e1e]" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUpdateElement({
+                          ...p,
+                          status: p.status === 'ON' ? 'OFF' : 'ON',
+                        })
+                      }
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold border transition-colors cursor-pointer ${
+                        p.status === 'ON'
+                          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40 hover:bg-emerald-500/30'
+                          : 'bg-red-500/20 text-red-400 border-red-500/40 hover:bg-red-500/30'
+                      }`}
+                      title="Click to toggle sewage pump operational switch"
+                    >
+                      {p.status === 'ON' ? '⚡ RUNNING' : '⭘ OFFLINE'}
+                    </button>
                   </td>
                   <td className="p-2 text-[#888] border-r border-[#1e1e1e]">-</td>
                   <td className="p-2 text-[#888] border-r border-[#1e1e1e]">-</td>

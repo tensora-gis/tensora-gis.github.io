@@ -408,12 +408,12 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
     const diaM = Math.max(0.05, (fm.diameterMm || 150) / 1000);
     const areaM2 = (Math.PI * diaM * diaM) / 4;
     const pump = pumps.find((p) => p.endNodeId === fm.startNodeId || p.startNodeId === fm.startNodeId);
-    const flowLs = pump && pump.status === 'ON' ? pump.ratedDischargeLs : 25;
+    const flowLs = pump ? (pump.status === 'ON' ? (pump.ratedDischargeLs || 30) : 0) : 25;
     const flowM3s = flowLs / 1000;
-    fm.velocityMs = Math.round((flowM3s / areaM2) * 100) / 100;
+    fm.velocityMs = flowLs > 0 ? Math.round((flowM3s / areaM2) * 100) / 100 : 0;
 
     const c = fm.cFactor || 120;
-    const hf = 10.67 * Math.pow(flowM3s / c, 1.852) * Math.pow(diaM, -4.87) * (fm.lengthM || 100);
+    const hf = flowLs > 0 ? 10.67 * Math.pow(flowM3s / c, 1.852) * Math.pow(diaM, -4.87) * (fm.lengthM || 100) : 0;
     fm.frictionHeadlossM = Math.round(hf * 10) / 10;
     totalForceMainLength += fm.lengthM || 100;
   });

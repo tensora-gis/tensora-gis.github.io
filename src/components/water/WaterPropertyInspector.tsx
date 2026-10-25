@@ -303,6 +303,43 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
         {/* --- PUMP SPECIFIC --- */}
         {element.type === 'pump' && (
           <>
+            {/* Prominent Operational Switch */}
+            <div>
+              <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1.5">
+                Pump Operational Switch
+              </label>
+              <button
+                type="button"
+                onClick={() =>
+                  onUpdateElement({
+                    ...element,
+                    status: (element as WaterPump).status === 'OPEN' ? 'CLOSED' : 'OPEN',
+                  })
+                }
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
+                  (element as WaterPump).status === 'OPEN'
+                    ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.15)]'
+                    : 'bg-red-500/10 border-red-500/40 text-red-400'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full ${
+                      (element as WaterPump).status === 'OPEN'
+                        ? 'bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse'
+                        : 'bg-red-500'
+                    }`}
+                  />
+                  <span>
+                    {(element as WaterPump).status === 'OPEN' ? 'RUNNING (ONLINE)' : 'STOPPED (OFFLINE)'}
+                  </span>
+                </div>
+                <span className="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-[#111] border border-[#222]">
+                  {(element as WaterPump).status === 'OPEN' ? 'Switch OFF' : 'Switch ON'}
+                </span>
+              </button>
+            </div>
+
             <div>
               <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1">
                 Design Flow (L/s)
@@ -320,6 +357,7 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
                 className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
               />
             </div>
+
             <div>
               <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1">
                 Design Head (m)
@@ -337,24 +375,27 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
                 className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
               />
             </div>
-            <div>
-              <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1">
-                Pump Status
-              </label>
-              <select
-                value={(element as WaterPump).status}
-                onChange={(e) =>
-                  onUpdateElement({
-                    ...element,
-                    status: e.target.value as WaterPump['status'],
-                  })
-                }
-                className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
-              >
-                <option value="OPEN">RUNNING (Open)</option>
-                <option value="CLOSED">OFFLINE (Closed)</option>
-              </select>
-            </div>
+
+            {/* Computed Results */}
+            {(element as WaterPump).operatingFlow !== undefined && (
+              <div className="mt-3 p-3 rounded-lg bg-[#0a0a0a] border border-[#222] space-y-1.5">
+                <span className="text-[10px] font-tech font-bold uppercase tracking-wider text-amber-400">
+                  Computed Pump Performance
+                </span>
+                <div className="flex justify-between text-xs text-[#a3a3a3]">
+                  <span>Operating Flow:</span>
+                  <span className="font-mono text-white font-bold">{(element as WaterPump).operatingFlow} L/s</span>
+                </div>
+                <div className="flex justify-between text-xs text-[#a3a3a3]">
+                  <span>Operating Head:</span>
+                  <span className="font-mono text-white">{(element as WaterPump).operatingHead} m</span>
+                </div>
+                <div className="flex justify-between text-xs text-[#a3a3a3]">
+                  <span>Power Consumed:</span>
+                  <span className="font-mono text-amber-400 font-bold">{(element as WaterPump).powerKw} kW</span>
+                </div>
+              </div>
+            )}
           </>
         )}
 

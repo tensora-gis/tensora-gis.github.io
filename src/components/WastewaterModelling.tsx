@@ -311,6 +311,110 @@ export const WastewaterModelling: React.FC = () => {
     [network]
   );
 
+  const handleAddPumpOnGround = useCallback(
+    async (lat: number, lng: number) => {
+      // Create wet well and discharge outfall ~25 meters apart
+      const deltaLat = 0.00018;
+      const wwId = `WW-${network.wetWells.length + 1}`;
+      const outId = `OUT-${network.outfalls.length + 1}`;
+      const pumpId = `PMP-${network.pumps.length + 1}`;
+      const fmId = `FM-${network.forceMains.length + 1}`;
+
+      const ww: WastewaterWetWell = {
+        id: wwId,
+        label: `Lift Station ${wwId}`,
+        type: 'wet-well',
+        lat: lat - deltaLat,
+        lng,
+        rimElevation: 171.0,
+        floorElevation: 165.0,
+        diameterM: 3.5,
+        minWaterLevelM: 165.8,
+        maxWaterLevelM: 167.5,
+        alarmLevelM: 168.2,
+        storageVolumeM3: 30.0,
+      };
+
+      const outfall: WastewaterOutfall = {
+        id: outId,
+        label: `Discharge Point ${outId}`,
+        type: 'outfall',
+        lat: lat + deltaLat,
+        lng,
+        invertElevation: 167.0,
+        receivingWaterElevation: 167.5,
+      };
+
+      const newPump: WastewaterPump = {
+        id: pumpId,
+        label: `Sewage Pump ${pumpId}`,
+        type: 'pump',
+        startNodeId: wwId,
+        endNodeId: outId,
+        status: 'ON',
+        ratedDischargeLs: 45.0,
+        dynamicHeadM: 18.0,
+        efficiencyPercent: 75,
+        powerKw: 10.6,
+      };
+
+      const newFm: WastewaterForceMain = {
+        id: fmId,
+        label: `Force Main ${fmId}`,
+        type: 'force-main',
+        startNodeId: wwId,
+        endNodeId: outId,
+        diameterMm: 200,
+        material: 'DI',
+        lengthM: 35.0,
+        cFactor: 120,
+      };
+
+      setNetwork((prev) => ({
+        ...prev,
+        wetWells: [...prev.wetWells, ww],
+        outfalls: [...prev.outfalls, outfall],
+        pumps: [...prev.pumps, newPump],
+        forceMains: [...prev.forceMains, newFm],
+      }));
+      setSelectedElement(newPump);
+
+      try {
+        const elev = await sampleWastewaterGroundElevation(lat, lng);
+        if (elev !== null) {
+          const roundedRim = Math.round(elev * 10) / 10;
+          setNetwork((prev) => ({
+            ...prev,
+            wetWells: prev.wetWells.map((w) =>
+              w.id === wwId
+                ? {
+                    ...w,
+                    rimElevation: roundedRim,
+                    floorElevation: Math.round((roundedRim - 6.0) * 10) / 10,
+                    minWaterLevelM: Math.round((roundedRim - 5.2) * 10) / 10,
+                    maxWaterLevelM: Math.round((roundedRim - 3.5) * 10) / 10,
+                    alarmLevelM: Math.round((roundedRim - 2.8) * 10) / 10,
+                  }
+                : w
+            ),
+            outfalls: prev.outfalls.map((o) =>
+              o.id === outId
+                ? {
+                    ...o,
+                    invertElevation: Math.round((roundedRim - 3.0) * 10) / 10,
+                    receivingWaterElevation: Math.round((roundedRim - 2.5) * 10) / 10,
+                  }
+                : o
+            ),
+          }));
+        }
+      } catch (err) {
+        console.error('Error sampling ground elevation for pump station:', err);
+      }
+    },
+    [network]
+  );
+
   const handleAddForceMain = useCallback(
     (startNodeId: string, endNodeId: string) => {
       const allNodes = [
@@ -392,46 +496,63 @@ export const WastewaterModelling: React.FC = () => {
 
   const handleUpdateElement = useCallback((updated: WastewaterNetworkElement) => {
     setNetwork((prev) => {
+      let next = prev;
       if (updated.type === 'manhole') {
-        return {
+        next = {
           ...prev,
           manholes: prev.manholes.map((m) => (m.id === updated.id ? (updated as WastewaterManhole) : m)),
         };
-      }
-      if (updated.type === 'conduit') {
-        return {
+      } else if (updated.type === 'conduit') {
+        next = {
           ...prev,
           conduits: prev.conduits.map((c) => (c.id === updated.id ? (updated as WastewaterConduit) : c)),
         };
-      }
-      if (updated.type === 'wet-well') {
-        return {
+      } else if (updated.type === 'wet-well') {
+        next = {
           ...prev,
           wetWells: prev.wetWells.map((w) => (w.id === updated.id ? (updated as WastewaterWetWell) : w)),
         };
-      }
-      if (updated.type === 'pump') {
-        return {
+      } else if (updated.type === 'pump') {
+        next = {
           ...prev,
           pumps: prev.pumps.map((p) => (p.id === updated.id ? (updated as WastewaterPump) : p)),
         };
-      }
-      if (updated.type === 'force-main') {
-        return {
+      } else if (updated.type === 'force-main') {
+        next = {
           ...prev,
           forceMains: prev.forceMains.map((f) => (f.id === updated.id ? (updated as WastewaterForceMain) : f)),
         };
-      }
-      if (updated.type === 'outfall') {
-        return {
+      } else if (updated.type === 'outfall') {
+        next = {
           ...prev,
           outfalls: prev.outfalls.map((o) => (o.id === updated.id ? (updated as WastewaterOutfall) : o)),
         };
       }
-      return prev;
+
+      if (simulationSummary) {
+        const { updatedNetwork, summary } = simulateWastewaterNetwork(next);
+        setSimulationSummary(summary);
+        const updatedSelected = [
+          ...updatedNetwork.manholes,
+          ...updatedNetwork.conduits,
+          ...updatedNetwork.wetWells,
+          ...updatedNetwork.pumps,
+          ...updatedNetwork.forceMains,
+          ...updatedNetwork.outfalls,
+        ].find((el) => el.id === updated.id);
+        if (updatedSelected) {
+          setSelectedElement(updatedSelected);
+        }
+        return updatedNetwork;
+      }
+
+      return next;
     });
-    setSelectedElement(updated);
-  }, []);
+
+    if (!simulationSummary) {
+      setSelectedElement(updated);
+    }
+  }, [simulationSummary]);
 
   const handleDeleteElement = useCallback(
     (id: string, type: WastewaterNetworkElement['type']) => {
@@ -581,6 +702,7 @@ export const WastewaterModelling: React.FC = () => {
           onAddConduit={handleAddConduit}
           onAddWetWell={handleAddWetWell}
           onAddPump={handleAddPump}
+          onAddPumpOnGround={handleAddPumpOnGround}
           onAddForceMain={handleAddForceMain}
           onAddOutfall={handleAddOutfall}
           onDeleteElement={handleDeleteElement}

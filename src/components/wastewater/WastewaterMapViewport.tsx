@@ -25,6 +25,7 @@ interface WastewaterMapViewportProps {
   onAddConduit: (startNodeId: string, endNodeId: string) => void;
   onAddWetWell: (lat: number, lng: number) => void;
   onAddPump: (startNodeId: string, endNodeId: string) => void;
+  onAddPumpOnGround?: (lat: number, lng: number) => void;
   onAddForceMain: (startNodeId: string, endNodeId: string) => void;
   onAddOutfall: (lat: number, lng: number) => void;
   onDeleteElement: (id: string, type: WastewaterNetworkElement['type']) => void;
@@ -41,6 +42,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
   onAddConduit,
   onAddWetWell,
   onAddPump,
+  onAddPumpOnGround,
   onAddForceMain,
   onAddOutfall,
   onDeleteElement,
@@ -125,6 +127,8 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         onAddWetWell(lat, lng);
       } else if (activeTool === 'add-outfall') {
         onAddOutfall(lat, lng);
+      } else if (activeTool === 'add-pump' && onAddPumpOnGround && !pendingStartNode) {
+        onAddPumpOnGround(lat, lng);
       } else if (activeTool === 'select') {
         onSelectElement(null);
       }
@@ -134,7 +138,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     return () => {
       map.off('click', handleMapClick);
     };
-  }, [activeTool, onAddManhole, onAddWetWell, onAddOutfall, onSelectElement]);
+  }, [activeTool, onAddManhole, onAddWetWell, onAddOutfall, onAddPumpOnGround, onSelectElement, pendingStartNode]);
 
   // Handle Node Clicks (connecting conduits, selecting, deleting)
   const handleNodeClick = useCallback(
@@ -362,27 +366,41 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
       const midLat = (c1[0] + c2[0]) / 2;
       const midLng = (c1[1] + c2[1]) / 2;
       const isSelected = selectedElement?.id === pmp.id;
+      const isRunning = pmp.status === 'ON';
 
-      L.polyline([c1, c2], {
-        color: '#f59e0b',
+      const pumpLine = L.polyline([c1, c2], {
+        color: isRunning ? '#f59e0b' : '#525252',
         weight: 4,
-        dashArray: '2, 4',
+        dashArray: isRunning ? '3, 4' : '2, 6',
       }).addTo(conduitsLayer);
+
+      pumpLine.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        if (activeTool === 'delete') onDeleteElement(pmp.id, 'pump');
+        else onSelectElement(pmp);
+      });
 
       const pumpIcon = L.divIcon({
         className: 'pump-marker-icon',
         html: `
           <div style="
-            width: 26px; height: 26px; border-radius: 50%;
-            background: #171717; border: 2px solid ${isSelected ? '#fbbf24' : '#f59e0b'};
+            width: 28px; height: 28px; border-radius: 50%;
+            background: #171717; border: 2px solid ${isSelected ? '#fbbf24' : isRunning ? '#10b981' : '#ef4444'};
             display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.7); cursor: pointer; color: #f59e0b;
+            box-shadow: ${isRunning ? '0 0 10px rgba(16,185,129,0.35)' : '0 2px 6px rgba(0,0,0,0.7)'};
+            cursor: pointer; color: ${isRunning ? '#10b981' : '#737373'};
+            position: relative;
           ">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            <div style="
+              position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%;
+              background: ${isRunning ? '#10b981' : '#ef4444'}; border: 1px solid #171717;
+              box-shadow: 0 0 4px ${isRunning ? '#34d399' : '#f87171'};
+            "></div>
           </div>
         `,
-        iconSize: [26, 26],
-        iconAnchor: [13, 13],
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
       });
 
       const pumpMarker = L.marker([midLat, midLng], { icon: pumpIcon }).addTo(nodesLayer);
@@ -395,6 +413,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
       pumpMarker.bindTooltip(
         `<div style="font-family: monospace; font-size: 11px;">
           <strong>Pump: ${pmp.label || pmp.id}</strong><br/>
+          Status: <strong style="color: ${isRunning ? '#10b981' : '#ef4444'};">${isRunning ? 'RUNNING (ONLINE)' : 'STOPPED (OFFLINE)'}</strong><br/>
           Rated Flow: <strong>${pmp.ratedDischargeLs} L/s</strong><br/>
           Dynamic Head: <strong>${pmp.dynamicHeadM} m</strong><br/>
           Power: ${pmp.powerKw ?? 0} kW
@@ -567,6 +586,13 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
       <div ref={mapContainerRef} className="w-full h-full" />
 
       {/* Mode / Pending Action Overlay Banner - identical to Water Distribution */}
+      {activeTool === 'add-pump' && !pendingStartNode && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-[#171717] border border-amber-500/60 px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-mono text-white backdrop-blur">
+          <span className="w-2 h-2 rounded-full bg-amber-400" />
+          <span>Pump Tool Active: Click wet well then outfall, or click ground to place pump station.</span>
+        </div>
+      )}
+
       {pendingStartNode && (
         <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 bg-[#171717] border border-amber-500/60 px-4 py-1.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-mono text-white backdrop-blur">
           <span className="w-2 h-2 rounded-full bg-amber-400" />

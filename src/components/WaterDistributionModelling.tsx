@@ -312,44 +312,130 @@ export const WaterDistributionModelling: React.FC = () => {
     [network]
   );
 
+  const handleAddPumpOnGround = useCallback(
+    async (lat: number, lng: number) => {
+      // Create suction junction and discharge junction ~20 meters apart
+      const deltaLat = 0.00015;
+      const inId = `J-${network.junctions.length + 1}`;
+      const outId = `J-${network.junctions.length + 2}`;
+      const pumpId = `PMP-${network.pumps.length + 1}`;
+
+      const jIn: WaterJunction = {
+        id: inId,
+        label: `Suction ${inId}`,
+        type: 'junction',
+        lat: lat - deltaLat,
+        lng,
+        elevation: 170.0,
+        baseDemand: 0,
+      };
+
+      const jOut: WaterJunction = {
+        id: outId,
+        label: `Discharge ${outId}`,
+        type: 'junction',
+        lat: lat + deltaLat,
+        lng,
+        elevation: 170.0,
+        baseDemand: 10.0,
+      };
+
+      const newPump: WaterPump = {
+        id: pumpId,
+        label: `Booster Pump ${pumpId}`,
+        type: 'pump',
+        startNodeId: inId,
+        endNodeId: outId,
+        status: 'OPEN',
+        curveType: '1-POINT',
+        designFlow: 50.0,
+        designHead: 40.0,
+        shutoffHead: 53.0,
+        maxFlow: 100.0,
+        powerKw: 30.0,
+        speed: 1.0,
+      };
+
+      setNetwork((prev) => ({
+        ...prev,
+        junctions: [...prev.junctions, jIn, jOut],
+        pumps: [...prev.pumps, newPump],
+      }));
+      setSelectedElement(newPump);
+
+      try {
+        const elev = await sampleGroundElevation(lat, lng);
+        if (elev !== null) {
+          const rounded = Math.round(elev * 10) / 10;
+          setNetwork((prev) => ({
+            ...prev,
+            junctions: prev.junctions.map((j) =>
+              j.id === inId || j.id === outId ? { ...j, elevation: rounded } : j
+            ),
+          }));
+        }
+      } catch (err) {
+        console.error('Error sampling ground elevation for pump station:', err);
+      }
+    },
+    [network]
+  );
+
   const handleUpdateElement = useCallback((updated: NetworkElement) => {
     setNetwork((prev) => {
+      let next = prev;
       if (updated.type === 'junction') {
-        return {
+        next = {
           ...prev,
           junctions: prev.junctions.map((j) => (j.id === updated.id ? (updated as WaterJunction) : j)),
         };
-      }
-      if (updated.type === 'pipe') {
-        return {
+      } else if (updated.type === 'pipe') {
+        next = {
           ...prev,
           pipes: prev.pipes.map((p) => (p.id === updated.id ? (updated as WaterPipe) : p)),
         };
-      }
-      if (updated.type === 'pump') {
-        return {
+      } else if (updated.type === 'pump') {
+        next = {
           ...prev,
           pumps: prev.pumps.map((p) => (p.id === updated.id ? (updated as WaterPump) : p)),
         };
-      }
-      if (updated.type === 'tank') {
-        return {
+      } else if (updated.type === 'tank') {
+        next = {
           ...prev,
           tanks: prev.tanks.map((t) => (t.id === updated.id ? (updated as WaterTank) : t)),
         };
-      }
-      if (updated.type === 'reservoir') {
-        return {
+      } else if (updated.type === 'reservoir') {
+        next = {
           ...prev,
           reservoirs: prev.reservoirs.map((r) =>
             r.id === updated.id ? (updated as WaterReservoir) : r
           ),
         };
       }
-      return prev;
+
+      if (simulationSummary) {
+        const { updatedNetwork, summary } = simulateWaterNetwork(next);
+        setSimulationSummary(summary);
+        const updatedSelected = [
+          ...updatedNetwork.junctions,
+          ...updatedNetwork.pipes,
+          ...updatedNetwork.pumps,
+          ...updatedNetwork.reservoirs,
+          ...updatedNetwork.tanks,
+        ].find((el) => el.id === updated.id);
+        if (updatedSelected) {
+          setSelectedElement(updatedSelected);
+        }
+        return updatedNetwork;
+      }
+
+      return next;
     });
-    setSelectedElement(updated);
-  }, []);
+
+    if (!simulationSummary) {
+      setSelectedElement(updated);
+    }
+  }, [simulationSummary]);
 
   const handleDeleteElement = useCallback(
     (id: string, type: NetworkElement['type']) => {
@@ -498,6 +584,7 @@ export const WaterDistributionModelling: React.FC = () => {
           onAddReservoir={handleAddReservoir}
           onAddTank={handleAddTank}
           onAddPump={handleAddPump}
+          onAddPumpOnGround={handleAddPumpOnGround}
           onDeleteElement={handleDeleteElement}
           onProfileRouteSelected={(nodes) => {
             setProfileRouteNodeIds(nodes);
