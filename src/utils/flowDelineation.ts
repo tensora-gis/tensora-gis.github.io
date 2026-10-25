@@ -936,8 +936,15 @@ export function delineateUpstreamCatchment(options: DelineationOptions): Delinea
     }
   }
   
-  if (headIndex === -1) {
-    throw new DemUnavailableError('No valid terrain found in the radius.', coverage);
+  let minElev = Infinity;
+  for (let i = 0; i < n; i++) {
+    if (!grid.inDomain[Math.floor(i / size)][i % size]) continue;
+    const e = naturalElev[i];
+    if (isFinite(e) && e < minElev) minElev = e;
+  }
+
+  if (headIndex === -1 || headElevationM - minElev < 0.05) {
+    throw new DemUnavailableError('No valid terrain or completely flat surface found in the radius.', coverage);
   }
 
   // Trace path from peak to pour point using Dijkstra, prioritizing valleys
@@ -975,7 +982,7 @@ export function delineateUpstreamCatchment(options: DelineationOptions): Delinea
 
   const catchmentPolygon = smoothClosedPolygonChaikin([...boundary, boundary[0]], 2);
 
-  const { inBasin, naturalCells } = contributingArea(network, grid, [pourIndex]);
+  const { inBasin, naturalCells } = contributingArea(network, grid, flowPath);
 
   const basinElevations: number[] = [];
   for (const idx of naturalCells) {

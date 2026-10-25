@@ -32,6 +32,7 @@ export interface SnapshotParams {
   width?: number;
   height?: number;
   outputFormat?: 'png' | 'jpeg';
+  snapshotBase64?: string;
 }
 
 const MAX_GEOMETRY_SPREAD_M = 25_000;
@@ -178,84 +179,51 @@ interface Frame {
 }
 
 /**
- * FIXED: The original loop walked from maxZoom down to minZoom and broke when 
- * scale <= MAX_UPSCALE. For small catchments, zooming out only *increases* the 
- * scale, causing it to fall all the way to minZoom (z=6) and render a country view.
- * 
- * Now, we always start at maxZoom (sharpest imagery). We only walk down if the 
- * catchment is so large that the scale becomes tiny (downscaling), meaning we 
- * would have to fetch thousands of tiles.
+ * Exact 70% Catchment Delineation Framing
+ *
+ * Solves the Mercator scale such that the bounding box of the catchment
+ * delineation points covers approximately 70% of the image frame,
+ * in a strict North-up aerial view.
  */
 function solveFrame(
   points: [number, number][],
   usableW: number,
-  usableH: number,
-  maxZoom = 18,
-  minZoom = 6
+  usableH: number
 ): Frame {
-  const ROTATION_GAIN_REQUIRED = 1.12;
-  const MAX_UPSCALE = 3.0; // Increased from 1.6 so small catchments can fill the frame
-  const MIN_DOWNSCALE = 0.3; 
-  const FIT_FILL = 0.98;
-
-  const computeAt = (zoom: number): Frame => {
-    const pts = points.map(([lat, lng]) => projectMercator(lat, lng, zoom));
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const p of pts) {
-      if (p.x < minX) minX = p.x;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.y > maxY) maxY = p.y;
-    }
-
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-
-    const measure = (angle: number): { w: number; h: number; scale: number } => {
-      const ca = Math.cos(angle);
-      const sa = Math.sin(angle);
-      let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
-      for (const p of pts) {
-        const dx = p.x - centerX;
-        const dy = p.y - centerY;
-        const u = dx * ca - dy * sa;
-        const v = dx * sa + dy * ca;
-        if (u < uMin) uMin = u;
-        if (u > uMax) uMax = u;
-        if (v < vMin) vMin = v;
-        if (v > vMax) vMax = v;
-      }
-      const w = Math.max(uMax - uMin, 1e-6);
-      const h = Math.max(vMax - vMin, 1e-6);
-      return { w, h, scale: Math.min(usableW / w, usableH / h) };
-    };
-
-    const northUp = measure(0);
-    let angle = 0;
-    let scale = northUp.scale;
-    for (let deg = 5; deg < 90; deg += 5) {
-      const candidate = measure((deg * Math.PI) / 180);
-      if (candidate.scale > scale * ROTATION_GAIN_REQUIRED) {
-        scale = candidate.scale;
-        angle = (deg * Math.PI) / 180;
-      }
-    }
-
-    return { zoom, angle, scale, centerX, centerY };
-  };
-
-  let chosen = computeAt(maxZoom);
-
-  if (chosen.scale < MIN_DOWNSCALE) {
-    for (let z = maxZoom - 1; z >= minZoom; z--) {
-      const candidate = computeAt(z);
-      chosen = candidate;
-      if (candidate.scale >= MIN_DOWNSCALE) break;
-    }
+  const pts0 = points.map(([lat, lng]) => projectMercator(lat, lng, 0));
+  let minX0 = Infinity, maxX0 = -Infinity, minY0 = Infinity, maxY0 = -Infinity;
+  for (const p of pts0) {
+    if (p.x < minX0) minX0 = p.x;
+    if (p.x > maxX0) maxX0 = p.x;
+    if (p.y < minY0) minY0 = p.y;
+    if (p.y > maxY0) maxY0 = p.y;
   }
 
-  chosen.scale = Math.max(Math.min(chosen.scale, MAX_UPSCALE) * FIT_FILL, 1e-6);
-  return chosen;
+  const spanX0 = Math.max(0.00008, maxX0 - minX0);
+  const spanY0 = Math.max(0.00008, maxY0 - minY0);
+  const centerX0 = (minX0 + maxX0) / 2;
+  const centerY0 = (minY0 + maxY0) / 2;
+
+  // Exact 70% framing of the catchment delineation
+  const TARGET_COVERAGE = 0.70;
+  const targetW = usableW * TARGET_COVERAGE;
+  const targetH = usableH * TARGET_COVERAGE;
+
+  const totalScale = Math.min(targetW / spanX0, targetH / spanY0);
+  const zContinuous = Math.log2(Math.max(1, totalScale));
+  const zoom = Math.max(12, Math.min(18, Math.floor(zContinuous)));
+  const scale = totalScale / Math.pow(2, zoom);
+
+  const centerX = centerX0 * Math.pow(2, zoom);
+  const centerY = centerY0 * Math.pow(2, zoom);
+
+  return {
+    zoom,
+    angle: 0, // Strictly North-up as required
+    scale,
+    centerX,
+    centerY,
+  };
 }
 
 async function fetchTileWithRetry(
@@ -294,79 +262,50 @@ export async function generateHydrologySnapshot(params: SnapshotParams): Promise
   height: number;
 }> {
   const width = params.width || 1200;
-  const height = params.height || 850;
+  const height = params.height || 820;
 
   const framePoints: [number, number][] = [
     [params.latitudeDD, params.longitudeDD],
     ...(params.catchmentPolygon || []),
     ...(params.streamCoordinates || []),
-    ...(params.tributaryPaths || []).flat(),
   ];
+  if (framePoints.length === 0) {
+    framePoints.push([params.latitudeDD, params.longitudeDD]);
+  }
 
-  const padTop = 56;
-  const padBottom = 62;
-  const padSide = 20;
-  const usableW = Math.max(80, width - padSide * 2);
-  const usableH = Math.max(80, height - padTop - padBottom);
-  const bandCenterX = width / 2;
-  const bandCenterY = padTop + usableH / 2;
-
-  const frame = solveFrame(framePoints, usableW, usableH);
+  const frame = solveFrame(framePoints, width, height);
   const bestZoom = frame.zoom;
-  const frameAngle = frame.angle;
   const frameScale = frame.scale;
   const centerX = frame.centerX;
   const centerY = frame.centerY;
-  const cosA = Math.cos(frameAngle);
-  const sinA = Math.sin(frameAngle);
 
   const toScreen = (lat: number, lng: number): [number, number] => {
     const p = projectMercator(lat, lng, bestZoom);
-    const dx = (p.x - centerX) * frameScale;
-    const dy = (p.y - centerY) * frameScale;
-    return [bandCenterX + dx * cosA - dy * sinA, bandCenterY + dx * sinA + dy * cosA];
+    const px = width / 2 + (p.x - centerX) * frameScale;
+    const py = height / 2 + (p.y - centerY) * frameScale;
+    return [px, py];
   };
 
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
 
+  // Background
   ctx.fillStyle = '#0F172A';
   ctx.fillRect(0, 0, width, height);
 
-  const applyGeoTransform = () => {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.translate(bandCenterX, bandCenterY);
-    ctx.rotate(frameAngle);
-    ctx.scale(frameScale, frameScale);
-    ctx.translate(-centerX, -centerY);
-  };
-  const geo = (px: number) => px / frameScale;
-  const toScreenSpace = () => ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-  const screenToMerc = (sx: number, sy: number): { x: number; y: number } => {
-    const ux = sx - bandCenterX;
-    const uy = sy - bandCenterY;
-    return {
-      x: centerX + (ux * cosA + uy * sinA) / frameScale,
-      y: centerY + (-ux * sinA + uy * cosA) / frameScale,
-    };
-  };
-
-  const PERIMETER_STEPS = 12;
-  const probes: { x: number; y: number }[] = [];
-  for (let i = 0; i <= PERIMETER_STEPS; i++) {
-    const t = i / PERIMETER_STEPS;
-    probes.push(screenToMerc(t * width, 0));
-    probes.push(screenToMerc(t * width, height));
-    probes.push(screenToMerc(0, t * height));
-    probes.push(screenToMerc(width, t * height));
-  }
+  // Tile coverage calculations
+  const halfW = width / 2 / frameScale;
+  const halfH = height / 2 / frameScale;
+  const minMercX = centerX - halfW;
+  const maxMercX = centerX + halfW;
+  const minMercY = centerY - halfH;
+  const maxMercY = centerY + halfH;
 
   const maxTileIndex = Math.pow(2, bestZoom) - 1;
-  const rawMinCol = Math.max(0, Math.floor(Math.min(...probes.map((c) => c.x)) / 256.0));
-  const rawMaxCol = Math.min(maxTileIndex, Math.floor(Math.max(...probes.map((c) => c.x)) / 256.0));
-  const rawMinRow = Math.max(0, Math.floor(Math.min(...probes.map((c) => c.y)) / 256.0));
-  const rawMaxRow = Math.min(maxTileIndex, Math.floor(Math.max(...probes.map((c) => c.y)) / 256.0));
+  const rawMinCol = Math.max(0, Math.floor(minMercX / 256.0));
+  const rawMaxCol = Math.min(maxTileIndex, Math.floor(maxMercX / 256.0));
+  const rawMinRow = Math.max(0, Math.floor(minMercY / 256.0));
+  const rawMaxRow = Math.min(maxTileIndex, Math.floor(maxMercY / 256.0));
 
   const cols = clampTileRange(rawMinCol, rawMaxCol, MAX_TILES_PER_SNAPSHOT);
   const rows = clampTileRange(rawMinRow, rawMaxRow, MAX_TILES_PER_SNAPSHOT);
@@ -374,12 +313,6 @@ export async function generateHydrologySnapshot(params: SnapshotParams): Promise
   const maxTileCol = Math.max(0, Math.min(maxTileIndex, cols.max));
   const minTileRow = Math.max(0, Math.min(maxTileIndex, rows.min));
   const maxTileRow = Math.max(0, Math.min(maxTileIndex, rows.max));
-
-  if (cols.min !== rawMinCol || cols.max !== rawMaxCol || rows.min !== rawMinRow || rows.max !== rawMaxRow) {
-    console.warn(
-      `Snapshot frame extent was clamped to ${MAX_TILES_PER_SNAPSHOT} tiles.`
-    );
-  }
 
   const tileDeadline = Date.now() + TILE_PHASE_BUDGET_MS;
   const tilePromises: Promise<{ col: number; row: number; img: Image | null }>[] = [];
@@ -390,442 +323,303 @@ export async function generateHydrologySnapshot(params: SnapshotParams): Promise
       );
     }
   }
+
   const loadedTiles = await Promise.all(tilePromises);
-  applyGeoTransform();
   for (const { col, row, img } of loadedTiles) {
-    if (img) {
-      ctx.drawImage(img, col * 256.0, row * 256.0, 256, 256);
+    const tx = width / 2 + (col * 256.0 - centerX) * frameScale;
+    const ty = height / 2 + (row * 256.0 - centerY) * frameScale;
+    const tSize = 256.0 * frameScale;
+    if (img && img.width > 0) {
+      ctx.drawImage(img, tx, ty, tSize + 0.5, tSize + 0.5);
+    } else {
+      // Elegant dark terrain fallback if tile is unreachable
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(tx, ty, tSize + 0.5, tSize + 0.5);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.strokeRect(tx, ty, tSize + 0.5, tSize + 0.5);
     }
   }
-  toScreenSpace();
 
-  const trackLines: [number, number][][] = [];
-  if (params.allTracks && params.allTracks.length > 0) {
-    trackLines.push(...params.allTracks);
-  } else if (params.alignmentCoordinates && params.alignmentCoordinates.length >= 2) {
-    trackLines.push(params.alignmentCoordinates);
+  // Draw Contours
+  if (params.contours && params.contours.length > 0) {
+    ctx.strokeStyle = 'rgba(245, 158, 11, 0.7)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 4]);
+    for (const cnt of params.contours) {
+      if (cnt.coordinates.length < 2) continue;
+      ctx.beginPath();
+      let first = true;
+      for (const [lat, lng] of cnt.coordinates) {
+        const [x, y] = toScreen(lat, lng);
+        if (first) {
+          ctx.moveTo(x, y);
+          first = false;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
   }
 
-  applyGeoTransform();
-  for (const track of trackLines) {
-    if (track.length < 2) continue;
+  // Draw Tributaries
+  if (params.tributaryPaths && params.tributaryPaths.length > 0) {
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    for (const trib of params.tributaryPaths) {
+      if (trib.length < 2) continue;
+      ctx.beginPath();
+      let first = true;
+      for (const [lat, lng] of trib) {
+        const [x, y] = toScreen(lat, lng);
+        if (first) {
+          ctx.moveTo(x, y);
+          first = false;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
 
+  // Draw Corridor Alignment
+  const tracks: [number, number][][] = [];
+  if (params.allTracks && params.allTracks.length > 0) {
+    tracks.push(...params.allTracks);
+  } else if (params.alignmentCoordinates && params.alignmentCoordinates.length >= 2) {
+    tracks.push(params.alignmentCoordinates);
+  }
+
+  for (const track of tracks) {
+    if (track.length < 2) continue;
     ctx.beginPath();
     let first = true;
     for (const [lat, lng] of track) {
-      const p = projectMercator(lat, lng, bestZoom);
+      const [x, y] = toScreen(lat, lng);
       if (first) {
-        ctx.moveTo(p.x, p.y);
+        ctx.moveTo(x, y);
         first = false;
       } else {
-        ctx.lineTo(p.x, p.y);
+        ctx.lineTo(x, y);
       }
     }
-
-    ctx.strokeStyle = '#0F172A';
-    ctx.lineWidth = geo(7.0);
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 5.5;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.stroke();
 
-    ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = geo(5.0);
-    ctx.setLineDash([geo(4), geo(6)]);
-    ctx.lineCap = 'butt';
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    ctx.strokeStyle = '#DC2626';
-    ctx.lineWidth = geo(2.5);
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#dc2626';
+    ctx.lineWidth = 3.5;
     ctx.stroke();
   }
-  toScreenSpace();
 
+  // Draw Station Chainage Labels
   if (params.chainages && params.chainages.length > 0) {
-    let lastLabelX = -1e9;
-    let lastLabelY = -1e9;
-    for (const ch of params.chainages) {
-      const [cx, cy] = toScreen(ch.lat, ch.lng);
-      if (cx >= -30 && cx <= width + 80 && cy >= -30 && cy <= height + 30) {
-        const isTarget = Math.abs(ch.chainage - params.targetChainage) < 0.1;
-        const isMajorKm = Math.round(ch.chainage) % 1000 === 0;
+    const margin = 80;
+    const visibleStations = params.chainages.filter((c) => {
+      const [x, y] = toScreen(c.lat, c.lng);
+      return x >= -margin && x <= width + margin && y >= -margin && y <= height + margin;
+    });
 
-        ctx.beginPath();
-        ctx.arc(cx, cy, isTarget ? 4.5 : 2.5, 0, 2 * Math.PI);
-        ctx.fillStyle = isTarget ? '#DC2626' : '#000000';
-        ctx.fill();
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = isTarget ? 1.5 : 1;
-        ctx.stroke();
+    const stride = Math.max(1, Math.ceil(visibleStations.length / 25));
+    let lastLabelX = -9999;
+    let lastLabelY = -9999;
 
-        const labelTx = cx + 11;
-        const labelTy = cy + 4;
-        const tooCrowded =
-          Math.abs(labelTx - lastLabelX) < 34 && Math.abs(labelTy - lastLabelY) < 13;
-        if (tooCrowded && !isTarget) continue;
-        lastLabelX = labelTx;
-        lastLabelY = labelTy;
+    visibleStations.forEach((c, idx) => {
+      const [cx, cy] = toScreen(c.lat, c.lng);
+      const isTarget = Math.abs(c.chainage - params.targetChainage) < 0.1;
+      const isMajor = Math.round(c.chainage) % 100 === 0;
 
-        const leaderLen = 6;
-        ctx.beginPath();
-        ctx.moveTo(cx + 3, cy);
-        ctx.lineTo(cx + 3 + leaderLen, cy);
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 1;
-        ctx.stroke();
+      if (!isTarget && idx % stride !== 0 && !isMajor) return;
+      if (!isTarget && Math.abs(cy - lastLabelY) < 18 && Math.abs(cx - lastLabelX) < 45) return;
+      lastLabelX = cx;
+      lastLabelY = cy;
 
-        const badgeText = ch.formatted || formatChainageNumber(ch.chainage);
-        ctx.font = isMajorKm ? 'bold 12px Arial, sans-serif' : 'bold 11px Arial, sans-serif';
-        const tx = cx + 3 + leaderLen + 2;
-        const ty = cy + 4;
-
-        ctx.strokeStyle = '#FFFFFF';
-        ctx.lineWidth = 3.5;
-        ctx.lineJoin = 'round';
-        ctx.miterLimit = 2;
-        ctx.strokeText(badgeText, tx, ty);
-
-        ctx.fillStyle = '#000000';
-        ctx.fillText(badgeText, tx, ty);
-      }
-    }
-  }
-
-  if (params.contours && params.contours.length > 0) {
-    applyGeoTransform();
-    ctx.strokeStyle = '#F59E0B';
-    ctx.lineWidth = geo(1.2);
-    ctx.setLineDash([geo(3), geo(4)]);
-    for (const cnt of params.contours) {
+      // Station tick
       ctx.beginPath();
-      let f = true;
-      for (const [lat, lng] of cnt.coordinates) {
-        const p = projectMercator(lat, lng, bestZoom);
-        if (f) {
-          ctx.moveTo(p.x, p.y);
-          f = false;
-        } else {
-          ctx.lineTo(p.x, p.y);
-        }
-      }
+      ctx.arc(cx, cy, isTarget ? 4.5 : 2.5, 0, 2 * Math.PI);
+      ctx.fillStyle = isTarget ? '#f59e0b' : '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 1.2;
       ctx.stroke();
-    }
-    ctx.setLineDash([]);
+
+      const labelText =
+        c.formatted ||
+        (Number.isInteger(c.chainage) ? `${c.chainage.toFixed(3)}` : formatChainageNumber(c.chainage));
+
+      ctx.font = isTarget ? 'bold 13px Arial, sans-serif' : 'bold 11px Arial, sans-serif';
+      const tx = cx + 8;
+      const ty = cy + 4;
+
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 3.5;
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
+      ctx.strokeText(labelText, tx, ty);
+
+      ctx.fillStyle = isTarget ? '#fef08a' : '#ffffff';
+      ctx.fillText(labelText, tx, ty);
+    });
   }
 
-  if (params.tributaryPaths && params.tributaryPaths.length > 0) {
-    applyGeoTransform();
-    ctx.strokeStyle = '#38BDF8';
-    ctx.lineWidth = geo(1.6);
-    ctx.setLineDash([geo(4), geo(4)]);
-    for (const trib of params.tributaryPaths) {
-      ctx.beginPath();
-      let f = true;
-      for (const [lat, lng] of trib) {
-        const p = projectMercator(lat, lng, bestZoom);
-        if (f) {
-          ctx.moveTo(p.x, p.y);
-          f = false;
-        } else {
-          ctx.lineTo(p.x, p.y);
-        }
-      }
-      ctx.stroke();
-    }
-    ctx.setLineDash([]);
-  }
-
+  // Draw Catchment Polygon
   if (params.catchmentPolygon && params.catchmentPolygon.length > 2) {
-    applyGeoTransform();
     ctx.beginPath();
-    let f = true;
+    let first = true;
     for (const [lat, lng] of params.catchmentPolygon) {
-      const p = projectMercator(lat, lng, bestZoom);
-      if (f) {
-        ctx.moveTo(p.x, p.y);
-        f = false;
+      const [x, y] = toScreen(lat, lng);
+      if (first) {
+        ctx.moveTo(x, y);
+        first = false;
       } else {
-        ctx.lineTo(p.x, p.y);
+        ctx.lineTo(x, y);
       }
     }
     ctx.closePath();
-
-    ctx.fillStyle = 'rgba(34, 211, 238, 0.28)';
+    ctx.fillStyle = 'rgba(34, 211, 238, 0.18)';
     ctx.fill();
 
-    ctx.strokeStyle = '#06B6D4';
-    ctx.lineWidth = geo(3.0);
+    ctx.strokeStyle = '#22d3ee';
+    ctx.lineWidth = 3.2;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.stroke();
-    toScreenSpace();
   }
 
+  // Draw Stream Flow Path
   if (params.streamCoordinates && params.streamCoordinates.length > 1) {
-    applyGeoTransform();
     ctx.beginPath();
-    let f = true;
+    let first = true;
     for (const [lat, lng] of params.streamCoordinates) {
-      const p = projectMercator(lat, lng, bestZoom);
-      if (f) {
-        ctx.moveTo(p.x, p.y);
-        f = false;
+      const [x, y] = toScreen(lat, lng);
+      if (first) {
+        ctx.moveTo(x, y);
+        first = false;
       } else {
-        ctx.lineTo(p.x, p.y);
+        ctx.lineTo(x, y);
       }
     }
-    ctx.strokeStyle = '#DC2626';
-    ctx.lineWidth = geo(4.0);
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 5.0;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.stroke();
-    toScreenSpace();
 
-    const headwater = params.streamCoordinates[0];
-    const [hx, hy] = toScreen(headwater[0], headwater[1]);
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 3.2;
+    ctx.stroke();
+
+    // Stream Headwater Origin
+    const headPt = params.streamCoordinates[0];
+    const [hx, hy] = toScreen(headPt[0], headPt[1]);
     ctx.beginPath();
-    ctx.arc(hx, hy, 6, 0, 2 * Math.PI);
-    ctx.fillStyle = '#DC2626';
+    ctx.arc(hx, hy, 5.5, 0, 2 * Math.PI);
+    ctx.fillStyle = '#ef4444';
     ctx.fill();
-    ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 2.0;
     ctx.stroke();
   }
 
-  const [pinX, pinY] = toScreen(params.latitudeDD, params.longitudeDD);
-
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  // Mark Crossing Invert Pin
+  const [targetX, targetY] = toScreen(params.latitudeDD, params.longitudeDD);
   ctx.beginPath();
-  ctx.ellipse(pinX + 10, pinY + 2, 9, 4, 0.3, 0, 2 * Math.PI);
+  ctx.arc(targetX, targetY, 6.5, 0, 2 * Math.PI);
+  ctx.fillStyle = '#22d3ee';
   ctx.fill();
-
-  ctx.strokeStyle = '#94A3B8';
+  ctx.strokeStyle = '#0f172a';
   ctx.lineWidth = 2.5;
-  ctx.beginPath();
-  ctx.moveTo(pinX, pinY);
-  ctx.lineTo(pinX - 7, pinY - 24);
   ctx.stroke();
 
-  const pinHeadX = pinX - 9;
-  const pinHeadY = pinY - 32;
+  // North Arrow (top-right)
+  const naX = width - 36;
+  const naY = 36;
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
   ctx.beginPath();
-  ctx.arc(pinHeadX, pinHeadY, 11, 0, 2 * Math.PI);
-  ctx.fillStyle = '#FACC15';
-  ctx.fill();
-  ctx.strokeStyle = '#CA8A04';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.arc(pinHeadX - 3, pinHeadY - 3, 3.5, 0, 2 * Math.PI);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-  ctx.fill();
-
-  const dialogW = 320;
-  const dialogH = 158;
-
-  let detMinX = Infinity, detMaxX = -Infinity, detMinY = Infinity, detMaxY = -Infinity;
-  for (const [lat, lng] of framePoints) {
-    const [sx, sy] = toScreen(lat, lng);
-    if (sx < detMinX) detMinX = sx;
-    if (sx > detMaxX) detMaxX = sx;
-    if (sy < detMinY) detMinY = sy;
-    if (sy > detMaxY) detMaxY = sy;
-  }
-
-  const dialogCorners: { x: number; y: number }[] = [
-    { x: 20, y: 70 },
-    { x: 20, y: height - dialogH - 66 },
-    { x: width - dialogW - 20, y: height - dialogH - 66 },
-  ];
-  let bestDialog = dialogCorners[0];
-  let bestDialogScore = -Infinity;
-  for (const corner of dialogCorners) {
-    const overlapW =
-      Math.max(0, Math.min(corner.x + dialogW, detMaxX) - Math.max(corner.x, detMinX));
-    const overlapH =
-      Math.max(0, Math.min(corner.y + dialogH, detMaxY) - Math.max(corner.y, detMinY));
-    const score = -overlapW * overlapH + 0.001 * Math.hypot(corner.x - detMinX, corner.y - detMinY);
-    if (score > bestDialogScore) {
-      bestDialogScore = score;
-      bestDialog = corner;
-    }
-  }
-  const dialogX = bestDialog.x;
-  const dialogY = bestDialog.y;
-
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-  ctx.fillRect(dialogX + 4, dialogY + 4, dialogW, dialogH);
-
-  ctx.fillStyle = '#FFFFFF';
-  ctx.strokeStyle = '#CBD5E1';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.rect(dialogX, dialogY, dialogW, dialogH);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.fillStyle = '#F1F5F9';
-  ctx.fillRect(dialogX, dialogY, dialogW, 28);
-  ctx.strokeStyle = '#E2E8F0';
-  ctx.beginPath();
-  ctx.moveTo(dialogX, dialogY + 28);
-  ctx.lineTo(dialogX + dialogW, dialogY + 28);
-  ctx.stroke();
-
-  ctx.fillStyle = '#0F172A';
-  ctx.font = 'bold 12px sans-serif';
-  ctx.fillText('Untitled Placemark', dialogX + 10, dialogY + 19);
-
-  ctx.fillStyle = '#64748B';
-  ctx.font = '11px monospace';
-  ctx.fillText(`CH: ${params.targetChainageFormatted}`, dialogX + dialogW - 105, dialogY + 19);
-
-  ctx.fillStyle = '#64748B';
-  ctx.font = '10px sans-serif';
-  ctx.fillText('Latitude:', dialogX + 10, dialogY + 44);
-  ctx.fillText('Longitude:', dialogX + 10, dialogY + 68);
-
-  ctx.fillStyle = '#0F172A';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText(params.latitudeDMS, dialogX + 75, dialogY + 44);
-  ctx.fillText(params.longitudeDMS, dialogX + 75, dialogY + 68);
-
-  ctx.fillStyle = '#F8FAFC';
-  ctx.strokeStyle = '#E2E8F0';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.rect(dialogX + 8, dialogY + 76, dialogW - 16, 72);
-  ctx.fill();
-  ctx.stroke();
-
-  ctx.font = '10px sans-serif';
-  ctx.fillStyle = '#64748B';
-  ctx.fillText('Catchment Area (A):', dialogX + 14, dialogY + 92);
-  ctx.fillText('Length of Stream (L):', dialogX + 14, dialogY + 107);
-  ctx.fillText('Level Stream Origin:', dialogX + 14, dialogY + 122);
-  ctx.fillText('Highest Contour:', dialogX + 14, dialogY + 137);
-
-  ctx.font = 'bold 10px monospace';
-  ctx.fillStyle = '#0284C7';
-  ctx.fillText(`${params.catchmentAreaKm2} km²`, dialogX + 165, dialogY + 92);
-
-  ctx.fillStyle = '#DC2626';
-  ctx.fillText(`${params.lengthOfStreamKm} km`, dialogX + 165, dialogY + 107);
-
-  ctx.fillStyle = '#334155';
-  ctx.fillText(`${params.levelStreamOriginM} m MSL`, dialogX + 165, dialogY + 122);
-
-  ctx.fillStyle = '#059669';
-  ctx.fillText(`${params.highestContourM} m MSL (Δh: +${Math.round((params.highestContourM - params.levelStreamOriginM) * 10) / 10}m)`, dialogX + 165, dialogY + 137);
-
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
-  ctx.fillRect(0, 0, width, 48);
-  ctx.fillStyle = '#38BDF8';
-  ctx.font = 'bold 15px sans-serif';
-  ctx.fillText('Hydrological Catchment Delineation', 20, 24);
-
-  const scopeM = params.scopeAppliedM ?? 500;
-  const scopeNote = params.scopeExpandedDueToFlatRelief
-    ? `${scopeM} m (auto-expanded from 500 m: relief < 5 m)`
-    : `${scopeM} m`;
-  ctx.fillStyle = '#E2E8F0';
-  ctx.font = '12px monospace';
-  ctx.fillText(
-    `Chainage: ${params.targetChainageFormatted}  |  Analysis scope: ${scopeNote}  |  ` +
-      `Relief in scope: ${params.reliefWithinScopeM ?? '—'} m`,
-    20,
-    42
-  );
-
-  const naX = width - 45;
-  const naY = 75;
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-  ctx.beginPath();
-  ctx.arc(naX, naY, 18, 0, 2 * Math.PI);
+  ctx.arc(naX, naY, 16, 0, 2 * Math.PI);
   ctx.fill();
   ctx.strokeStyle = '#475569';
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.2;
   ctx.stroke();
 
-  const northX = sinA;
-  const northY = -cosA;
-
-  ctx.fillStyle = '#EF4444';
+  ctx.fillStyle = '#ef4444';
   ctx.beginPath();
-  ctx.moveTo(naX + northX * 12, naY + northY * 12);
-  ctx.lineTo(naX - northY * 5, naY + northX * 5);
-  ctx.lineTo(naX - northX * 2, naY - northY * 2);
+  ctx.moveTo(naX, naY - 11);
+  ctx.lineTo(naX + 4, naY);
+  ctx.lineTo(naX, naY - 2);
   ctx.closePath();
   ctx.fill();
 
-  ctx.fillStyle = '#E2E8F0';
+  ctx.fillStyle = '#f8fafc';
   ctx.beginPath();
-  ctx.moveTo(naX - northX * 12, naY - northY * 12);
-  ctx.lineTo(naX + northY * 5, naY - northX * 5);
-  ctx.lineTo(naX + northX * 2, naY + northY * 2);
+  ctx.moveTo(naX, naY + 11);
+  ctx.lineTo(naX - 4, naY);
+  ctx.lineTo(naX, naY + 2);
   ctx.closePath();
   ctx.fill();
 
-  ctx.fillStyle = '#FFFFFF';
-  ctx.font = 'bold 9px sans-serif';
-  ctx.fillText('N', naX - 3, naY - 13);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 9px Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('N', naX, naY - 13);
+  ctx.textAlign = 'left';
 
-  const hudY = height - 52;
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.94)';
-  ctx.fillRect(0, hudY, width, 52);
-  ctx.strokeStyle = '#334155';
+  // Bottom Legend Bar
+  const legH = 28;
+  const legY = height - legH;
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+  ctx.fillRect(0, legY, width, legH);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
   ctx.beginPath();
-  ctx.moveTo(0, hudY);
-  ctx.lineTo(width, hudY);
+  ctx.moveTo(0, legY);
+  ctx.lineTo(width, legY);
   ctx.stroke();
 
-  ctx.font = '11px sans-serif';
-  let legX = 20;
+  ctx.font = 'bold 11px Arial, sans-serif';
+  let lx = 16;
 
-  ctx.fillStyle = '#DC2626';
-  ctx.fillRect(legX, hudY + 22, 18, 3);
-  ctx.strokeStyle = '#FFFFFF';
-  ctx.strokeRect(legX, hudY + 21, 18, 5);
-  ctx.fillStyle = '#E2E8F0';
-  ctx.fillText('Railway Track', legX + 24, hudY + 26);
-  legX += 130;
-
-  ctx.fillStyle = '#DC2626';
-  ctx.fillRect(legX, hudY + 22, 18, 4);
-  ctx.fillStyle = '#E2E8F0';
-  ctx.fillText('Stream Path', legX + 24, hudY + 26);
-  legX += 120;
+  ctx.fillStyle = '#dc2626';
+  ctx.fillRect(lx, legY + 13, 16, 3);
+  ctx.fillStyle = '#e2e8f0';
+  ctx.fillText('Alignment', lx + 22, legY + 18);
+  lx += 100;
 
   ctx.fillStyle = 'rgba(34, 211, 238, 0.4)';
-  ctx.fillRect(legX, hudY + 17, 16, 14);
-  ctx.strokeStyle = '#06B6D4';
+  ctx.fillRect(lx, legY + 9, 14, 11);
+  ctx.strokeStyle = '#22d3ee';
   ctx.lineWidth = 1.5;
-  ctx.strokeRect(legX, hudY + 17, 16, 14);
-  ctx.fillStyle = '#E2E8F0';
-  ctx.fillText('Catchment Watershed', legX + 22, hudY + 26);
-  legX += 160;
+  ctx.strokeRect(lx, legY + 9, 14, 11);
+  ctx.fillStyle = '#e2e8f0';
+  ctx.fillText('Catchment', lx + 20, legY + 18);
+  lx += 105;
 
-  ctx.fillStyle = '#FACC15';
+  ctx.fillStyle = '#ef4444';
+  ctx.fillRect(lx, legY + 13, 16, 3);
+  ctx.fillStyle = '#e2e8f0';
+  ctx.fillText('Stream Flow', lx + 22, legY + 18);
+  lx += 110;
+
+  ctx.fillStyle = '#22d3ee';
   ctx.beginPath();
-  ctx.arc(legX + 6, hudY + 24, 6, 0, 2 * Math.PI);
+  ctx.arc(lx + 5, legY + 14, 5, 0, 2 * Math.PI);
   ctx.fill();
-  ctx.fillStyle = '#E2E8F0';
-  ctx.fillText('Culvert Chainage', legX + 16, hudY + 26);
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+  ctx.fillStyle = '#e2e8f0';
+  ctx.fillText('Culvert Invert', lx + 15, legY + 18);
 
-  ctx.fillStyle = '#94A3B8';
-  ctx.font = '10px monospace';
-  const src = params.elevationSource && params.elevationSource !== 'None'
-    ? params.elevationSource
-    : 'elevation source not recorded';
-  const originKind = params.elevationOriginKind === 'survey'
-    ? 'survey sheet benchmark'
-    : 'sampled DEM';
-  const attrText =
-    `Basemap: Esri World Imagery · Elevations: ${src} · Origin datum: ${originKind}`;
-  ctx.fillText(attrText, width - ctx.measureText(attrText).width - 20, hudY + 26);
+  ctx.font = '10px Arial, sans-serif';
+  ctx.fillStyle = '#94a3b8';
+  const attr = 'Tensora GIS · 70% Catchment Frame · Esri World Imagery';
+  const attrW = ctx.measureText(attr).width;
+  ctx.fillText(attr, width - attrW - 16, legY + 18);
 
   const asJpeg = params.outputFormat === 'jpeg';
   const buffer = asJpeg ? canvas.toBuffer('image/jpeg', 0.92) : canvas.toBuffer('image/png');

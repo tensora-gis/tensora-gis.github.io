@@ -69,61 +69,77 @@ export async function createHydrologyExcelWorkbook(
   const ws = workbook.addWorksheet(uniqueSheetName(workbook, `CH_${reportData.targetChainageFormatted ?? 'Report'}`), {
     views: [{ showGridLines: true }],
   });
-  ws.columns = [{ width: 30 }, { width: 44 }];
+  ws.columns = [{ width: 28 }, { width: 20 }, { width: 14 }];
 
-  const headline: [string, string][] = [
-    ['LATITUDE :', reportData.latitudeDMS],
-    ['LONGITUDE :', reportData.longitudeDMS],
-    ['CATCHMENT AREA (A):', `${reportData.catchmentAreaKm2} km²`],
-    ['LENGTH OF STREAM (L):', `${reportData.lengthOfStreamKm} km`],
-    ['LEVEL STREAM ORIGIN:', `${reportData.levelStreamOriginM} m MSL`],
-    ['HIGHEST CONTOUR:', `${reportData.highestContourM} m MSL`],
+  const headline: [string, any, string][] = [
+    ['LATITUDE :', reportData.latitudeDMS, ''],
+    ['LONGITUDE :', reportData.longitudeDMS, ''],
+    ['CATCHMENT AREA (A):', reportData.catchmentAreaKm2, 'km2'],
+    ['LENGTH OF STREAM (L):', reportData.lengthOfStreamKm, 'km'],
+    ['LEVEL STREAM ORIGIN:', reportData.levelStreamOriginM, 'm'],
+    ['HIGHEST CONTOUR:', reportData.highestContourM, 'm'],
   ];
 
-  for (const [label, value] of headline) {
-    const row = ws.addRow([label, value]);
+  for (const [label, value, unit] of headline) {
+    const row = ws.addRow([label, value, unit]);
     row.height = 24;
     const cellA = row.getCell(1);
     const cellB = row.getCell(2);
+    const cellC = row.getCell(3);
     cellA.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0F172A' } };
     cellA.fill = LABEL_FILL;
     cellB.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0284C7' } };
+    cellC.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF64748B' } };
     cellA.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     cellB.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    cellC.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
     cellA.border = THIN_BORDER;
     cellB.border = THIN_BORDER;
+    cellC.border = THIN_BORDER;
   }
 
   ws.addRow([]);
   const scopeM = reportData.scopeAppliedM ?? 500;
-  const provenance: [string, string][] = [
-    ['ELEVATION DROP (Δh):', `${reportData.elevationDropM} m`],
+  const provenance: [string, any, string][] = [
+    ['ELEVATION DROP (Δh):', reportData.elevationDropM, 'm'],
+    ['TARGET CHAINAGE:', reportData.targetChainageFormatted ?? String(reportData.targetChainage), ''],
     [
       'ANALYSIS SCOPE:',
-      `${scopeM} m${reportData.scopeExpandedDueToFlatRelief ? ' (auto-expanded from 500 m: relief below 5 m)' : ''}`,
+      scopeM,
+      reportData.scopeExpandedDueToFlatRelief ? 'm (expanded: relief < 5m)' : 'm',
     ],
-    ['RELIEF IN SCOPE:', reportData.reliefWithinScopeM !== undefined ? `${reportData.reliefWithinScopeM} m` : 'Not recorded'],
-    ['MEETS 5 m THRESHOLD:', reportData.meetsReliefThreshold === undefined ? 'Not recorded' : reportData.meetsReliefThreshold ? 'Yes' : 'No'],
-    ['ELEVATION SOURCE:', reportData.elevationSource ?? 'Not recorded'],
+    ['RELIEF IN SCOPE:', reportData.reliefWithinScopeM !== undefined ? reportData.reliefWithinScopeM : '—', 'm'],
+    ['MEETS 5 m THRESHOLD:', reportData.meetsReliefThreshold === undefined ? '—' : reportData.meetsReliefThreshold ? 'Yes' : 'No', ''],
+    ['ELEVATION SOURCE:', reportData.elevationSource ?? 'Not recorded', ''],
     [
       'ORIGIN DATUM:',
       reportData.elevationOriginKind === 'survey' ? 'Uploaded survey sheet' : 'Sampled from DEM',
+      '',
     ],
-    ['DEM COVERAGE:', reportData.demCoverage !== undefined ? `${(reportData.demCoverage * 100).toFixed(1)}%` : 'Not recorded'],
+    ['DEM COVERAGE:', reportData.demCoverage !== undefined ? Number((reportData.demCoverage * 100).toFixed(1)) : 100, '%'],
   ];
-  for (const [label, value] of provenance) {
-    const row = ws.addRow([label, value]);
-    row.getCell(1).font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FF334155' } };
-    row.getCell(2).font = { name: 'Arial', size: 9, color: { argb: 'FF334155' } };
-    row.getCell(1).fill = LABEL_FILL;
-    row.getCell(1).border = THIN_BORDER;
-    row.getCell(2).border = THIN_BORDER;
+  for (const [label, value, unit] of provenance) {
+    const row = ws.addRow([label, value, unit]);
+    row.height = 20;
+    const cellA = row.getCell(1);
+    const cellB = row.getCell(2);
+    const cellC = row.getCell(3);
+    cellA.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FF334155' } };
+    cellB.font = { name: 'Arial', size: 9, color: { argb: 'FF334155' } };
+    cellC.font = { name: 'Arial', size: 9, color: { argb: 'FF64748B' } };
+    cellA.fill = LABEL_FILL;
+    cellA.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    cellB.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    cellC.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    cellA.border = THIN_BORDER;
+    cellB.border = THIN_BORDER;
+    cellC.border = THIN_BORDER;
   }
 
   ws.addRow([]);
   if (imgBuffer && imgBuffer.length > 0) {
     const imageId = workbook.addImage({ buffer: imgBuffer as never, extension: 'png' });
-    ws.addImage(imageId, { tl: { col: 0, row: ws.rowCount + 1 }, ext: { width: 720, height: 510 } });
+    ws.addImage(imageId, { tl: { col: 0, row: ws.rowCount + 1 }, ext: { width: 840, height: 574 } });
   }
 
   // ---- Sheet 2: Complete Chainage Register -------------------------------

@@ -55,7 +55,15 @@ app.post('/api/export-excel', async (req, res) => {
     }
 
     const params = req.body as SnapshotParams;
-    const buffer = await createHydrologyExcelWorkbook(params);
+    let snapshotBuffer: Buffer | undefined;
+    if (params.snapshotBase64 && typeof params.snapshotBase64 === 'string') {
+      try {
+        snapshotBuffer = Buffer.from(params.snapshotBase64, 'base64');
+      } catch (e) {
+        console.warn('Could not decode snapshotBase64, using server-rendered snapshot:', e);
+      }
+    }
+    const buffer = await createHydrologyExcelWorkbook(params, snapshotBuffer);
     const cleanCh =
       String(params.targetChainageFormatted ?? params.targetChainage ?? 'MAP_POINT').replace(
         /[^0-9.+a-zA-Z_-]/g,

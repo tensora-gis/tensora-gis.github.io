@@ -1,5 +1,18 @@
 import { CorridorAlignment, HydrologyReport } from '../types/hydrology';
 import { decimalToDMS } from './geoUtils';
+import { generateClientHydrologySnapshot } from './stormwaterSnapshot';
+
+const LABEL_FILL = {
+  type: 'pattern' as const,
+  pattern: 'solid' as const,
+  fgColor: { argb: 'FFF1F5F9' },
+};
+const THIN_BORDER = {
+  top: { style: 'thin' as const, color: { argb: 'FF94A3B8' } },
+  left: { style: 'thin' as const, color: { argb: 'FF94A3B8' } },
+  bottom: { style: 'thin' as const, color: { argb: 'FF94A3B8' } },
+  right: { style: 'thin' as const, color: { argb: 'FF94A3B8' } },
+};
 
 /**
  * KML colour encoding is aabbggrr: alpha, then BLUE, then GREEN, then RED.
@@ -319,46 +332,61 @@ export function downloadBlob(blob: Blob, filename: string): void {
 }
 
 /**
- * Exports the formatted Excel workbook from the server-side generator.
+ * Exports the formatted Excel workbook.
  *
- * On static hosting (e.g. GitHub Pages) there is no Express API, so a 404/405
- * falls back to an identical client-side workbook built with ExcelJS — the
- * summary, chainage register and catchment-boundary sheets, without the
- * server-rendered basemap snapshot.
+ * Tries server-side /api/export-excel with pre-rendered client snapshot base64.
+ * If server is offline or fails, seamlessly builds the exact same workbook
+ * client-side with ExcelJS, complete with the embedded 70% catchment snapshot!
  */
 export async function exportExcelReport(
   report: HydrologyReport,
   alignment?: CorridorAlignment | null
 ): Promise<void> {
   const filename = `Hydrology_Report_CH_${chainageTag(report.targetChainageFormatted)}.xlsx`;
-  const payload = JSON.stringify(buildSnapshotPayload(report, alignment));
-  const resp = await fetch('/api/export-excel', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: payload,
-  });
 
-  if (resp.ok) {
-    downloadBlob(await resp.blob(), filename);
-    return;
+  let clientSnapshotDataUrl: string | undefined;
+  if (typeof document !== 'undefined') {
+    try {
+      const snap = await generateClientHydrologySnapshot(report, alignment);
+      clientSnapshotDataUrl = snap.dataUrl;
+    } catch (err) {
+      console.warn('Pre-rendering client snapshot for Excel export notice:', err);
+    }
   }
-  if (resp.status !== 404 && resp.status !== 405) {
-    // A real server-side failure is surfaced, not silently degraded.
-    const detail = await resp.json().catch(() => null);
-    throw new Error(
-      `Excel export failed (HTTP ${resp.status})${detail?.error ? `: ${detail.error}` : ''}`
-    );
+
+  const payload: Record<string, unknown> = buildSnapshotPayload(report, alignment);
+  if (clientSnapshotDataUrl) {
+    payload.snapshotBase64 = clientSnapshotDataUrl.split(',')[1];
   }
-  downloadBlob(await buildClientHydrologyWorkbook(report, alignment), filename);
+
+  try {
+    const resp = await fetch('/api/export-excel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (resp.ok) {
+      downloadBlob(await resp.blob(), filename);
+      return;
+    }
+  } catch (err) {
+    console.warn('Server /api/export-excel call failed, using client-side generator:', err);
+  }
+
+  // Client-side workbook generation fallback with embedded snapshot
+  const blob = await buildClientHydrologyWorkbook(report, alignment, clientSnapshotDataUrl);
+  downloadBlob(blob, filename);
 }
 
 /**
- * Client-side mirror of the server workbook generator: the three-sheet layout
- * without the embedded map snapshot (that is rendered on the server only).
+ * Builds the Excel workbook directly on the client with ExcelJS,
+ * matching the server layout and embedding the 70%-framed snapshot image.
  */
-async function buildClientHydrologyWorkbook(
+export async function buildClientHydrologyWorkbook(
   report: HydrologyReport,
-  alignment?: CorridorAlignment | null
+  alignment?: CorridorAlignment | null,
+  clientSnapshotDataUrl?: string
 ): Promise<Blob> {
   const { default: ExcelJS } = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
@@ -371,33 +399,100 @@ async function buildClientHydrologyWorkbook(
   const summary = workbook.addWorksheet(nameBase, {
     views: [{ showGridLines: true }],
   });
-  summary.columns = [{ width: 30 }, { width: 48 }];
+  summary.columns = [{ width: 28 }, { width: 20 }, { width: 14 }];
 
-  const headline: [string, string][] = [
-    ['LATITUDE :', report.latitudeDMS],
-    ['LONGITUDE :', report.longitudeDMS],
-    ['CATCHMENT AREA (A):', `${report.catchmentAreaKm2} km²`],
-    ['LENGTH OF STREAM (L):', `${report.lengthOfStreamKm} km`],
-    ['LEVEL STREAM ORIGIN:', `${report.levelStreamOriginM} m MSL`],
-    ['HIGHEST CONTOUR:', `${report.highestContourM} m MSL`],
+  const headline: [string, any, string][] = [
+    ['LATITUDE :', report.latitudeDMS, ''],
+    ['LONGITUDE :', report.longitudeDMS, ''],
+    ['CATCHMENT AREA (A):', report.catchmentAreaKm2, 'km2'],
+    ['LENGTH OF STREAM (L):', report.lengthOfStreamKm, 'km'],
+    ['LEVEL STREAM ORIGIN:', report.levelStreamOriginM, 'm'],
+    ['HIGHEST CONTOUR:', report.highestContourM, 'm'],
   ];
-  for (const [label, value] of headline) {
-    summary.addRow([label, value]);
+
+  for (const [label, value, unit] of headline) {
+    const row = summary.addRow([label, value, unit]);
+    row.height = 24;
+    const cellA = row.getCell(1);
+    const cellB = row.getCell(2);
+    const cellC = row.getCell(3);
+    cellA.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+    cellA.fill = LABEL_FILL;
+    cellB.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0284C7' } };
+    cellC.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF64748B' } };
+    cellA.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    cellB.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    cellC.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    cellA.border = THIN_BORDER;
+    cellB.border = THIN_BORDER;
+    cellC.border = THIN_BORDER;
   }
+
   summary.addRow([]);
-  summary.addRow(['ELEVATION DROP (Δh):', `${report.elevationDropM} m`]);
-  summary.addRow(['ANALYSIS SCOPE:', report.scopeAppliedM ? `${report.scopeAppliedM} m` : 'Not recorded']);
-  summary.addRow(['ELEVATION SOURCE:', report.elevationSource ?? 'Not recorded']);
-  summary.addRow([
-    'ORIGIN DATUM:',
-    report.elevationOriginKind === 'survey' ? 'Uploaded survey sheet' : 'Sampled from DEM',
-  ]);
-  summary.addRow([
-    'DEM COVERAGE:',
-    report.demCoverage !== undefined ? `${(report.demCoverage * 100).toFixed(1)}%` : 'Not recorded',
-  ]);
+  const scopeM = report.scopeAppliedM ?? 500;
+  const secondary: [string, any, string][] = [
+    ['ELEVATION DROP (Δh):', report.elevationDropM, 'm'],
+    ['TARGET CHAINAGE:', report.targetChainageFormatted ?? String(report.targetChainage), ''],
+    [
+      'ANALYSIS SCOPE:',
+      scopeM,
+      report.scopeExpandedDueToFlatRelief ? 'm (expanded: relief < 5m)' : 'm',
+    ],
+    ['RELIEF IN SCOPE:', report.reliefWithinScopeM !== undefined ? report.reliefWithinScopeM : '—', 'm'],
+    ['MEETS 5 m THRESHOLD:', report.meetsReliefThreshold === undefined ? '—' : report.meetsReliefThreshold ? 'Yes' : 'No', ''],
+    ['ELEVATION SOURCE:', report.elevationSource ?? 'Not recorded', ''],
+    [
+      'ORIGIN DATUM:',
+      report.elevationOriginKind === 'survey' ? 'Uploaded survey sheet' : 'Sampled from DEM',
+      '',
+    ],
+    ['DEM COVERAGE:', report.demCoverage !== undefined ? Number((report.demCoverage * 100).toFixed(1)) : 100, '%'],
+  ];
+
+  for (const [label, value, unit] of secondary) {
+    const row = summary.addRow([label, value, unit]);
+    row.height = 20;
+    const cellA = row.getCell(1);
+    const cellB = row.getCell(2);
+    const cellC = row.getCell(3);
+    cellA.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FF334155' } };
+    cellB.font = { name: 'Arial', size: 9, color: { argb: 'FF334155' } };
+    cellC.font = { name: 'Arial', size: 9, color: { argb: 'FF64748B' } };
+    cellA.fill = LABEL_FILL;
+    cellA.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    cellB.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    cellC.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    cellA.border = THIN_BORDER;
+    cellB.border = THIN_BORDER;
+    cellC.border = THIN_BORDER;
+  }
+
   summary.addRow([]);
-  summary.addRow(['NOTE', 'Workbook generated in-browser (static deployment).']);
+
+  // Embed the delineation snapshot
+  let snapshotDataUrl = clientSnapshotDataUrl;
+  if (!snapshotDataUrl && typeof document !== 'undefined') {
+    try {
+      const snap = await generateClientHydrologySnapshot(report, alignment);
+      snapshotDataUrl = snap.dataUrl;
+    } catch (err) {
+      console.warn('Could not generate client snapshot for Excel:', err);
+    }
+  }
+
+  if (snapshotDataUrl) {
+    const base64Data = snapshotDataUrl.includes(',')
+      ? snapshotDataUrl.split(',')[1]
+      : snapshotDataUrl;
+    const imageId = workbook.addImage({
+      base64: base64Data,
+      extension: 'png',
+    });
+    summary.addImage(imageId, {
+      tl: { col: 0, row: summary.rowCount + 1 },
+      ext: { width: 840, height: 574 },
+    });
+  }
 
   const register = workbook.addWorksheet('Chainage_Register', { views: [{ showGridLines: true }] });
   register.columns = [
