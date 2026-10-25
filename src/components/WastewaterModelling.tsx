@@ -90,7 +90,7 @@ export const WastewaterModelling: React.FC = () => {
     }
   }, []);
 
-  // Compute Hydraulics & Automatically Export Detailed Calculation (.xlsx)
+  // Compute Hydraulics & Update Network State
   const handleRunSimulation = useCallback(async () => {
     setIsSimulating(true);
     try {
@@ -99,14 +99,25 @@ export const WastewaterModelling: React.FC = () => {
       setSimulationSummary(summary);
       setIsSummaryModalOpen(true);
 
-      // Automatically export every calculation result to detailed Excel workbook
-      await downloadWastewaterExcel(updatedNetwork, summary);
+      if (selectedElement) {
+        const refreshed = [
+          ...updatedNetwork.manholes,
+          ...updatedNetwork.conduits,
+          ...updatedNetwork.wetWells,
+          ...updatedNetwork.pumps,
+          ...updatedNetwork.forceMains,
+          ...updatedNetwork.outfalls,
+        ].find((el) => el.id === selectedElement.id);
+        if (refreshed) {
+          setSelectedElement(refreshed);
+        }
+      }
     } catch (err) {
       console.error('Wastewater simulation error:', err);
     } finally {
       setIsSimulating(false);
     }
-  }, [network]);
+  }, [network, selectedElement]);
 
   const handleExportExcel = useCallback(async () => {
     if (!simulationSummary) return;
@@ -313,8 +324,8 @@ export const WastewaterModelling: React.FC = () => {
 
   const handleAddPumpOnGround = useCallback(
     async (lat: number, lng: number) => {
-      // Create wet well and discharge outfall ~25 meters apart
-      const deltaLat = 0.00018;
+      // Create wet well and discharge outfall ~95 meters apart to avoid overlapping
+      const deltaLat = 0.00085;
       const wwId = `WW-${network.wetWells.length + 1}`;
       const outId = `OUT-${network.outfalls.length + 1}`;
       const pumpId = `PMP-${network.pumps.length + 1}`;
@@ -498,9 +509,32 @@ export const WastewaterModelling: React.FC = () => {
     setNetwork((prev) => {
       let next = prev;
       if (updated.type === 'manhole') {
+        const um = updated as WastewaterManhole;
         next = {
           ...prev,
-          manholes: prev.manholes.map((m) => (m.id === updated.id ? (updated as WastewaterManhole) : m)),
+          manholes: prev.manholes.map((m) => (m.id === updated.id ? um : m)),
+          conduits: prev.conduits.map((c) => {
+            if (c.startNodeId === updated.id || c.endNodeId === updated.id) {
+              const startCoords = c.startNodeId === updated.id ? um : prev.manholes.find((m) => m.id === c.startNodeId) || prev.wetWells.find((w) => w.id === c.startNodeId) || prev.outfalls.find((o) => o.id === c.startNodeId);
+              const endCoords = c.endNodeId === updated.id ? um : prev.manholes.find((m) => m.id === c.endNodeId) || prev.wetWells.find((w) => w.id === c.endNodeId) || prev.outfalls.find((o) => o.id === c.endNodeId);
+              if (startCoords && endCoords) {
+                const newLen = Math.round(calculateWastewaterDistanceM(startCoords.lat, startCoords.lng, endCoords.lat, endCoords.lng) * 10) / 10;
+                return { ...c, lengthM: Math.max(5, newLen) };
+              }
+            }
+            return c;
+          }),
+          forceMains: prev.forceMains.map((f) => {
+            if (f.startNodeId === updated.id || f.endNodeId === updated.id) {
+              const startCoords = f.startNodeId === updated.id ? um : prev.manholes.find((m) => m.id === f.startNodeId) || prev.wetWells.find((w) => w.id === f.startNodeId) || prev.outfalls.find((o) => o.id === f.startNodeId);
+              const endCoords = f.endNodeId === updated.id ? um : prev.manholes.find((m) => m.id === f.endNodeId) || prev.wetWells.find((w) => w.id === f.endNodeId) || prev.outfalls.find((o) => o.id === f.endNodeId);
+              if (startCoords && endCoords) {
+                const newLen = Math.round(calculateWastewaterDistanceM(startCoords.lat, startCoords.lng, endCoords.lat, endCoords.lng) * 10) / 10;
+                return { ...f, lengthM: Math.max(5, newLen) };
+              }
+            }
+            return f;
+          }),
         };
       } else if (updated.type === 'conduit') {
         next = {
@@ -508,9 +542,32 @@ export const WastewaterModelling: React.FC = () => {
           conduits: prev.conduits.map((c) => (c.id === updated.id ? (updated as WastewaterConduit) : c)),
         };
       } else if (updated.type === 'wet-well') {
+        const uw = updated as WastewaterWetWell;
         next = {
           ...prev,
-          wetWells: prev.wetWells.map((w) => (w.id === updated.id ? (updated as WastewaterWetWell) : w)),
+          wetWells: prev.wetWells.map((w) => (w.id === updated.id ? uw : w)),
+          conduits: prev.conduits.map((c) => {
+            if (c.startNodeId === updated.id || c.endNodeId === updated.id) {
+              const startCoords = c.startNodeId === updated.id ? uw : prev.manholes.find((m) => m.id === c.startNodeId) || prev.wetWells.find((w) => w.id === c.startNodeId) || prev.outfalls.find((o) => o.id === c.startNodeId);
+              const endCoords = c.endNodeId === updated.id ? uw : prev.manholes.find((m) => m.id === c.endNodeId) || prev.wetWells.find((w) => w.id === c.endNodeId) || prev.outfalls.find((o) => o.id === c.endNodeId);
+              if (startCoords && endCoords) {
+                const newLen = Math.round(calculateWastewaterDistanceM(startCoords.lat, startCoords.lng, endCoords.lat, endCoords.lng) * 10) / 10;
+                return { ...c, lengthM: Math.max(5, newLen) };
+              }
+            }
+            return c;
+          }),
+          forceMains: prev.forceMains.map((f) => {
+            if (f.startNodeId === updated.id || f.endNodeId === updated.id) {
+              const startCoords = f.startNodeId === updated.id ? uw : prev.manholes.find((m) => m.id === f.startNodeId) || prev.wetWells.find((w) => w.id === f.startNodeId) || prev.outfalls.find((o) => o.id === f.startNodeId);
+              const endCoords = f.endNodeId === updated.id ? uw : prev.manholes.find((m) => m.id === f.endNodeId) || prev.wetWells.find((w) => w.id === f.endNodeId) || prev.outfalls.find((o) => o.id === f.endNodeId);
+              if (startCoords && endCoords) {
+                const newLen = Math.round(calculateWastewaterDistanceM(startCoords.lat, startCoords.lng, endCoords.lat, endCoords.lng) * 10) / 10;
+                return { ...f, lengthM: Math.max(5, newLen) };
+              }
+            }
+            return f;
+          }),
         };
       } else if (updated.type === 'pump') {
         next = {
@@ -523,26 +580,51 @@ export const WastewaterModelling: React.FC = () => {
           forceMains: prev.forceMains.map((f) => (f.id === updated.id ? (updated as WastewaterForceMain) : f)),
         };
       } else if (updated.type === 'outfall') {
+        const uo = updated as WastewaterOutfall;
         next = {
           ...prev,
-          outfalls: prev.outfalls.map((o) => (o.id === updated.id ? (updated as WastewaterOutfall) : o)),
+          outfalls: prev.outfalls.map((o) => (o.id === updated.id ? uo : o)),
+          conduits: prev.conduits.map((c) => {
+            if (c.startNodeId === updated.id || c.endNodeId === updated.id) {
+              const startCoords = c.startNodeId === updated.id ? uo : prev.manholes.find((m) => m.id === c.startNodeId) || prev.wetWells.find((w) => w.id === c.startNodeId) || prev.outfalls.find((o) => o.id === c.startNodeId);
+              const endCoords = c.endNodeId === updated.id ? uo : prev.manholes.find((m) => m.id === c.endNodeId) || prev.wetWells.find((w) => w.id === c.endNodeId) || prev.outfalls.find((o) => o.id === c.endNodeId);
+              if (startCoords && endCoords) {
+                const newLen = Math.round(calculateWastewaterDistanceM(startCoords.lat, startCoords.lng, endCoords.lat, endCoords.lng) * 10) / 10;
+                return { ...c, lengthM: Math.max(5, newLen) };
+              }
+            }
+            return c;
+          }),
+          forceMains: prev.forceMains.map((f) => {
+            if (f.startNodeId === updated.id || f.endNodeId === updated.id) {
+              const startCoords = f.startNodeId === updated.id ? uo : prev.manholes.find((m) => m.id === f.startNodeId) || prev.wetWells.find((w) => w.id === f.startNodeId) || prev.outfalls.find((o) => o.id === f.startNodeId);
+              const endCoords = f.endNodeId === updated.id ? uo : prev.manholes.find((m) => m.id === f.endNodeId) || prev.wetWells.find((w) => w.id === f.endNodeId) || prev.outfalls.find((o) => o.id === f.endNodeId);
+              if (startCoords && endCoords) {
+                const newLen = Math.round(calculateWastewaterDistanceM(startCoords.lat, startCoords.lng, endCoords.lat, endCoords.lng) * 10) / 10;
+                return { ...f, lengthM: Math.max(5, newLen) };
+              }
+            }
+            return f;
+          }),
         };
       }
 
       if (simulationSummary) {
         const { updatedNetwork, summary } = simulateWastewaterNetwork(next);
-        setSimulationSummary(summary);
-        const updatedSelected = [
-          ...updatedNetwork.manholes,
-          ...updatedNetwork.conduits,
-          ...updatedNetwork.wetWells,
-          ...updatedNetwork.pumps,
-          ...updatedNetwork.forceMains,
-          ...updatedNetwork.outfalls,
-        ].find((el) => el.id === updated.id);
-        if (updatedSelected) {
-          setSelectedElement(updatedSelected);
-        }
+        queueMicrotask(() => {
+          setSimulationSummary(summary);
+          const updatedSelected = [
+            ...updatedNetwork.manholes,
+            ...updatedNetwork.conduits,
+            ...updatedNetwork.wetWells,
+            ...updatedNetwork.pumps,
+            ...updatedNetwork.forceMains,
+            ...updatedNetwork.outfalls,
+          ].find((el) => el.id === updated.id);
+          if (updatedSelected) {
+            setSelectedElement(updatedSelected);
+          }
+        });
         return updatedNetwork;
       }
 
@@ -699,6 +781,7 @@ export const WastewaterModelling: React.FC = () => {
           thematicDisplay={thematicDisplay}
           selectedElement={selectedElement}
           onSelectElement={setSelectedElement}
+          onUpdateElement={handleUpdateElement}
           onAddManhole={handleAddManhole}
           onAddConduit={handleAddConduit}
           onAddWetWell={handleAddWetWell}

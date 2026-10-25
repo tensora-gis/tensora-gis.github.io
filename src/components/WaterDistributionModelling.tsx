@@ -88,7 +88,7 @@ export const WaterDistributionModelling: React.FC = () => {
     }
   }, []);
 
-  // Compute Hydraulics & Automatically Export Detailed Calculation (.xlsx)
+  // Compute Hydraulics & Update Network State
   const handleRunSimulation = useCallback(async () => {
     setIsSimulating(true);
     try {
@@ -97,14 +97,25 @@ export const WaterDistributionModelling: React.FC = () => {
       setSimulationSummary(summary);
       setIsSummaryModalOpen(true);
 
-      // Automatically export every calculation result to detailed Excel workbook
-      await downloadWaterHydraulicExcel(updatedNetwork, summary);
+      if (selectedElement) {
+        const refreshed = [
+          ...updatedNetwork.junctions,
+          ...updatedNetwork.pipes,
+          ...updatedNetwork.pumps,
+          ...(updatedNetwork.valves || []),
+          ...updatedNetwork.reservoirs,
+          ...updatedNetwork.tanks,
+        ].find((el) => el.id === selectedElement.id);
+        if (refreshed) {
+          setSelectedElement(refreshed);
+        }
+      }
     } catch (err) {
       console.error('Hydraulic simulation error:', err);
     } finally {
       setIsSimulating(false);
     }
-  }, [network]);
+  }, [network, selectedElement]);
 
   const handleExportExcel = useCallback(async () => {
     if (!simulationSummary) return;
@@ -315,8 +326,8 @@ export const WaterDistributionModelling: React.FC = () => {
 
   const handleAddPumpOnGround = useCallback(
     async (lat: number, lng: number) => {
-      // Create suction junction and discharge junction ~20 meters apart
-      const deltaLat = 0.00015;
+      // Create suction junction and discharge junction ~85 meters apart to avoid overlapping
+      const deltaLat = 0.00075;
       const inId = `J-${network.junctions.length + 1}`;
       const outId = `J-${network.junctions.length + 2}`;
       const pumpId = `PMP-${network.pumps.length + 1}`;
@@ -408,7 +419,7 @@ export const WaterDistributionModelling: React.FC = () => {
 
   const handleAddValveOnGround = useCallback(
     async (lat: number, lng: number) => {
-      const deltaLat = 0.00015;
+      const deltaLat = 0.00075;
       const inId = `J-${network.junctions.length + 1}`;
       const outId = `J-${network.junctions.length + 2}`;
       const valveId = `VLV-${(network.valves || []).length + 1}`;
@@ -474,9 +485,21 @@ export const WaterDistributionModelling: React.FC = () => {
     setNetwork((prev) => {
       let next = prev;
       if (updated.type === 'junction') {
+        const uj = updated as WaterJunction;
         next = {
           ...prev,
-          junctions: prev.junctions.map((j) => (j.id === updated.id ? (updated as WaterJunction) : j)),
+          junctions: prev.junctions.map((j) => (j.id === updated.id ? uj : j)),
+          pipes: prev.pipes.map((p) => {
+            if (p.startNodeId === updated.id || p.endNodeId === updated.id) {
+              const startCoords = p.startNodeId === updated.id ? uj : prev.junctions.find((j) => j.id === p.startNodeId) || prev.reservoirs.find((r) => r.id === p.startNodeId) || prev.tanks.find((t) => t.id === p.startNodeId);
+              const endCoords = p.endNodeId === updated.id ? uj : prev.junctions.find((j) => j.id === p.endNodeId) || prev.reservoirs.find((r) => r.id === p.endNodeId) || prev.tanks.find((t) => t.id === p.endNodeId);
+              if (startCoords && endCoords) {
+                const newLen = Math.round(calculateGeodesicDistanceM(startCoords.lat, startCoords.lng, endCoords.lat, endCoords.lng));
+                return { ...p, length: Math.max(5, newLen) };
+              }
+            }
+            return p;
+          }),
         };
       } else if (updated.type === 'pipe') {
         next = {
@@ -489,16 +512,38 @@ export const WaterDistributionModelling: React.FC = () => {
           pumps: prev.pumps.map((p) => (p.id === updated.id ? (updated as WaterPump) : p)),
         };
       } else if (updated.type === 'tank') {
+        const ut = updated as WaterTank;
         next = {
           ...prev,
-          tanks: prev.tanks.map((t) => (t.id === updated.id ? (updated as WaterTank) : t)),
+          tanks: prev.tanks.map((t) => (t.id === updated.id ? ut : t)),
+          pipes: prev.pipes.map((p) => {
+            if (p.startNodeId === updated.id || p.endNodeId === updated.id) {
+              const startCoords = p.startNodeId === updated.id ? ut : prev.junctions.find((j) => j.id === p.startNodeId) || prev.reservoirs.find((r) => r.id === p.startNodeId) || prev.tanks.find((t) => t.id === p.startNodeId);
+              const endCoords = p.endNodeId === updated.id ? ut : prev.junctions.find((j) => j.id === p.endNodeId) || prev.reservoirs.find((r) => r.id === p.endNodeId) || prev.tanks.find((t) => t.id === p.endNodeId);
+              if (startCoords && endCoords) {
+                const newLen = Math.round(calculateGeodesicDistanceM(startCoords.lat, startCoords.lng, endCoords.lat, endCoords.lng));
+                return { ...p, length: Math.max(5, newLen) };
+              }
+            }
+            return p;
+          }),
         };
       } else if (updated.type === 'reservoir') {
+        const ur = updated as WaterReservoir;
         next = {
           ...prev,
-          reservoirs: prev.reservoirs.map((r) =>
-            r.id === updated.id ? (updated as WaterReservoir) : r
-          ),
+          reservoirs: prev.reservoirs.map((r) => (r.id === updated.id ? ur : r)),
+          pipes: prev.pipes.map((p) => {
+            if (p.startNodeId === updated.id || p.endNodeId === updated.id) {
+              const startCoords = p.startNodeId === updated.id ? ur : prev.junctions.find((j) => j.id === p.startNodeId) || prev.reservoirs.find((r) => r.id === p.startNodeId) || prev.tanks.find((t) => t.id === p.startNodeId);
+              const endCoords = p.endNodeId === updated.id ? ur : prev.junctions.find((j) => j.id === p.endNodeId) || prev.reservoirs.find((r) => r.id === p.endNodeId) || prev.tanks.find((t) => t.id === p.endNodeId);
+              if (startCoords && endCoords) {
+                const newLen = Math.round(calculateGeodesicDistanceM(startCoords.lat, startCoords.lng, endCoords.lat, endCoords.lng));
+                return { ...p, length: Math.max(5, newLen) };
+              }
+            }
+            return p;
+          }),
         };
       } else if (updated.type === 'valve') {
         next = {
@@ -511,18 +556,20 @@ export const WaterDistributionModelling: React.FC = () => {
 
       if (simulationSummary) {
         const { updatedNetwork, summary } = simulateWaterNetwork(next);
-        setSimulationSummary(summary);
-        const updatedSelected = [
-          ...updatedNetwork.junctions,
-          ...updatedNetwork.pipes,
-          ...updatedNetwork.pumps,
-          ...(updatedNetwork.valves || []),
-          ...updatedNetwork.reservoirs,
-          ...updatedNetwork.tanks,
-        ].find((el) => el.id === updated.id);
-        if (updatedSelected) {
-          setSelectedElement(updatedSelected);
-        }
+        queueMicrotask(() => {
+          setSimulationSummary(summary);
+          const updatedSelected = [
+            ...updatedNetwork.junctions,
+            ...updatedNetwork.pipes,
+            ...updatedNetwork.pumps,
+            ...(updatedNetwork.valves || []),
+            ...updatedNetwork.reservoirs,
+            ...updatedNetwork.tanks,
+          ].find((el) => el.id === updated.id);
+          if (updatedSelected) {
+            setSelectedElement(updatedSelected);
+          }
+        });
         return updatedNetwork;
       }
 
@@ -685,6 +732,7 @@ export const WaterDistributionModelling: React.FC = () => {
           thematicDisplay={thematicDisplay}
           selectedElement={selectedElement}
           onSelectElement={setSelectedElement}
+          onUpdateElement={handleUpdateElement}
           onAddJunction={handleAddJunction}
           onAddPipe={handleAddPipe}
           onAddReservoir={handleAddReservoir}

@@ -13,7 +13,7 @@ import {
   WastewaterOutfall,
   WastewaterSimulationSummary,
 } from '../../types/wastewater';
-import { calculateWastewaterDistanceM } from '../../utils/wastewaterTerrainService';
+import { calculateWastewaterDistanceM, sampleWastewaterGroundElevation } from '../../utils/wastewaterTerrainService';
 import { Crosshair } from 'lucide-react';
 
 interface WastewaterMapViewportProps {
@@ -23,6 +23,7 @@ interface WastewaterMapViewportProps {
   thematicDisplay: WastewaterThematicDisplay;
   selectedElement: WastewaterNetworkElement | null;
   onSelectElement: (elem: WastewaterNetworkElement | null) => void;
+  onUpdateElement?: (updated: WastewaterNetworkElement) => void;
   onAddManhole: (lat: number, lng: number) => void;
   onAddConduit: (startNodeId: string, endNodeId: string) => void;
   onAddWetWell: (lat: number, lng: number) => void;
@@ -41,6 +42,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
   thematicDisplay,
   selectedElement,
   onSelectElement,
+  onUpdateElement,
   onAddManhole,
   onAddConduit,
   onAddWetWell,
@@ -374,6 +376,26 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         </div>`,
         { sticky: true }
       );
+
+      // Flow direction arrow at t = 0.65 along force main (so it never overlaps pump at t = 0.25)
+      const fmLat = c1[0] + (c2[0] - c1[0]) * 0.65;
+      const fmLng = c1[1] + (c2[1] - c1[1]) * 0.65;
+      const angle = (Math.atan2(c2[0] - c1[0], c2[1] - c1[1]) * 180) / Math.PI;
+
+      const fmArrowIcon = L.divIcon({
+        className: 'fm-flow-arrow',
+        html: `
+          <div style="transform: rotate(${-angle + 90}deg); width: 14px; height: 14px; display: flex; align-items: center; justify-content: center;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="#a855f7" stroke="#0a0a0a" stroke-width="2">
+              <polygon points="12,2 22,22 12,17 2,22"/>
+            </svg>
+          </div>
+        `,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+      });
+
+      L.marker([fmLat, fmLng], { icon: fmArrowIcon, interactive: false }).addTo(arrowsLayer);
     });
 
     // 3. Draw Pumps
@@ -382,10 +404,12 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
       const c2 = nodeCoords.get(pmp.endNodeId);
       if (!c1 || !c2) return;
 
-      const midLat = (c1[0] + c2[0]) / 2;
-      const midLng = (c1[1] + c2[1]) / 2;
+      // Position pump at t = 0.25 (closer to lift station/suction wet well) so it NEVER overlaps with force main arrow (t = 0.65) or midpoint
+      const pumpLat = c1[0] + (c2[0] - c1[0]) * 0.25;
+      const pumpLng = c1[1] + (c2[1] - c1[1]) * 0.25;
       const isSelected = selectedElement?.id === pmp.id;
       const isRunning = pmp.status === 'ON';
+      const isDraggablePump = isSelected && activeTool === 'select';
 
       const pumpLine = L.polyline([c1, c2], {
         color: isRunning ? '#f59e0b' : '#525252',
@@ -403,26 +427,50 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         className: 'pump-marker-icon',
         html: `
           <div style="
-            width: 28px; height: 28px; border-radius: 50%;
-            background: #171717; border: 2px solid ${isSelected ? '#fbbf24' : isRunning ? '#10b981' : '#ef4444'};
+            width: 30px; height: 30px; border-radius: 50%;
+            background: #111; border: 2.5px solid ${isSelected ? '#fbbf24' : isRunning ? '#10b981' : '#ef4444'};
             display: flex; align-items: center; justify-content: center;
-            box-shadow: ${isRunning ? '0 0 10px rgba(16,185,129,0.35)' : '0 2px 6px rgba(0,0,0,0.7)'};
-            cursor: pointer; color: ${isRunning ? '#10b981' : '#737373'};
+            box-shadow: ${isSelected ? '0 0 14px rgba(251, 191, 36, 0.8)' : isRunning ? '0 0 12px rgba(16,185,129,0.45)' : '0 2px 6px rgba(0,0,0,0.8)'};
+            cursor: ${isDraggablePump ? 'grab' : 'pointer'}; color: ${isRunning ? '#10b981' : '#ef4444'};
             position: relative;
           ">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="8" fill="#1e1e1e" />
+              <polygon points="9,8 16,12 9,16" fill="currentColor" stroke="none"/>
+            </svg>
             <div style="
-              position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%;
-              background: ${isRunning ? '#10b981' : '#ef4444'}; border: 1px solid #171717;
-              box-shadow: 0 0 4px ${isRunning ? '#34d399' : '#f87171'};
-            "></div>
+              position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%);
+              background: #0a0a0a; border: 1px solid ${isRunning ? '#10b981' : '#ef4444'};
+              color: ${isRunning ? '#34d399' : '#f87171'}; font-size: 8px; font-weight: bold;
+              padding: 0 3px; border-radius: 3px; line-height: 11px; font-family: monospace;
+              white-space: nowrap; pointer-events: none;
+            ">PUMP</div>
           </div>
         `,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
       });
 
-      const pumpMarker = L.marker([midLat, midLng], { icon: pumpIcon }).addTo(nodesLayer);
+      const pumpMarker = L.marker([pumpLat, pumpLng], {
+        icon: pumpIcon,
+        draggable: isDraggablePump,
+        zIndexOffset: isSelected ? 1500 : 500,
+      }).addTo(nodesLayer);
+
+      if (isDraggablePump) {
+        pumpMarker.on('dragend', (e) => {
+          const newPos = (e.target as L.Marker).getLatLng();
+          const dLat = newPos.lat - pumpLat;
+          const dLng = newPos.lng - pumpLng;
+          const n1 = network.wetWells.find((w) => w.id === pmp.startNodeId) || network.manholes.find((m) => m.id === pmp.startNodeId);
+          const n2 = network.outfalls.find((o) => o.id === pmp.endNodeId) || network.manholes.find((m) => m.id === pmp.endNodeId);
+          if (n1 && n2 && onUpdateElement) {
+            onUpdateElement({ ...n1, lat: Math.round((n1.lat + dLat) * 1000000) / 1000000, lng: Math.round((n1.lng + dLng) * 1000000) / 1000000 });
+            onUpdateElement({ ...n2, lat: Math.round((n2.lat + dLat) * 1000000) / 1000000, lng: Math.round((n2.lng + dLng) * 1000000) / 1000000 });
+          }
+        });
+      }
+
       pumpMarker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         if (activeTool === 'delete') onDeleteElement(pmp.id, 'pump');
@@ -445,15 +493,17 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     network.wetWells.forEach((w) => {
       const isSelected = selectedElement?.id === w.id;
       const isPending = pendingStartNode === w.id;
+      const isDraggableWW = isSelected && activeTool === 'select';
 
       const wetWellIcon = L.divIcon({
         className: 'wetwell-marker',
         html: `
           <div style="
             width: 28px; height: 28px; border-radius: 4px;
-            background: #0ea5e9; border: 2px solid ${isSelected || isPending ? '#fbbf24' : '#ffffff'};
+            background: #0ea5e9; border: ${isSelected ? '3px solid #fbbf24' : isPending ? '2px solid #fbbf24' : '2px solid #ffffff'};
             display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.6); cursor: pointer; color: white;
+            box-shadow: ${isSelected ? '0 0 14px rgba(251, 191, 36, 0.8)' : '0 2px 8px rgba(0,0,0,0.6)'};
+            cursor: ${isDraggableWW ? 'grab' : 'pointer'}; color: white;
             font-size: 10px; font-weight: bold;
           ">
             W
@@ -463,7 +513,35 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         iconAnchor: [14, 14],
       });
 
-      const marker = L.marker([w.lat, w.lng], { icon: wetWellIcon }).addTo(nodesLayer);
+      const marker = L.marker([w.lat, w.lng], {
+        icon: wetWellIcon,
+        draggable: isDraggableWW,
+        zIndexOffset: isSelected ? 1500 : 400,
+      }).addTo(nodesLayer);
+
+      if (isDraggableWW) {
+        marker.on('dragend', async (e) => {
+          const newPos = (e.target as L.Marker).getLatLng();
+          const newLat = Math.round(newPos.lat * 1000000) / 1000000;
+          const newLng = Math.round(newPos.lng * 1000000) / 1000000;
+          if (onUpdateElement) {
+            onUpdateElement({ ...w, lat: newLat, lng: newLng });
+            const newElev = await sampleWastewaterGroundElevation(newLat, newLng);
+            if (newElev !== null) {
+              const roundedRim = Math.round(newElev * 10) / 10;
+              const depth = Math.max(2, w.rimElevation - w.floorElevation);
+              onUpdateElement({
+                ...w,
+                lat: newLat,
+                lng: newLng,
+                rimElevation: roundedRim,
+                floorElevation: Math.round((roundedRim - depth) * 10) / 10,
+              });
+            }
+          }
+        });
+      }
+
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         handleNodeClick(w.id, 'wet-well');
@@ -484,15 +562,17 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     network.outfalls.forEach((o) => {
       const isSelected = selectedElement?.id === o.id;
       const isPending = pendingStartNode === o.id;
+      const isDraggableOut = isSelected && activeTool === 'select';
 
       const outfallIcon = L.divIcon({
         className: 'outfall-marker',
         html: `
           <div style="
             width: 28px; height: 28px; border-radius: 6px;
-            background: #10b981; border: 2px solid ${isSelected || isPending ? '#fbbf24' : '#ffffff'};
+            background: #10b981; border: ${isSelected ? '3px solid #fbbf24' : isPending ? '2px solid #fbbf24' : '2px solid #ffffff'};
             display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.6); cursor: pointer; color: #0a0a0a;
+            box-shadow: ${isSelected ? '0 0 14px rgba(251, 191, 36, 0.8)' : '0 2px 8px rgba(0,0,0,0.6)'};
+            cursor: ${isDraggableOut ? 'grab' : 'pointer'}; color: #0a0a0a;
             font-size: 9px; font-weight: bold;
           ">
             OUT
@@ -502,7 +582,34 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         iconAnchor: [14, 14],
       });
 
-      const marker = L.marker([o.lat, o.lng], { icon: outfallIcon }).addTo(nodesLayer);
+      const marker = L.marker([o.lat, o.lng], {
+        icon: outfallIcon,
+        draggable: isDraggableOut,
+        zIndexOffset: isSelected ? 1500 : 400,
+      }).addTo(nodesLayer);
+
+      if (isDraggableOut) {
+        marker.on('dragend', async (e) => {
+          const newPos = (e.target as L.Marker).getLatLng();
+          const newLat = Math.round(newPos.lat * 1000000) / 1000000;
+          const newLng = Math.round(newPos.lng * 1000000) / 1000000;
+          if (onUpdateElement) {
+            onUpdateElement({ ...o, lat: newLat, lng: newLng });
+            const newElev = await sampleWastewaterGroundElevation(newLat, newLng);
+            if (newElev !== null) {
+              const inv = Math.round((newElev - 1.0) * 10) / 10;
+              onUpdateElement({
+                ...o,
+                lat: newLat,
+                lng: newLng,
+                invertElevation: inv,
+                receivingWaterElevation: Math.round((inv + 0.5) * 10) / 10,
+              });
+            }
+          }
+        });
+      }
+
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         handleNodeClick(o.id, 'outfall');
@@ -523,6 +630,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     network.manholes.forEach((m) => {
       const isSelected = selectedElement?.id === m.id;
       const isPending = pendingStartNode === m.id;
+      const isDraggableMH = isSelected && activeTool === 'select';
 
       let nodeColor = '#3b82f6';
       if (thematicDisplay === 'depth') {
@@ -542,8 +650,9 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         html: `
           <div style="
             width: ${size}px; height: ${size}px; border-radius: 50%;
-            background: ${nodeColor}; border: 2px solid ${isSelected || isPending ? '#fbbf24' : '#ffffff'};
-            box-shadow: 0 2px 6px rgba(0,0,0,0.8); cursor: pointer;
+            background: ${nodeColor}; border: ${isSelected ? '3px solid #fbbf24' : isPending ? '2px solid #fbbf24' : '2px solid #ffffff'};
+            box-shadow: ${isSelected ? '0 0 14px rgba(251, 191, 36, 0.8)' : '0 2px 6px rgba(0,0,0,0.8)'};
+            cursor: ${isDraggableMH ? 'grab' : 'pointer'};
             transition: transform 0.1s ease;
           "></div>
         `,
@@ -551,7 +660,35 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
         iconAnchor: [size / 2, size / 2],
       });
 
-      const marker = L.marker([m.lat, m.lng], { icon: manholeIcon }).addTo(nodesLayer);
+      const marker = L.marker([m.lat, m.lng], {
+        icon: manholeIcon,
+        draggable: isDraggableMH,
+        zIndexOffset: isSelected ? 1500 : 300,
+      }).addTo(nodesLayer);
+
+      if (isDraggableMH) {
+        marker.on('dragend', async (e) => {
+          const newPos = (e.target as L.Marker).getLatLng();
+          const newLat = Math.round(newPos.lat * 1000000) / 1000000;
+          const newLng = Math.round(newPos.lng * 1000000) / 1000000;
+          if (onUpdateElement) {
+            onUpdateElement({ ...m, lat: newLat, lng: newLng });
+            const newElev = await sampleWastewaterGroundElevation(newLat, newLng);
+            if (newElev !== null) {
+              const roundedRim = Math.round(newElev * 10) / 10;
+              const depth = m.depth ?? 2.5;
+              onUpdateElement({
+                ...m,
+                lat: newLat,
+                lng: newLng,
+                rimElevation: roundedRim,
+                invertElevation: Math.round((roundedRim - depth) * 10) / 10,
+              });
+            }
+          }
+        });
+      }
+
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         handleNodeClick(m.id, 'manhole');
@@ -580,6 +717,7 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
     handleNodeClick,
     onDeleteElement,
     onSelectElement,
+    onUpdateElement,
   ]);
 
   // Center on network elements if any exist

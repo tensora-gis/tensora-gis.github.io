@@ -11,7 +11,7 @@ import {
   WaterReservoir,
   WaterTank,
 } from '../../types/waterDistribution';
-import { calculateGeodesicDistanceM } from '../../utils/waterTerrainService';
+import { calculateGeodesicDistanceM, sampleGroundElevation } from '../../utils/waterTerrainService';
 import { Layers, ZoomIn, ZoomOut, Crosshair, AlertTriangle } from 'lucide-react';
 
 interface WaterMapViewportProps {
@@ -20,6 +20,7 @@ interface WaterMapViewportProps {
   thematicDisplay: MapThematicDisplay;
   selectedElement: NetworkElement | null;
   onSelectElement: (elem: NetworkElement | null) => void;
+  onUpdateElement?: (updated: NetworkElement) => void;
   onAddJunction: (lat: number, lng: number) => void;
   onAddPipe: (startNodeId: string, endNodeId: string) => void;
   onAddReservoir: (lat: number, lng: number) => void;
@@ -38,6 +39,7 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
   thematicDisplay,
   selectedElement,
   onSelectElement,
+  onUpdateElement,
   onAddJunction,
   onAddPipe,
   onAddReservoir,
@@ -345,30 +347,55 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         else onSelectElement(pmp);
       });
 
+      const isDraggablePump = isSelected && activeTool === 'select';
       const pumpIcon = L.divIcon({
         className: 'pump-marker-icon',
         html: `
           <div style="
-            width: 28px; height: 28px; border-radius: 50%;
-            background: #171717; border: 2px solid ${isSelected ? '#fbbf24' : isRunning ? '#10b981' : '#ef4444'};
+            width: 30px; height: 30px; border-radius: 50%;
+            background: #111; border: 2.5px solid ${isSelected ? '#fbbf24' : isRunning ? '#10b981' : '#ef4444'};
             display: flex; align-items: center; justify-content: center;
-            box-shadow: ${isRunning ? '0 0 10px rgba(16,185,129,0.35)' : '0 2px 6px rgba(0,0,0,0.7)'};
-            cursor: pointer; color: ${isRunning ? '#10b981' : '#737373'};
+            box-shadow: ${isRunning ? '0 0 12px rgba(16,185,129,0.45)' : '0 2px 6px rgba(0,0,0,0.8)'};
+            cursor: ${isDraggablePump ? 'grab' : 'pointer'}; color: ${isRunning ? '#10b981' : '#ef4444'};
             position: relative;
           ">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="8" fill="#1e1e1e" />
+              <polygon points="9,8 16,12 9,16" fill="currentColor" stroke="none"/>
+            </svg>
             <div style="
-              position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 50%;
-              background: ${isRunning ? '#10b981' : '#ef4444'}; border: 1px solid #171717;
-              box-shadow: 0 0 4px ${isRunning ? '#34d399' : '#f87171'};
-            "></div>
+              position: absolute; bottom: -8px; left: 50%; transform: translateX(-50%);
+              background: #0a0a0a; border: 1px solid ${isRunning ? '#10b981' : '#ef4444'};
+              color: ${isRunning ? '#34d399' : '#f87171'}; font-size: 8px; font-weight: bold;
+              padding: 0 3px; border-radius: 3px; line-height: 11px; font-family: monospace;
+              white-space: nowrap; pointer-events: none;
+            ">PUMP</div>
           </div>
         `,
-        iconSize: [28, 28],
-        iconAnchor: [14, 14],
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
       });
 
-      const pumpMarker = L.marker([midLat, midLng], { icon: pumpIcon }).addTo(nodesLayer);
+      const pumpMarker = L.marker([midLat, midLng], {
+        icon: pumpIcon,
+        draggable: isDraggablePump,
+        zIndexOffset: isSelected ? 1200 : 500,
+      }).addTo(nodesLayer);
+
+      if (isDraggablePump) {
+        pumpMarker.on('dragend', (e) => {
+          const newPos = (e.target as L.Marker).getLatLng();
+          const dLat = newPos.lat - midLat;
+          const dLng = newPos.lng - midLng;
+          const n1 = network.junctions.find((j) => j.id === pmp.startNodeId);
+          const n2 = network.junctions.find((j) => j.id === pmp.endNodeId);
+          if (n1 && n2 && onUpdateElement) {
+            onUpdateElement({ ...n1, lat: Math.round((n1.lat + dLat) * 1000000) / 1000000, lng: Math.round((n1.lng + dLng) * 1000000) / 1000000 });
+            onUpdateElement({ ...n2, lat: Math.round((n2.lat + dLat) * 1000000) / 1000000, lng: Math.round((n2.lng + dLng) * 1000000) / 1000000 });
+          }
+        });
+      }
+
       pumpMarker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         if (activeTool === 'delete') onDeleteElement(pmp.id, 'pump');
@@ -398,6 +425,7 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
       const midLng = (c1[1] + c2[1]) / 2;
       const isSelected = selectedElement?.id === v.id;
       const isActive = v.status !== 'CLOSED';
+      const isDraggableValve = isSelected && activeTool === 'select';
 
       const valveLine = L.polyline([c1, c2], {
         color: isActive ? '#06b6d4' : '#525252',
@@ -418,7 +446,7 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
             width: 26px; height: 26px; border-radius: 4px;
             background: #171717; border: 2px solid ${isSelected ? '#fbbf24' : isActive ? '#06b6d4' : '#ef4444'};
             display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.7); cursor: pointer; color: ${isActive ? '#06b6d4' : '#737373'};
+            box-shadow: 0 2px 6px rgba(0,0,0,0.7); cursor: ${isDraggableValve ? 'grab' : 'pointer'}; color: ${isActive ? '#06b6d4' : '#737373'};
             font-family: monospace; font-size: 8px; font-weight: bold;
           ">
             ${v.valveType}
@@ -428,7 +456,26 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         iconAnchor: [13, 13],
       });
 
-      const valveMarker = L.marker([midLat, midLng], { icon: valveIcon }).addTo(nodesLayer);
+      const valveMarker = L.marker([midLat, midLng], {
+        icon: valveIcon,
+        draggable: isDraggableValve,
+        zIndexOffset: isSelected ? 1200 : 500,
+      }).addTo(nodesLayer);
+
+      if (isDraggableValve) {
+        valveMarker.on('dragend', (e) => {
+          const newPos = (e.target as L.Marker).getLatLng();
+          const dLat = newPos.lat - midLat;
+          const dLng = newPos.lng - midLng;
+          const n1 = network.junctions.find((j) => j.id === v.startNodeId);
+          const n2 = network.junctions.find((j) => j.id === v.endNodeId);
+          if (n1 && n2 && onUpdateElement) {
+            onUpdateElement({ ...n1, lat: Math.round((n1.lat + dLat) * 1000000) / 1000000, lng: Math.round((n1.lng + dLng) * 1000000) / 1000000 });
+            onUpdateElement({ ...n2, lat: Math.round((n2.lat + dLat) * 1000000) / 1000000, lng: Math.round((n2.lng + dLng) * 1000000) / 1000000 });
+          }
+        });
+      }
+
       valveMarker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         if (activeTool === 'delete') onDeleteElement(v.id, 'valve');
@@ -451,15 +498,17 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
     network.reservoirs.forEach((r) => {
       const isSelected = selectedElement?.id === r.id;
       const isPending = pendingStartNode === r.id;
+      const isDraggableRes = isSelected && activeTool === 'select';
 
       const reservoirIcon = L.divIcon({
         className: 'reservoir-marker',
         html: `
           <div style="
             width: 28px; height: 28px; border-radius: 4px;
-            background: #0369a1; border: 2px solid ${isSelected || isPending ? '#fbbf24' : '#38bdf8'};
+            background: #0369a1; border: ${isSelected ? '3px solid #fbbf24' : isPending ? '2px solid #fbbf24' : '2px solid #38bdf8'};
             display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.6); cursor: pointer; color: white;
+            box-shadow: ${isSelected ? '0 0 14px rgba(251, 191, 36, 0.8)' : '0 2px 8px rgba(0,0,0,0.6)'};
+            cursor: ${isDraggableRes ? 'grab' : 'pointer'}; color: white;
           ">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12c2-2 4-2 6 0s4 2 6 0 4-2 6 0M2 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/></svg>
           </div>
@@ -468,7 +517,28 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         iconAnchor: [14, 14],
       });
 
-      const marker = L.marker([r.lat, r.lng], { icon: reservoirIcon }).addTo(nodesLayer);
+      const marker = L.marker([r.lat, r.lng], {
+        icon: reservoirIcon,
+        draggable: isDraggableRes,
+        zIndexOffset: isSelected ? 1500 : 400,
+      }).addTo(nodesLayer);
+
+      if (isDraggableRes) {
+        marker.on('dragend', async (e) => {
+          const newPos = (e.target as L.Marker).getLatLng();
+          const newLat = Math.round(newPos.lat * 1000000) / 1000000;
+          const newLng = Math.round(newPos.lng * 1000000) / 1000000;
+          if (onUpdateElement) {
+            onUpdateElement({ ...r, lat: newLat, lng: newLng });
+            const newElev = await sampleGroundElevation(newLat, newLng);
+            if (newElev !== null) {
+              const rounded = Math.round(newElev * 10) / 10;
+              onUpdateElement({ ...r, lat: newLat, lng: newLng, elevation: rounded, totalHead: Math.round((rounded + 15) * 10) / 10 });
+            }
+          }
+        });
+      }
+
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         handleNodeClick(r.id, 'reservoir');
@@ -489,15 +559,17 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
     network.tanks.forEach((t) => {
       const isSelected = selectedElement?.id === t.id;
       const isPending = pendingStartNode === t.id;
+      const isDraggableTank = isSelected && activeTool === 'select';
 
       const tankIcon = L.divIcon({
         className: 'tank-marker',
         html: `
           <div style="
             width: 28px; height: 28px; border-radius: 50%;
-            background: #0f766e; border: 2px solid ${isSelected || isPending ? '#fbbf24' : '#2dd4bf'};
+            background: #0f766e; border: ${isSelected ? '3px solid #fbbf24' : isPending ? '2px solid #fbbf24' : '2px solid #2dd4bf'};
             display: flex; align-items: center; justify-content: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.6); cursor: pointer; color: white;
+            box-shadow: ${isSelected ? '0 0 14px rgba(251, 191, 36, 0.8)' : '0 2px 8px rgba(0,0,0,0.6)'};
+            cursor: ${isDraggableTank ? 'grab' : 'pointer'}; color: white;
           ">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
           </div>
@@ -506,7 +578,27 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         iconAnchor: [14, 14],
       });
 
-      const marker = L.marker([t.lat, t.lng], { icon: tankIcon }).addTo(nodesLayer);
+      const marker = L.marker([t.lat, t.lng], {
+        icon: tankIcon,
+        draggable: isDraggableTank,
+        zIndexOffset: isSelected ? 1500 : 400,
+      }).addTo(nodesLayer);
+
+      if (isDraggableTank) {
+        marker.on('dragend', async (e) => {
+          const newPos = (e.target as L.Marker).getLatLng();
+          const newLat = Math.round(newPos.lat * 1000000) / 1000000;
+          const newLng = Math.round(newPos.lng * 1000000) / 1000000;
+          if (onUpdateElement) {
+            onUpdateElement({ ...t, lat: newLat, lng: newLng });
+            const newElev = await sampleGroundElevation(newLat, newLng);
+            if (newElev !== null) {
+              onUpdateElement({ ...t, lat: newLat, lng: newLng, elevation: Math.round(newElev * 10) / 10 });
+            }
+          }
+        });
+      }
+
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         handleNodeClick(t.id, 'tank');
@@ -528,6 +620,7 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
     network.junctions.forEach((j) => {
       const isSelected = selectedElement?.id === j.id;
       const isPending = pendingStartNode === j.id;
+      const isDraggableJunction = isSelected && activeTool === 'select';
 
       // Thematic node color
       let nodeColor = '#3b82f6';
@@ -560,8 +653,9 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         html: `
           <div style="
             width: ${size}px; height: ${size}px; border-radius: 50%;
-            background: ${nodeColor}; border: 2px solid ${isSelected || isPending ? '#fbbf24' : '#ffffff'};
-            box-shadow: 0 2px 6px rgba(0,0,0,0.8); cursor: pointer;
+            background: ${nodeColor}; border: ${isSelected ? '3px solid #fbbf24' : isPending ? '2px solid #fbbf24' : '2px solid #ffffff'};
+            box-shadow: ${isSelected ? '0 0 14px rgba(251, 191, 36, 0.8)' : '0 2px 6px rgba(0,0,0,0.8)'};
+            cursor: ${isDraggableJunction ? 'grab' : 'pointer'};
             transition: transform 0.1s ease;
           "></div>
         `,
@@ -569,7 +663,27 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         iconAnchor: [size / 2, size / 2],
       });
 
-      const marker = L.marker([j.lat, j.lng], { icon: junctionIcon }).addTo(nodesLayer);
+      const marker = L.marker([j.lat, j.lng], {
+        icon: junctionIcon,
+        draggable: isDraggableJunction,
+        zIndexOffset: isSelected ? 1500 : 300,
+      }).addTo(nodesLayer);
+
+      if (isDraggableJunction) {
+        marker.on('dragend', async (e) => {
+          const newPos = (e.target as L.Marker).getLatLng();
+          const newLat = Math.round(newPos.lat * 1000000) / 1000000;
+          const newLng = Math.round(newPos.lng * 1000000) / 1000000;
+          if (onUpdateElement) {
+            onUpdateElement({ ...j, lat: newLat, lng: newLng });
+            const newElev = await sampleGroundElevation(newLat, newLng);
+            if (newElev !== null) {
+              onUpdateElement({ ...j, lat: newLat, lng: newLng, elevation: Math.round(newElev * 10) / 10 });
+            }
+          }
+        });
+      }
+
       marker.on('click', (e) => {
         L.DomEvent.stopPropagation(e);
         handleNodeClick(j.id, 'junction');
@@ -595,6 +709,7 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
     handleNodeClick,
     onDeleteElement,
     onSelectElement,
+    onUpdateElement,
   ]);
 
   // Center on network elements if any exist
