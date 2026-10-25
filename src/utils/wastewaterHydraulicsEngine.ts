@@ -392,9 +392,15 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
     }
   });
 
-  // 5. Pumping Station Hydraulics
+  // 5. Pumping Station Hydraulics & Wet Well Continuity
   let totalPumpPowerKw = 0;
   pumps.forEach((p) => {
+    const suctionInflow = cumulativeFlowAtNode.get(p.startNodeId) || 0;
+    const wetWell = wetWells.find((w) => w.id === p.startNodeId);
+    if (wetWell) {
+      wetWell.inflowLs = Math.round(suctionInflow * 100) / 100;
+    }
+
     if (p.status === 'ON') {
       const qM3s = (p.ratedDischargeLs || 30) / 1000;
       const hM = p.dynamicHeadM || 25;
@@ -402,6 +408,12 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
       const kw = (9.81 * qM3s * hM) / eff;
       p.powerKw = Math.round(kw * 10) / 10;
       totalPumpPowerKw += p.powerKw;
+
+      // Transfer pumped sanitary flows downstream to target node (outfall or confluence chamber)
+      const pumpedFlowLs = suctionInflow > 0 ? suctionInflow : (p.ratedDischargeLs || 30);
+      const targetId = p.endNodeId;
+      const existing = cumulativeFlowAtNode.get(targetId) || 0;
+      cumulativeFlowAtNode.set(targetId, existing + pumpedFlowLs);
     } else {
       p.powerKw = 0;
     }
@@ -413,7 +425,10 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
     const diaM = Math.max(0.05, (fm.diameterMm || 150) / 1000);
     const areaM2 = (Math.PI * diaM * diaM) / 4;
     const pump = pumps.find((p) => p.endNodeId === fm.startNodeId || p.startNodeId === fm.startNodeId);
-    const flowLs = pump ? (pump.status === 'ON' ? (pump.ratedDischargeLs || 30) : 0) : 25;
+    const suctionInflow = pump ? (cumulativeFlowAtNode.get(pump.startNodeId) || 0) : 0;
+    const flowLs = pump
+      ? (pump.status === 'ON' ? (suctionInflow > 0 ? suctionInflow : pump.ratedDischargeLs || 30) : 0)
+      : (cumulativeFlowAtNode.get(fm.startNodeId) || 25);
     const flowM3s = flowLs / 1000;
     fm.velocityMs = flowLs > 0 ? Math.round((flowM3s / areaM2) * 100) / 100 : 0;
 
@@ -627,7 +642,10 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
     }
 
     const wireToWaterPowerKw = connectedPump?.powerKw || 15.0;
-    const operatingHoursPerDay = Math.min(24, Math.max(2, (inflowLs / qPumpM3s / 1000) * 24));
+    const operatingHoursPerDay =
+      qPumpM3s > 0 && inflowLs > 0
+        ? Math.min(24, Math.max(1, (inflowLs / (qPumpM3s * 1000)) * 24))
+        : 0;
     const dailyKwh = Math.round((wireToWaterPowerKw * operatingHoursPerDay) * 10) / 10;
     const annualCost = Math.round(dailyKwh * 365 * 0.12); // $0.12/kWh industrial electricity tariff
 

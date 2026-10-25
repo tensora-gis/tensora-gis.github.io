@@ -30,7 +30,10 @@ import {
   WastewaterForceMain,
   WastewaterOutfall,
 } from '../types/wastewater';
-import { createMunicipalWastewaterNetwork } from '../data/sampleWastewaterNetworks';
+import {
+  createMunicipalWastewaterNetwork,
+  ARBITRARY_WASTEWATER_DEMOS,
+} from '../data/sampleWastewaterNetworks';
 import { simulateWastewaterNetwork } from '../utils/wastewaterHydraulicsEngine';
 import { downloadWastewaterExcel } from '../utils/wastewaterExcelExport';
 import {
@@ -47,7 +50,25 @@ import { WastewaterFlexTables } from './wastewater/WastewaterFlexTables';
 import { WastewaterProfileViewer } from './wastewater/WastewaterProfileViewer';
 import { WastewaterSimulationResultsModal } from './wastewater/WastewaterSimulationResultsModal';
 
+// Helper to generate guaranteed non-colliding sequential IDs even across delete/add operations
+function getNextId(prefix: string, existingIds: string[]): string {
+  let maxNum = 0;
+  for (const id of existingIds) {
+    if (id.startsWith(prefix)) {
+      const numStr = id.slice(prefix.length);
+      const n = parseInt(numStr, 10);
+      if (!isNaN(n) && n > maxNum) {
+        maxNum = n;
+      }
+    }
+  }
+  return `${prefix}${maxNum + 1}`;
+}
+
 export const WastewaterModelling: React.FC = () => {
+  // Demo Model Cycle Index
+  const [demoIndex, setDemoIndex] = useState(0);
+
   // Network Model State
   const [network, setNetwork] = useState<WastewaterNetwork>(() =>
     createMunicipalWastewaterNetwork()
@@ -144,7 +165,7 @@ export const WastewaterModelling: React.FC = () => {
   // Element CRUD Operations (identical structure to Water Distribution Modelling)
   const handleAddManhole = useCallback(
     async (lat: number, lng: number) => {
-      const newId = `MH-${network.manholes.length + 1}`;
+      const newId = getNextId('MH-', network.manholes.map((m) => m.id));
       const defaultDepth = 2.5;
       const initialRim = 171.0;
 
@@ -221,7 +242,7 @@ export const WastewaterModelling: React.FC = () => {
           : 167.5;
       const slope = Math.round(((upInv - dnInv) / Math.max(1, length)) * 10000) / 10000;
 
-      const newId = `CO-${network.conduits.length + 1}`;
+      const newId = getNextId('CO-', network.conduits.map((c) => c.id));
       const newConduit: WastewaterConduit = {
         id: newId,
         label: `Conduit ${newId}`,
@@ -248,7 +269,7 @@ export const WastewaterModelling: React.FC = () => {
 
   const handleAddWetWell = useCallback(
     async (lat: number, lng: number) => {
-      const newId = `WW-${network.wetWells.length + 1}`;
+      const newId = getNextId('WW-', network.wetWells.map((w) => w.id));
       const newWetWell: WastewaterWetWell = {
         id: newId,
         label: `Wet Well ${newId}`,
@@ -299,7 +320,7 @@ export const WastewaterModelling: React.FC = () => {
 
   const handleAddPump = useCallback(
     (startNodeId: string, endNodeId: string) => {
-      const newId = `PMP-${network.pumps.length + 1}`;
+      const newId = getNextId('PMP-', network.pumps.map((p) => p.id));
       const newPump: WastewaterPump = {
         id: newId,
         label: `Sewage Pump ${newId}`,
@@ -326,10 +347,10 @@ export const WastewaterModelling: React.FC = () => {
     async (lat: number, lng: number) => {
       // Create wet well and discharge outfall ~95 meters apart to avoid overlapping
       const deltaLat = 0.00085;
-      const wwId = `WW-${network.wetWells.length + 1}`;
-      const outId = `OUT-${network.outfalls.length + 1}`;
-      const pumpId = `PMP-${network.pumps.length + 1}`;
-      const fmId = `FM-${network.forceMains.length + 1}`;
+      const wwId = getNextId('WW-', network.wetWells.map((w) => w.id));
+      const outId = getNextId('OUT-', network.outfalls.map((o) => o.id));
+      const pumpId = getNextId('PMP-', network.pumps.map((p) => p.id));
+      const fmId = getNextId('FM-', network.forceMains.map((f) => f.id));
 
       const ww: WastewaterWetWell = {
         id: wwId,
@@ -440,7 +461,7 @@ export const WastewaterModelling: React.FC = () => {
           ? Math.max(5, calculateWastewaterDistanceM(start.lat, start.lng, end.lat, end.lng))
           : 150;
 
-      const newId = `FM-${network.forceMains.length + 1}`;
+      const newId = getNextId('FM-', network.forceMains.map((f) => f.id));
       const newFm: WastewaterForceMain = {
         id: newId,
         label: `Force Main ${newId}`,
@@ -464,7 +485,7 @@ export const WastewaterModelling: React.FC = () => {
 
   const handleAddOutfall = useCallback(
     async (lat: number, lng: number) => {
-      const newId = `OUT-${network.outfalls.length + 1}`;
+      const newId = getNextId('OUT-', network.outfalls.map((o) => o.id));
       const newOutfall: WastewaterOutfall = {
         id: newId,
         label: `Outfall ${newId}`,
@@ -639,46 +660,61 @@ export const WastewaterModelling: React.FC = () => {
   const handleDeleteElement = useCallback(
     (id: string, type: WastewaterNetworkElement['type']) => {
       setNetwork((prev) => {
+        let next: WastewaterNetwork = prev;
         if (type === 'manhole') {
-          return {
+          next = {
             ...prev,
             manholes: prev.manholes.filter((m) => m.id !== id),
             conduits: prev.conduits.filter((c) => c.startNodeId !== id && c.endNodeId !== id),
+            pumps: prev.pumps.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
+            forceMains: prev.forceMains.filter((f) => f.startNodeId !== id && f.endNodeId !== id),
           };
-        }
-        if (type === 'conduit') {
-          return { ...prev, conduits: prev.conduits.filter((c) => c.id !== id) };
-        }
-        if (type === 'wet-well') {
-          return {
+        } else if (type === 'conduit') {
+          next = { ...prev, conduits: prev.conduits.filter((c) => c.id !== id) };
+        } else if (type === 'wet-well') {
+          next = {
             ...prev,
             wetWells: prev.wetWells.filter((w) => w.id !== id),
             conduits: prev.conduits.filter((c) => c.startNodeId !== id && c.endNodeId !== id),
             pumps: prev.pumps.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
+            forceMains: prev.forceMains.filter((f) => f.startNodeId !== id && f.endNodeId !== id),
           };
-        }
-        if (type === 'pump') {
-          return { ...prev, pumps: prev.pumps.filter((p) => p.id !== id) };
-        }
-        if (type === 'force-main') {
-          return { ...prev, forceMains: prev.forceMains.filter((f) => f.id !== id) };
-        }
-        if (type === 'outfall') {
-          return {
+        } else if (type === 'pump') {
+          next = { ...prev, pumps: prev.pumps.filter((p) => p.id !== id) };
+        } else if (type === 'force-main') {
+          next = { ...prev, forceMains: prev.forceMains.filter((f) => f.id !== id) };
+        } else if (type === 'outfall') {
+          next = {
             ...prev,
             outfalls: prev.outfalls.filter((o) => o.id !== id),
             conduits: prev.conduits.filter((c) => c.startNodeId !== id && c.endNodeId !== id),
+            pumps: prev.pumps.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
             forceMains: prev.forceMains.filter((f) => f.startNodeId !== id && f.endNodeId !== id),
           };
         }
-        return prev;
+
+        const totalNodes = next.manholes.length + next.wetWells.length + next.outfalls.length;
+        if (totalNodes > 0 && simulationSummary) {
+          const { updatedNetwork, summary } = simulateWastewaterNetwork(next);
+          queueMicrotask(() => {
+            setSimulationSummary(summary);
+          });
+          return updatedNetwork;
+        } else if (totalNodes === 0) {
+          queueMicrotask(() => {
+            setSimulationSummary(null);
+          });
+        }
+        return next;
       });
+
+      setProfileRouteNodeIds((prev) => prev.filter((nodeId) => nodeId !== id));
 
       if (selectedElement?.id === id) {
         setSelectedElement(null);
       }
     },
-    [selectedElement]
+    [selectedElement, simulationSummary]
   );
 
   // EPA SWMM / Sewer INP Export
@@ -707,6 +743,8 @@ export const WastewaterModelling: React.FC = () => {
         const { updatedNetwork, summary } = simulateWastewaterNetwork(parsed);
         setNetwork(updatedNetwork);
         setSimulationSummary(summary);
+        setSelectedElement(null);
+        setProfileRouteNodeIds([]);
       } catch (err) {
         console.error('Error importing SWMM INP file:', err);
       }
@@ -714,14 +752,17 @@ export const WastewaterModelling: React.FC = () => {
     []
   );
 
-  // Load Demo Model
+  // Load Arbitrary Demo Model (Cycles through 4 engineering configurations)
   const handleLoadDemo = useCallback(() => {
-    const demo = createMunicipalWastewaterNetwork();
+    const demoDef = ARBITRARY_WASTEWATER_DEMOS[demoIndex % ARBITRARY_WASTEWATER_DEMOS.length];
+    setDemoIndex((prev) => prev + 1);
+    const demo = demoDef.createNetwork();
     const { updatedNetwork, summary } = simulateWastewaterNetwork(demo);
     setNetwork(updatedNetwork);
     setSimulationSummary(summary);
-    setProfileRouteNodeIds(['MH-1', 'MH-2', 'MH-3', 'MH-5', 'MH-6', 'WW-1', 'OUT-1']);
-  }, []);
+    setProfileRouteNodeIds(demoDef.defaultProfileRoute);
+    setSelectedElement(null);
+  }, [demoIndex]);
 
   // Clear Network
   const handleClear = useCallback(() => {
@@ -737,6 +778,7 @@ export const WastewaterModelling: React.FC = () => {
     });
     setSelectedElement(null);
     setSimulationSummary(null);
+    setProfileRouteNodeIds([]);
   }, []);
 
   const elementCounts = {
@@ -769,6 +811,7 @@ export const WastewaterModelling: React.FC = () => {
         isSamplingElevation={isSamplingElevation}
         isFlexTablesOpen={isFlexTablesOpen}
         isProfileOpen={isProfileOpen}
+        demoIndex={demoIndex}
         elementCounts={elementCounts}
       />
 

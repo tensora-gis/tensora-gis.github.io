@@ -24,8 +24,14 @@ import {
   GitCommit,
   Waves,
   Database,
-  Zap,
 } from 'lucide-react';
+
+const PumpInspectorIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2">
+    <circle cx="12" cy="12" r="8" />
+    <polygon points="9,8 16,12 9,16" fill="currentColor" stroke="none" />
+  </svg>
+);
 
 interface WaterPropertyInspectorProps {
   element: NetworkElement | null;
@@ -61,7 +67,7 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
             {element.type === 'pipe' && <GitCommit className="w-3.5 h-3.5" />}
             {element.type === 'reservoir' && <Waves className="w-3.5 h-3.5" />}
             {element.type === 'tank' && <Database className="w-3.5 h-3.5" />}
-            {element.type === 'pump' && <Zap className="w-3.5 h-3.5" />}
+            {element.type === 'pump' && <PumpInspectorIcon className="w-3.5 h-3.5" />}
             {element.type === 'valve' && <SlidersHorizontal className="w-3.5 h-3.5 text-cyan-400" />}
           </div>
           <div className="flex flex-col">

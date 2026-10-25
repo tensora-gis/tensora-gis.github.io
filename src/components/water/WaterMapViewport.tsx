@@ -62,6 +62,11 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
   const [pendingStartNode, setPendingStartNode] = useState<string | null>(null);
   const [mouseCoords, setMouseCoords] = useState<{ lat: number; lng: number } | null>(null);
 
+  // Clear any pending connection node whenever active tool changes
+  useEffect(() => {
+    setPendingStartNode(null);
+  }, [activeTool]);
+
   // ResizeObserver to ensure Leaflet handles container resizing
   useEffect(() => {
     if (!mapContainerRef.current) return;

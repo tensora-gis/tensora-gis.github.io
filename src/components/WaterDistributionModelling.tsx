@@ -44,6 +44,21 @@ import { WaterFlexTables } from './water/WaterFlexTables';
 import { WaterProfileViewer } from './water/WaterProfileViewer';
 import { WaterSimulationResultsModal } from './water/WaterSimulationResultsModal';
 
+// Helper to generate guaranteed non-colliding sequential IDs even across delete/add operations
+function getNextId(prefix: string, existingIds: string[]): string {
+  let maxNum = 0;
+  for (const id of existingIds) {
+    if (id.startsWith(prefix)) {
+      const numStr = id.slice(prefix.length);
+      const n = parseInt(numStr, 10);
+      if (!isNaN(n) && n > maxNum) {
+        maxNum = n;
+      }
+    }
+  }
+  return `${prefix}${maxNum + 1}`;
+}
+
 export const WaterDistributionModelling: React.FC = () => {
   // Network Model State
   const [network, setNetwork] = useState<WaterDistributionNetwork>(() =>
@@ -142,7 +157,7 @@ export const WaterDistributionModelling: React.FC = () => {
   // Element CRUD Operations
   const handleAddJunction = useCallback(
     async (lat: number, lng: number) => {
-      const newId = `J-${network.junctions.length + 1}`;
+      const newId = getNextId('J-', network.junctions.map((j) => j.id));
       const newJunction: WaterJunction = {
         id: newId,
         label: `Junction ${newId}`,
@@ -195,7 +210,7 @@ export const WaterDistributionModelling: React.FC = () => {
         length = calculateGeodesicDistanceM(start.lat, start.lng, end.lat, end.lng);
       }
 
-      const newId = `P-${network.pipes.length + 1}`;
+      const newId = getNextId('P-', network.pipes.map((p) => p.id));
       const newPipe: WaterPipe = {
         id: newId,
         label: `Pipe ${newId}`,
@@ -220,7 +235,7 @@ export const WaterDistributionModelling: React.FC = () => {
 
   const handleAddReservoir = useCallback(
     async (lat: number, lng: number) => {
-      const newId = `R-${network.reservoirs.length + 1}`;
+      const newId = getNextId('R-', network.reservoirs.map((r) => r.id));
       const newRes: WaterReservoir = {
         id: newId,
         label: `Reservoir ${newId}`,
@@ -259,7 +274,7 @@ export const WaterDistributionModelling: React.FC = () => {
 
   const handleAddTank = useCallback(
     async (lat: number, lng: number) => {
-      const newId = `T-${network.tanks.length + 1}`;
+      const newId = getNextId('T-', network.tanks.map((t) => t.id));
       const newTank: WaterTank = {
         id: newId,
         label: `Tank ${newId}`,
@@ -298,7 +313,7 @@ export const WaterDistributionModelling: React.FC = () => {
 
   const handleAddPump = useCallback(
     (startNodeId: string, endNodeId: string) => {
-      const newId = `PMP-${network.pumps.length + 1}`;
+      const newId = getNextId('PMP-', network.pumps.map((p) => p.id));
       const newPump: WaterPump = {
         id: newId,
         label: `Booster Pump ${newId}`,
@@ -328,9 +343,9 @@ export const WaterDistributionModelling: React.FC = () => {
     async (lat: number, lng: number) => {
       // Create suction junction and discharge junction ~85 meters apart to avoid overlapping
       const deltaLat = 0.00075;
-      const inId = `J-${network.junctions.length + 1}`;
-      const outId = `J-${network.junctions.length + 2}`;
-      const pumpId = `PMP-${network.pumps.length + 1}`;
+      const inId = getNextId('J-', network.junctions.map((j) => j.id));
+      const outId = getNextId('J-', [...network.junctions.map((j) => j.id), inId]);
+      const pumpId = getNextId('PMP-', network.pumps.map((p) => p.id));
 
       const jIn: WaterJunction = {
         id: inId,
@@ -395,7 +410,7 @@ export const WaterDistributionModelling: React.FC = () => {
 
   const handleAddValve = useCallback(
     (startNodeId: string, endNodeId: string) => {
-      const newId = `VLV-${(network.valves || []).length + 1}`;
+      const newId = getNextId('VLV-', (network.valves || []).map((v) => v.id));
       const newValve: WaterValve = {
         id: newId,
         label: `PRV ${newId}`,
@@ -420,9 +435,9 @@ export const WaterDistributionModelling: React.FC = () => {
   const handleAddValveOnGround = useCallback(
     async (lat: number, lng: number) => {
       const deltaLat = 0.00075;
-      const inId = `J-${network.junctions.length + 1}`;
-      const outId = `J-${network.junctions.length + 2}`;
-      const valveId = `VLV-${(network.valves || []).length + 1}`;
+      const inId = getNextId('J-', network.junctions.map((j) => j.id));
+      const outId = getNextId('J-', [...network.junctions.map((j) => j.id), inId]);
+      const valveId = getNextId('VLV-', (network.valves || []).map((v) => v.id));
 
       const jIn: WaterJunction = {
         id: inId,
@@ -584,35 +599,31 @@ export const WaterDistributionModelling: React.FC = () => {
   const handleDeleteElement = useCallback(
     (id: string, type: NetworkElement['type']) => {
       setNetwork((prev) => {
+        let next: WaterDistributionNetwork = prev;
         if (type === 'junction') {
-          return {
+          next = {
             ...prev,
             junctions: prev.junctions.filter((j) => j.id !== id),
             pipes: prev.pipes.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
             pumps: prev.pumps.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
             valves: (prev.valves || []).filter((v) => v.startNodeId !== id && v.endNodeId !== id),
           };
-        }
-        if (type === 'pipe') {
-          return { ...prev, pipes: prev.pipes.filter((p) => p.id !== id) };
-        }
-        if (type === 'pump') {
-          return { ...prev, pumps: prev.pumps.filter((p) => p.id !== id) };
-        }
-        if (type === 'valve') {
-          return { ...prev, valves: (prev.valves || []).filter((v) => v.id !== id) };
-        }
-        if (type === 'tank') {
-          return {
+        } else if (type === 'pipe') {
+          next = { ...prev, pipes: prev.pipes.filter((p) => p.id !== id) };
+        } else if (type === 'pump') {
+          next = { ...prev, pumps: prev.pumps.filter((p) => p.id !== id) };
+        } else if (type === 'valve') {
+          next = { ...prev, valves: (prev.valves || []).filter((v) => v.id !== id) };
+        } else if (type === 'tank') {
+          next = {
             ...prev,
             tanks: prev.tanks.filter((t) => t.id !== id),
             pipes: prev.pipes.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
             pumps: prev.pumps.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
             valves: (prev.valves || []).filter((v) => v.startNodeId !== id && v.endNodeId !== id),
           };
-        }
-        if (type === 'reservoir') {
-          return {
+        } else if (type === 'reservoir') {
+          next = {
             ...prev,
             reservoirs: prev.reservoirs.filter((r) => r.id !== id),
             pipes: prev.pipes.filter((p) => p.startNodeId !== id && p.endNodeId !== id),
@@ -620,14 +631,29 @@ export const WaterDistributionModelling: React.FC = () => {
             valves: (prev.valves || []).filter((v) => v.startNodeId !== id && v.endNodeId !== id),
           };
         }
-        return prev;
+
+        const totalNodes = next.junctions.length + next.reservoirs.length + next.tanks.length;
+        if (totalNodes > 0 && simulationSummary) {
+          const { updatedNetwork, summary } = simulateWaterNetwork(next);
+          queueMicrotask(() => {
+            setSimulationSummary(summary);
+          });
+          return updatedNetwork;
+        } else if (totalNodes === 0) {
+          queueMicrotask(() => {
+            setSimulationSummary(null);
+          });
+        }
+        return next;
       });
+
+      setProfileRouteNodeIds((prev) => prev.filter((nodeId) => nodeId !== id));
 
       if (selectedElement?.id === id) {
         setSelectedElement(null);
       }
     },
-    [selectedElement]
+    [selectedElement, simulationSummary]
   );
 
   // EPANET INP Export
@@ -688,6 +714,7 @@ export const WaterDistributionModelling: React.FC = () => {
     });
     setSelectedElement(null);
     setSimulationSummary(null);
+    setProfileRouteNodeIds([]);
   }, []);
 
   const elementCounts = {

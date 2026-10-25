@@ -49,6 +49,7 @@ interface WastewaterToolbarProps {
   isSamplingElevation: boolean;
   isFlexTablesOpen: boolean;
   isProfileOpen: boolean;
+  demoIndex?: number;
   elementCounts: {
     manholes: number;
     conduits: number;
@@ -77,6 +78,7 @@ export const WastewaterToolbar: React.FC<WastewaterToolbarProps> = ({
   isSamplingElevation,
   isFlexTablesOpen,
   isProfileOpen,
+  demoIndex,
   elementCounts,
 }) => {
   const tools: { id: ActiveWastewaterTool; label: string; icon: React.FC<{ className?: string }> }[] = [
@@ -230,11 +232,11 @@ export const WastewaterToolbar: React.FC<WastewaterToolbarProps> = ({
         {/* Reference Demo Network */}
         <button
           onClick={onLoadDemo}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-[#aaa] hover:text-white text-xs transition-colors cursor-pointer"
-          title="Load Municipal Wastewater Network model on real terrain"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-[#aaa] hover:text-white text-xs transition-colors cursor-pointer"
+          title="Cycle through 4 engineering demo models on real terrain (Municipal, Hillside, Coastal Dual-Lift, Industrial)"
         >
           <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
-          <span className="text-[11px] font-tech">Sample Network</span>
+          <span className="text-[11px] font-tech">Demo Model ({typeof demoIndex === 'number' ? (demoIndex % 4) + 1 : 1}/4)</span>
         </button>
 
         {/* Clear */}

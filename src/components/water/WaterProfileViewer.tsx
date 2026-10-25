@@ -33,10 +33,6 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
   const profileData = useMemo(() => {
     if (selectedRouteNodeIds.length < 2) return null;
 
-    // Find nodes in sequence or find shortest connected path
-    const points: ProfileNodePoint[] = [];
-    let cumulativeDist = 0;
-
     const getNode = (id: string) => {
       return (
         network.junctions.find((j) => j.id === id) ||
@@ -45,17 +41,24 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
       );
     };
 
-    for (let i = 0; i < selectedRouteNodeIds.length; i++) {
-      const nodeId = selectedRouteNodeIds[i];
-      const node = getNode(nodeId);
-      if (!node) continue;
+    const validNodes = selectedRouteNodeIds
+      .map((id) => getNode(id))
+      .filter((n): n is NonNullable<typeof n> => Boolean(n));
+
+    if (validNodes.length < 2) return null;
+
+    const points: ProfileNodePoint[] = [];
+    let cumulativeDist = 0;
+
+    for (let i = 0; i < validNodes.length; i++) {
+      const node = validNodes[i];
 
       if (i > 0) {
-        const prevNodeId = selectedRouteNodeIds[i - 1];
+        const prevNode = validNodes[i - 1];
         const connectingPipe = network.pipes.find(
           (p) =>
-            (p.startNodeId === prevNodeId && p.endNodeId === nodeId) ||
-            (p.startNodeId === nodeId && p.endNodeId === prevNodeId)
+            (p.startNodeId === prevNode.id && p.endNodeId === node.id) ||
+            (p.startNodeId === node.id && p.endNodeId === prevNode.id)
         );
         cumulativeDist += connectingPipe ? connectingPipe.length : 150;
       }
@@ -72,12 +75,12 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
 
       // Find velocity in connecting pipe
       let velocity = 0;
-      if (i < selectedRouteNodeIds.length - 1) {
-        const nextId = selectedRouteNodeIds[i + 1];
+      if (i < validNodes.length - 1) {
+        const nextNode = validNodes[i + 1];
         const p = network.pipes.find(
           (item) =>
-            (item.startNodeId === nodeId && item.endNodeId === nextId) ||
-            (item.startNodeId === nextId && item.endNodeId === nodeId)
+            (item.startNodeId === node.id && item.endNodeId === nextNode.id) ||
+            (item.startNodeId === nextNode.id && item.endNodeId === node.id)
         );
         if (p && p.velocity) velocity = p.velocity;
       }

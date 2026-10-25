@@ -31,11 +31,6 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
   onClose,
 }) => {
   const profileData = useMemo(() => {
-    if (selectedRouteNodeIds.length < 2) return null;
-
-    const points: ProfileStationPoint[] = [];
-    let cumulativeDist = 0;
-
     const getNode = (id: string) => {
       return (
         network.manholes.find((m) => m.id === id) ||
@@ -44,28 +39,33 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
       );
     };
 
-    for (let i = 0; i < selectedRouteNodeIds.length; i++) {
-      const nodeId = selectedRouteNodeIds[i];
-      const node = getNode(nodeId);
-      if (!node) continue;
+    // Filter route to only nodes currently existing in the network
+    const validNodes = selectedRouteNodeIds
+      .map((id) => getNode(id))
+      .filter((n): n is NonNullable<typeof n> => Boolean(n));
+
+    if (validNodes.length < 2) return null;
+
+    const points: ProfileStationPoint[] = [];
+    let cumulativeDist = 0;
+
+    for (let i = 0; i < validNodes.length; i++) {
+      const node = validNodes[i];
 
       if (i > 0) {
-        const prevNodeId = selectedRouteNodeIds[i - 1];
-        const prevNode = getNode(prevNodeId);
+        const prevNode = validNodes[i - 1];
         // Look for connecting conduit
         const conduit = network.conduits.find(
           (c) =>
-            (c.startNodeId === prevNodeId && c.endNodeId === nodeId) ||
-            (c.startNodeId === nodeId && c.endNodeId === prevNodeId)
+            (c.startNodeId === prevNode.id && c.endNodeId === node.id) ||
+            (c.startNodeId === node.id && c.endNodeId === prevNode.id)
         );
         const dist = conduit
           ? conduit.lengthM
-          : prevNode
-          ? Math.sqrt(
+          : Math.sqrt(
               Math.pow((node.lat - prevNode.lat) * 111000, 2) +
                 Math.pow((node.lng - prevNode.lng) * 98000, 2)
-            )
-          : 50;
+            );
 
         cumulativeDist += Math.max(10, Math.round(dist * 10) / 10);
       }
@@ -75,12 +75,12 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
       const hgl = 'waterElevationM' in node ? (node as WastewaterManhole).waterElevationM ?? inv + 0.2 : inv + 0.2;
 
       // Find connected conduit for diameter
-      const nextId = selectedRouteNodeIds[i + 1];
-      const conduit = nextId
+      const nextNode = validNodes[i + 1];
+      const conduit = nextNode
         ? network.conduits.find(
             (c) =>
-              (c.startNodeId === nodeId && c.endNodeId === nextId) ||
-              (c.startNodeId === nextId && c.endNodeId === nodeId)
+              (c.startNodeId === node.id && c.endNodeId === nextNode.id) ||
+              (c.startNodeId === nextNode.id && c.endNodeId === node.id)
           )
         : undefined;
 

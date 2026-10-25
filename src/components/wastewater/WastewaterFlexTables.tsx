@@ -890,7 +890,7 @@ export const WastewaterFlexTables: React.FC<WastewaterFlexTablesProps> = ({
                           : 'bg-zinc-800 text-[#888]'
                       }`}
                     >
-                      {e.pumpOperatingState === 'ON' ? '⚡ RUNNING' : 'OFFLINE'}
+                      {e.pumpOperatingState === 'ON' ? '● RUNNING' : 'OFFLINE'}
                     </span>
                   </td>
                 </tr>

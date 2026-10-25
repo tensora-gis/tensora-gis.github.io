@@ -17,9 +17,15 @@ import {
   GitCommit,
   Waves,
   Database,
-  Zap,
   ArrowRightCircle,
 } from 'lucide-react';
+
+const PumpInspectorIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2">
+    <circle cx="12" cy="12" r="8" />
+    <polygon points="9,8 16,12 9,16" fill="currentColor" stroke="none" />
+  </svg>
+);
 
 interface WastewaterPropertyInspectorProps {
   element: WastewaterNetworkElement | null;
@@ -79,7 +85,7 @@ export const WastewaterPropertyInspector: React.FC<WastewaterPropertyInspectorPr
             {element.type === 'manhole' && <CircleDot className="w-3.5 h-3.5" />}
             {element.type === 'conduit' && <GitCommit className="w-3.5 h-3.5" />}
             {element.type === 'wet-well' && <Database className="w-3.5 h-3.5" />}
-            {element.type === 'pump' && <Zap className="w-3.5 h-3.5" />}
+            {element.type === 'pump' && <PumpInspectorIcon className="w-3.5 h-3.5" />}
             {element.type === 'force-main' && <ArrowRightCircle className="w-3.5 h-3.5" />}
             {element.type === 'outfall' && <Waves className="w-3.5 h-3.5" />}
           </div>
