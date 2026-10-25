@@ -21,7 +21,6 @@ import {
   Upload,
   FolderOpen,
   ArrowRightCircle,
-  Activity,
   Wrench,
   Clock,
   Cpu,
@@ -45,7 +44,6 @@ interface WastewaterToolbarProps {
   onSampleElevations: () => void;
   onToggleFlexTables: () => void;
   onToggleProfile: () => void;
-  onOpenReport: () => void;
   onApplyAutoDesign?: () => void;
   onExportExcel: () => void;
   onExportInp: () => void;
@@ -80,7 +78,6 @@ export const WastewaterToolbar: React.FC<WastewaterToolbarProps> = ({
   onSampleElevations,
   onToggleFlexTables,
   onToggleProfile,
-  onOpenReport,
   onApplyAutoDesign,
   onExportExcel,
   onExportInp,
@@ -212,17 +209,6 @@ export const WastewaterToolbar: React.FC<WastewaterToolbarProps> = ({
             <span className="font-tech text-[11px]">Auto-Design</span>
           </button>
         )}
-
-        {/* Detailed Engineering Calculation Report Modal */}
-        <button
-          onClick={onOpenReport}
-          disabled={!simulationSummary}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 hover:text-amber-200 font-medium text-xs transition-colors cursor-pointer disabled:opacity-40"
-          title="Open complete detailed engineering calculation report and SWMM diagnostic tables"
-        >
-          <Activity className="w-3.5 h-3.5" />
-          <span className="font-tech text-[11px]">Detailed Report</span>
-        </button>
 
         {/* Direct Calculation Excel Export */}
         <button

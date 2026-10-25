@@ -21,7 +21,6 @@ import {
   Download,
   Upload,
   FolderOpen,
-  Activity,
   Wrench,
   Clock,
   Zap,
@@ -48,7 +47,6 @@ interface WaterToolbarProps {
   onImportInp: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onLoadDemo: () => void;
   onClear: () => void;
-  onOpenReport?: () => void;
   onApplyAutoDesign?: () => void;
   epsHour?: number;
   onSelectEpsHour?: (hour: number) => void;
@@ -81,7 +79,6 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
   onImportInp,
   onLoadDemo,
   onClear,
-  onOpenReport,
   onApplyAutoDesign,
   epsHour = 12,
   onSelectEpsHour,
@@ -210,19 +207,6 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
           >
             <Wrench className="w-3.5 h-3.5" />
             <span className="font-tech text-[11px]">Auto-Design</span>
-          </button>
-        )}
-
-        {/* Detailed Engineering Calculation Report Modal */}
-        {onOpenReport && (
-          <button
-            onClick={onOpenReport}
-            disabled={!simulationSummary}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 hover:text-amber-200 font-medium text-xs transition-colors cursor-pointer disabled:opacity-40"
-            title="Open complete detailed engineering calculation report (EPANET GGA & Transient Water Hammer)"
-          >
-            <Activity className="w-3.5 h-3.5" />
-            <span className="font-tech text-[11px]">Detailed Report</span>
           </button>
         )}
 

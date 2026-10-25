@@ -832,7 +832,6 @@ export const WastewaterModelling: React.FC = () => {
         onSampleElevations={handleSampleAllElevations}
         onToggleFlexTables={() => setIsFlexTablesOpen((prev) => !prev)}
         onToggleProfile={() => setIsProfileOpen((prev) => !prev)}
-        onOpenReport={() => setIsSummaryModalOpen(true)}
         onApplyAutoDesign={handleApplyAutoDesign}
         onExportExcel={handleExportExcel}
         onExportInp={handleExportInp}

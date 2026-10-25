@@ -769,7 +769,6 @@ export const WaterDistributionModelling: React.FC = () => {
         onImportInp={handleImportInp}
         onLoadDemo={handleLoadDemo}
         onClear={handleClear}
-        onOpenReport={() => setIsSummaryModalOpen(true)}
         onApplyAutoDesign={
           simulationSummary?.autoDesignRecommendations?.length
             ? handleApplyAutoDesign
