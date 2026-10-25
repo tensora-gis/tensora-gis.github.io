@@ -4,9 +4,9 @@
 
 Tensora GIS is an engineering-grade geospatial modeling and simulation suite designed for highway, railway, and municipal infrastructure projects. Built with TypeScript and React, Tensora GIS unifies three core engineering disciplines into a cohesive, high-performance web platform powered by real global Digital Elevation Models (DEMs):
 
-1. **Stormwater Catchment & Stream Delineation** — Real Earth D8 flow accumulation, formation modeling, and 70%-framed delineation reports.
-2. **Water Distribution Modelling & Transient Surge** — EPANET-standard Global Gradient Algorithm (GGA), Extended Period Simulation (EPS), Fire Flow analysis, Darwin automated pipe optimization, and Joukowsky/Allievi Water Hammer physics.
-3. **Wastewater Collection & Sewer Hydraulics** — EPA SWMM 5.2 engine, circular partial-flow Manning hydraulics, tractive force self-cleansing checks, drop structures, lift station pumping cycles, Pomeroy-Parkhurst $\text{H}_2\text{S}$ corrosion, and I&I analysis.
+1. **Stormwater Catchment & Stream Delineation** - Real Earth D8 flow accumulation, formation modeling, and 70%-framed delineation reports.
+2. **Water Distribution Modelling & Transient Surge** - EPANET-standard Global Gradient Algorithm (GGA), Extended Period Simulation (EPS), Fire Flow analysis, Darwin automated pipe optimization, and Joukowsky/Allievi Water Hammer physics.
+3. **Wastewater Collection & Sewer Hydraulics** - EPA SWMM 5.2 engine, circular partial-flow Manning hydraulics, tractive force self-cleansing checks, drop structures, lift station pumping cycles, Pomeroy-Parkhurst $\text{H}_2\text{S}$ corrosion, and I&I analysis.
 
 ---
 
