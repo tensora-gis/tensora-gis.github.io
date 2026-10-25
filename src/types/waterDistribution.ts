@@ -29,6 +29,12 @@ export interface WaterJunction extends BaseElement {
   /** Calculated demand at current timestep (L/s) */
   actualDemand?: number;
   status?: 'normal' | 'low-pressure' | 'high-pressure' | 'negative';
+  /** Available fire flow at 15m residual (L/s) */
+  actualFireFlowLs?: number;
+  /** Water age in hours */
+  waterAgeHours?: number;
+  /** Chlorine residual concentration in mg/L */
+  chlorineResidualMgL?: number;
 }
 
 export interface WaterReservoir extends BaseElement {
@@ -78,6 +84,10 @@ export interface WaterPipe extends BaseElement {
   minorLossCoeff: number;
   /** Operational status */
   status: 'OPEN' | 'CLOSED' | 'CV'; // CV = Check Valve (prevents reverse flow)
+  /** Pipe physical wall material for transient wave speed computation */
+  material?: 'DI' | 'Ductile Iron' | 'Steel' | 'PVC' | 'HDPE' | 'Concrete';
+  /** Pipe nominal pressure rating (bar), standard PN10, PN16, PN25 */
+  pressureRatingPnBar?: number;
   
   // Simulation results
   flow?: number; // L/s (positive from startNode to endNode, negative opposite)
@@ -85,6 +95,12 @@ export interface WaterPipe extends BaseElement {
   unitHeadloss?: number; // m / km
   totalHeadloss?: number; // m
   frictionFactor?: number;
+  /** Transient wave speed a (m/s) */
+  waveSpeedMs?: number;
+  /** Maximum transient surge head (m MSL) under Joukowsky/Allievi water hammer */
+  maxTransientHeadM?: number;
+  /** Minimum transient surge head (m MSL) */
+  minTransientHeadM?: number;
 }
 
 export interface WaterPump extends BaseElement {
@@ -190,6 +206,59 @@ export interface PipeOptimizationResult {
   estimatedCostSavingOrUpgrade: string;
 }
 
+/**
+ * Hydraulic Transient & Water Hammer (Surge Engine) Types
+ */
+export interface TransientPipeResult {
+  pipeId: string;
+  pipeMaterial: 'DI' | 'Ductile Iron' | 'Steel' | 'PVC' | 'HDPE' | 'Concrete';
+  waveSpeedMs: number;
+  acousticPeriodSec: number; // 2L / a
+  initialVelocityMs: number;
+  joukowskySurgeM: number; // a * deltaV / g
+  steadyPressureM: number;
+  maxTransientHeadM: number;
+  maxTransientPressureBar: number;
+  minTransientHeadM: number;
+  minTransientPressureBar: number;
+  pressureRatingPnBar: number;
+  overpressureRisk: 'Safe' | 'Warning: Approaching Rating' | 'Severe: Rupture Risk';
+  cavitationRisk: 'None' | 'Sub-atmospheric' | 'Severe Vapor Cavitation / Column Separation';
+  recommendedProtection: string;
+}
+
+export interface TransientProtectionDevice {
+  type: 'AIR_VESSEL' | 'SURGE_TANK' | 'AIR_RELEASE_VALVE' | 'SURGE_ANTICIPATOR' | 'FLYWHEEL';
+  locationNodeId: string;
+  recommendedSize: string;
+  effectiveVolumeM3?: number;
+  mitigatedMaxHeadM: number;
+  mitigatedMinHeadM: number;
+}
+
+export interface TransientTimeHistoryPoint {
+  timeSec: number;
+  maxSystemHeadM: number;
+  minSystemHeadM: number;
+  nodeHeads: Record<string, number>;
+}
+
+export interface TransientSimulationSummary {
+  scenario: 'PUMP_TRIP' | 'VALVE_CLOSURE';
+  closureOrTripTimeSec: number;
+  maxSystemSurgeHeadM: number;
+  criticalHighPressureNodeId: string;
+  minSystemSurgeHeadM: number;
+  criticalCavitationNodeId: string;
+  vaporCavitationOccurred: boolean;
+  pipesAtRuptureRisk: string[];
+  pipesAtCavitationRisk: string[];
+  airVesselRecommendedVolumeM3: number;
+  pipeResults: TransientPipeResult[];
+  timeHistory: TransientTimeHistoryPoint[];
+  protectionDevices: TransientProtectionDevice[];
+}
+
 export interface SimulationSummary {
   converged: boolean;
   iterations: number;
@@ -215,6 +284,9 @@ export interface SimulationSummary {
   fireFlowResults?: FireFlowResult[];
   waterQualityResults?: WaterQualityResult[];
   pipeOptimizations?: PipeOptimizationResult[];
+  autoDesignRecommendations?: PipeOptimizationResult[];
+  // Transient & Water Hammer Analysis Module
+  transientSurgeSummary?: TransientSimulationSummary;
 }
 
 export type ActiveTool =
@@ -237,4 +309,5 @@ export type MapThematicDisplay =
   | 'diameter'
   | 'flow'
   | 'water-age'
-  | 'fire-flow';
+  | 'fire-flow'
+  | 'transient-surge';

@@ -21,6 +21,10 @@ import {
   Download,
   Upload,
   FolderOpen,
+  Activity,
+  Wrench,
+  Clock,
+  Zap,
 } from 'lucide-react';
 
 const PumpToolIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -44,6 +48,10 @@ interface WaterToolbarProps {
   onImportInp: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onLoadDemo: () => void;
   onClear: () => void;
+  onOpenReport?: () => void;
+  onApplyAutoDesign?: () => void;
+  epsHour?: number;
+  onSelectEpsHour?: (hour: number) => void;
   simulationSummary: SimulationSummary | null;
   isSimulating: boolean;
   isSamplingElevation: boolean;
@@ -73,6 +81,10 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
   onImportInp,
   onLoadDemo,
   onClear,
+  onOpenReport,
+  onApplyAutoDesign,
+  epsHour = 12,
+  onSelectEpsHour,
   simulationSummary,
   isSimulating,
   isSamplingElevation,
@@ -124,7 +136,7 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
           onClick={onRunSimulation}
           disabled={isSimulating || (elementCounts.junctions === 0 && elementCounts.pipes === 0)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md disabled:opacity-50 transition-all cursor-pointer"
-          title="Compute hydraulics and export calculations to Excel (.xlsx)"
+          title="Compute EPANET GGA hydraulics, fire flow, water quality, and transient surge calculations"
         >
           <Play className="w-3.5 h-3.5 fill-current" />
           <span>{isSimulating ? 'Computing...' : 'Compute Hydraulics'}</span>
@@ -160,12 +172,60 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
             <option value="elevation" className="bg-[#111]">Elevation (DEM)</option>
             <option value="water-age" className="bg-[#111]">Water Age (Hours)</option>
             <option value="fire-flow" className="bg-[#111]">Fire Flow (L/s)</option>
+            <option value="transient-surge" className="bg-[#111]">Surge Envelope (Joukowsky/Hammer)</option>
           </select>
         </div>
+
+        {/* EPS 24-hr Diurnal Scrubber */}
+        {onSelectEpsHour && simulationSummary && (
+          <div className="flex items-center gap-1.5 bg-[#0a0a0a] px-2.5 py-1 rounded-lg border border-[#222] text-xs">
+            <Clock className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="text-[10px] text-[#737373] uppercase font-tech">EPS Hour:</span>
+            <span className="text-cyan-300 font-mono font-bold text-[11px] w-10 text-right">
+              {String(epsHour).padStart(2, '0')}:00
+            </span>
+            <input
+              type="range"
+              min="0"
+              max="23"
+              step="1"
+              value={epsHour}
+              onChange={(e) => onSelectEpsHour(parseInt(e.target.value, 10))}
+              className="w-16 accent-cyan-400 h-1 bg-[#222] rounded cursor-pointer"
+              title="Extended Period Simulation 24-Hour Diurnal Scrubber"
+            />
+          </div>
+        )}
       </div>
 
       {/* 3. Hydraulic Workspace Tools: Calculation Export, FlexTables, Profile, EPANET Import/Export */}
       <div className="flex items-center gap-1.5">
+        {/* Auto-Design Pipe Sizing */}
+        {onApplyAutoDesign && (
+          <button
+            onClick={onApplyAutoDesign}
+            disabled={!simulationSummary}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-purple-600/20 hover:bg-purple-600/30 border border-purple-500/40 text-purple-300 hover:text-purple-200 font-medium text-xs transition-colors cursor-pointer disabled:opacity-40"
+            title="Auto-Design pipe diameters to satisfy minimum velocity and pressure constraints"
+          >
+            <Wrench className="w-3.5 h-3.5" />
+            <span className="font-tech text-[11px]">Auto-Design</span>
+          </button>
+        )}
+
+        {/* Detailed Engineering Calculation Report Modal */}
+        {onOpenReport && (
+          <button
+            onClick={onOpenReport}
+            disabled={!simulationSummary}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 hover:text-amber-200 font-medium text-xs transition-colors cursor-pointer disabled:opacity-40"
+            title="Open complete detailed engineering calculation report (EPANET GGA & Transient Water Hammer)"
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span className="font-tech text-[11px]">Detailed Report</span>
+          </button>
+        )}
+
         {/* Direct Calculation Excel Export */}
         <button
           onClick={onExportExcel}
@@ -174,7 +234,7 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
           title="Export detailed calculation sheet to Microsoft Excel (.xlsx)"
         >
           <FileSpreadsheet className="w-3.5 h-3.5" />
-          <span className="font-tech text-[11px]">Export Calculation (.xlsx)</span>
+          <span className="hidden sm:inline font-tech text-[11px]">Export (.xlsx)</span>
         </button>
 
         <button
@@ -197,7 +257,7 @@ export const WaterToolbar: React.FC<WaterToolbarProps> = ({
               ? 'bg-amber-500/20 border-amber-500 text-amber-400 font-bold'
               : 'bg-[#171717] hover:bg-[#202020] border-[#262626] text-[#999] hover:text-white'
           }`}
-          title="View Longitudinal Hydraulic Grade Line (HGL) Profile"
+          title="View Longitudinal Hydraulic Grade Line (HGL) Profile & Surge Envelopes"
         >
           <TrendingUp className="w-3.5 h-3.5" />
           <span className="hidden md:inline font-tech text-[11px]">HGL Profile</span>

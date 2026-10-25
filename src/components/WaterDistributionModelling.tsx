@@ -29,7 +29,7 @@ import {
   WaterValve,
 } from '../types/waterDistribution';
 import { createHighlandMunicipalNetwork } from '../data/sampleWaterNetworks';
-import { simulateWaterNetwork } from '../utils/waterHydraulicsEngine';
+import { simulateWaterNetwork, applyWaterPipeOptimization } from '../utils/waterHydraulicsEngine';
 import {
   sampleAllNetworkElevations,
   sampleGroundElevation,
@@ -79,6 +79,7 @@ export const WaterDistributionModelling: React.FC = () => {
   const [simulationSummary, setSimulationSummary] = useState<SimulationSummary | null>(null);
   const [isSimulating, setIsSimulating] = useState(false);
   const [isSamplingElevation, setIsSamplingElevation] = useState(false);
+  const [epsHour, setEpsHour] = useState<number>(12);
 
   // Profile Route Selection
   const [profileRouteNodeIds, setProfileRouteNodeIds] = useState<string[]>([
@@ -136,6 +137,31 @@ export const WaterDistributionModelling: React.FC = () => {
     if (!simulationSummary) return;
     await downloadWaterHydraulicExcel(network, simulationSummary);
   }, [network, simulationSummary]);
+
+  // Apply Darwin auto-designed pipe diameters to network
+  const handleApplyAutoDesign = useCallback(() => {
+    if (!simulationSummary?.autoDesignRecommendations?.length) return;
+    const optimized = applyWaterPipeOptimization(
+      network,
+      simulationSummary.autoDesignRecommendations
+    );
+    const { updatedNetwork, summary } = simulateWaterNetwork(optimized);
+    setNetwork(updatedNetwork);
+    setSimulationSummary(summary);
+    if (selectedElement) {
+      const refreshed = [
+        ...updatedNetwork.junctions,
+        ...updatedNetwork.pipes,
+        ...updatedNetwork.pumps,
+        ...(updatedNetwork.valves || []),
+        ...updatedNetwork.reservoirs,
+        ...updatedNetwork.tanks,
+      ].find((el) => el.id === selectedElement.id);
+      if (refreshed) {
+        setSelectedElement(refreshed);
+      }
+    }
+  }, [network, simulationSummary, selectedElement]);
 
   // Bulk DEM Elevation Sampling
   const handleSampleAllElevations = useCallback(async () => {
@@ -743,6 +769,14 @@ export const WaterDistributionModelling: React.FC = () => {
         onImportInp={handleImportInp}
         onLoadDemo={handleLoadDemo}
         onClear={handleClear}
+        onOpenReport={() => setIsSummaryModalOpen(true)}
+        onApplyAutoDesign={
+          simulationSummary?.autoDesignRecommendations?.length
+            ? handleApplyAutoDesign
+            : undefined
+        }
+        epsHour={epsHour}
+        onSelectEpsHour={setEpsHour}
         simulationSummary={simulationSummary}
         isSimulating={isSimulating}
         isSamplingElevation={isSamplingElevation}
@@ -809,9 +843,16 @@ export const WaterDistributionModelling: React.FC = () => {
       {/* 4. Calculation Results Summary Modal */}
       {isSummaryModalOpen && (
         <WaterSimulationResultsModal
+          network={network}
           summary={simulationSummary}
           onClose={() => setIsSummaryModalOpen(false)}
           onExportExcel={handleExportExcel}
+          onExportInp={handleExportInp}
+          onApplyAutoDesign={
+            simulationSummary?.autoDesignRecommendations?.length
+              ? handleApplyAutoDesign
+              : undefined
+          }
         />
       )}
     </div>

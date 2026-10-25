@@ -17,10 +17,10 @@ import {
   WaterTank,
 } from '../types/waterDistribution';
 
-export async function generateWaterHydraulicExcel(
+export async function buildWaterExcelWorkbook(
   network: WaterDistributionNetwork,
   summary: SimulationSummary
-): Promise<Blob> {
+) {
   const { default: ExcelJS } = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Tensora GIS - Water Distribution Hydraulic Engine';
@@ -641,6 +641,79 @@ export async function generateWaterHydraulicExcel(
     });
   });
 
+  // ==========================================
+  // SHEET 11: HYDRAULIC TRANSIENT & WATER HAMMER SURGE ANALYSIS
+  // ==========================================
+  const surgeSheet = workbook.addWorksheet('Transient_Surge_Analysis', {
+    views: [{ showGridLines: true }],
+  });
+
+  surgeSheet.columns = [
+    { header: 'Pipe ID', key: 'id', width: 14 },
+    { header: 'Material', key: 'mat', width: 14 },
+    { header: 'Wave Speed a (m/s)', key: 'a', width: 18 },
+    { header: 'Period 2L/a (s)', key: 'tc', width: 16 },
+    { header: 'Velocity (m/s)', key: 'v0', width: 16 },
+    { header: 'Joukowsky Surge (m)', key: 'surge', width: 20 },
+    { header: 'Steady Pressure (m)', key: 'steady', width: 18 },
+    { header: 'Max Head (m MSL)', key: 'hMax', width: 18 },
+    { header: 'Max Pressure (bar)', key: 'pMax', width: 18 },
+    { header: 'Min Head (m MSL)', key: 'hMin', width: 18 },
+    { header: 'Min Pressure (bar)', key: 'pMin', width: 18 },
+    { header: 'Rating PN (bar)', key: 'pn', width: 16 },
+    { header: 'Overpressure Risk', key: 'overP', width: 24 },
+    { header: 'Cavitation Risk', key: 'cav', width: 28 },
+    { header: 'Recommended Surge Protection Sizing', key: 'prot', width: 44 },
+  ];
+
+  const surgeHRow = surgeSheet.getRow(1);
+  surgeHRow.height = 24;
+  surgeHRow.eachCell((cell) => {
+    cell.fill = headerFill;
+    cell.font = headerFont;
+    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+  });
+
+  const tResults = summary.transientSurgeSummary?.pipeResults || [];
+  tResults.forEach((t) => {
+    const row = surgeSheet.addRow({
+      id: t.pipeId,
+      mat: t.pipeMaterial,
+      a: t.waveSpeedMs,
+      tc: t.acousticPeriodSec.toFixed(2),
+      v0: t.initialVelocityMs.toFixed(2),
+      surge: t.joukowskySurgeM.toFixed(1),
+      steady: t.steadyPressureM.toFixed(1),
+      hMax: t.maxTransientHeadM.toFixed(1),
+      pMax: t.maxTransientPressureBar.toFixed(1),
+      hMin: t.minTransientHeadM.toFixed(1),
+      pMin: t.minTransientPressureBar.toFixed(1),
+      pn: t.pressureRatingPnBar,
+      overP: t.overpressureRisk,
+      cav: t.cavitationRisk,
+      prot: t.recommendedProtection,
+    });
+    row.eachCell((cell) => {
+      cell.font = regularFont;
+      cell.border = thinBorder;
+    });
+
+    if (t.overpressureRisk.includes('Severe')) {
+      row.getCell('overP').font = { ...boldFont, color: { argb: 'FFDC2626' } };
+    }
+    if (t.cavitationRisk.includes('Severe')) {
+      row.getCell('cav').font = { ...boldFont, color: { argb: 'FFDC2626' } };
+    }
+  });
+
+  return workbook;
+}
+
+export async function generateWaterHydraulicExcel(
+  network: WaterDistributionNetwork,
+  summary: SimulationSummary
+): Promise<Blob> {
+  const workbook = await buildWaterExcelWorkbook(network, summary);
   const buffer = await workbook.xlsx.writeBuffer();
   return new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

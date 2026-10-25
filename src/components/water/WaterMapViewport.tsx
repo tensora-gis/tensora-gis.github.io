@@ -268,6 +268,23 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
       } else if (thematicDisplay === 'flow' && p.flow !== undefined) {
         weight = Math.max(2, Math.min(8, (Math.abs(p.flow) / 50) * 5));
         pipeColor = '#06b6d4';
+      } else if (thematicDisplay === 'transient-surge') {
+        const pnHead = (p.pressureRatingPnBar || 16) * 10;
+        const maxH = p.maxTransientHeadM ?? 0;
+        const minH = p.minTransientHeadM ?? 0;
+        if (minH < -10) {
+          pipeColor = '#dc2626'; // Column separation / vapor cavitation risk
+          weight = 5.5;
+        } else if (maxH > pnHead) {
+          pipeColor = '#f43f5e'; // Overpressure rupture risk vs PN rating
+          weight = 5;
+        } else if (maxH > pnHead * 0.85) {
+          pipeColor = '#f59e0b'; // Approaching PN rating limit
+          weight = 4;
+        } else {
+          pipeColor = '#10b981'; // Safe surge envelope
+          weight = 3.5;
+        }
       }
 
       if (p.status === 'CLOSED') {
@@ -299,10 +316,11 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
       polyline.bindTooltip(
         `<div style="font-family: monospace; font-size: 11px;">
           <strong>${p.label || p.id}</strong><br/>
-          Length: ${p.length} m | Diam: ${p.diameter} mm<br/>
+          Length: ${p.length} m | Diam: ${p.diameter} mm (${p.material || 'DI'})<br/>
           ${p.flow !== undefined ? `Flow: <strong>${p.flow} L/s</strong><br/>` : ''}
           ${p.velocity !== undefined ? `Velocity: <strong>${p.velocity} m/s</strong><br/>` : ''}
-          ${p.unitHeadloss !== undefined ? `Headloss: ${p.unitHeadloss} m/km` : ''}
+          ${p.unitHeadloss !== undefined ? `Headloss: ${p.unitHeadloss} m/km<br/>` : ''}
+          ${p.maxTransientHeadM !== undefined ? `Surge H_max: <strong style="color: #f43f5e;">${p.maxTransientHeadM} m</strong> | H_min: <strong style="color: #c084fc;">${p.minTransientHeadM} m</strong>` : ''}
         </div>`,
         { sticky: true }
       );

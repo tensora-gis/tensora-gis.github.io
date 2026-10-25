@@ -157,6 +157,9 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         roughness: 130,
         minorLossCoeff: 1.5,
         status: 'OPEN',
+        material: 'Ductile Iron',
+        pressureRatingPnBar: 16,
+        waveSpeedMs: 1050,
       },
       // Discharge transmission trunk
       {
@@ -170,6 +173,9 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         roughness: 130,
         minorLossCoeff: 0.5,
         status: 'OPEN',
+        material: 'Steel',
+        pressureRatingPnBar: 20,
+        waveSpeedMs: 1150,
       },
       // South to Commercial
       {
@@ -183,6 +189,9 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         roughness: 130,
         minorLossCoeff: 0.2,
         status: 'OPEN',
+        material: 'Ductile Iron',
+        pressureRatingPnBar: 16,
+        waveSpeedMs: 1050,
       },
       // Loop: South to East Industrial
       {
@@ -196,6 +205,9 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         roughness: 120,
         minorLossCoeff: 0.2,
         status: 'OPEN',
+        material: 'HDPE',
+        pressureRatingPnBar: 16,
+        waveSpeedMs: 320,
       },
       // Commercial to Central Market
       {
@@ -209,6 +221,9 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         roughness: 130,
         minorLossCoeff: 0.2,
         status: 'OPEN',
+        material: 'PVC',
+        pressureRatingPnBar: 12,
+        waveSpeedMs: 400,
       },
       // Central Market to North Residential
       {
@@ -222,6 +237,9 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         roughness: 130,
         minorLossCoeff: 0.2,
         status: 'OPEN',
+        material: 'PVC',
+        pressureRatingPnBar: 12,
+        waveSpeedMs: 400,
       },
       // Commercial to North Residential (Loop closing)
       {
@@ -235,6 +253,9 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         roughness: 130,
         minorLossCoeff: 0.2,
         status: 'OPEN',
+        material: 'Ductile Iron',
+        pressureRatingPnBar: 16,
+        waveSpeedMs: 1050,
       },
       // North Residential to Highland Crest
       {
@@ -248,6 +269,9 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         roughness: 130,
         minorLossCoeff: 0.5,
         status: 'OPEN',
+        material: 'Ductile Iron',
+        pressureRatingPnBar: 16,
+        waveSpeedMs: 1050,
       },
       // Highland Crest to Elevated Tank
       {
@@ -261,6 +285,9 @@ export function createHighlandMunicipalNetwork(): WaterDistributionNetwork {
         roughness: 130,
         minorLossCoeff: 1.0,
         status: 'OPEN',
+        material: 'Ductile Iron',
+        pressureRatingPnBar: 16,
+        waveSpeedMs: 1050,
       },
     ],
   };

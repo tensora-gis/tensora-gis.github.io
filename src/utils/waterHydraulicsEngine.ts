@@ -27,6 +27,10 @@ import {
   FireFlowResult,
   WaterQualityResult,
   PipeOptimizationResult,
+  TransientPipeResult,
+  TransientProtectionDevice,
+  TransientTimeHistoryPoint,
+  TransientSimulationSummary,
 } from '../types/waterDistribution';
 
 const HAZEN_WILLIAMS_EXP = 1.852;
@@ -642,6 +646,38 @@ export function simulateWaterNetwork(network: WaterDistributionNetwork): {
     };
   });
 
+  // Transient Surge & Water Hammer Simulation (Joukowsky / Allievi Model)
+  const transientSurgeSummary = computeTransientSurgeAnalysis(
+    network,
+    heads,
+    flows,
+    'PUMP_TRIP',
+    2.0
+  );
+
+  // Attach transient wave properties to pipes
+  const pipesWithTransient = updatedPipes.map((p) => {
+    const tRes = transientSurgeSummary.pipeResults.find((r) => r.pipeId === p.id);
+    return {
+      ...p,
+      waveSpeedMs: tRes?.waveSpeedMs,
+      maxTransientHeadM: tRes?.maxTransientHeadM,
+      minTransientHeadM: tRes?.minTransientHeadM,
+    };
+  });
+
+  // Attach fire flow & water quality results directly to junctions
+  const junctionsWithQuality = updatedJunctions.map((j) => {
+    const ff = fireFlowResults.find((f) => f.junctionId === j.id);
+    const wq = waterQualityResults.find((q) => q.nodeId === j.id);
+    return {
+      ...j,
+      actualFireFlowLs: ff?.availableFireFlowLs,
+      waterAgeHours: wq?.waterAgeHours,
+      chlorineResidualMgL: wq?.chlorineResidualMgL,
+    };
+  });
+
   const summary: SimulationSummary = {
     converged,
     iterations,
@@ -665,18 +701,262 @@ export function simulateWaterNetwork(network: WaterDistributionNetwork): {
     fireFlowResults,
     waterQualityResults,
     pipeOptimizations,
+    autoDesignRecommendations: pipeOptimizations,
+    transientSurgeSummary,
   };
 
   return {
     updatedNetwork: {
       ...network,
-      junctions: updatedJunctions,
-      pipes: updatedPipes,
+      junctions: junctionsWithQuality,
+      pipes: pipesWithTransient,
       pumps: updatedPumps,
       valves: updatedValves,
       reservoirs: updatedReservoirs,
       tanks: updatedTanks,
     },
     summary,
+  };
+}
+
+/**
+ * Computes Transient Surge & Water Hammer dynamics (Joukowsky / Allievi formulation)
+ * for pump trip power outages or rapid valve closures.
+ */
+export function computeTransientSurgeAnalysis(
+  network: WaterDistributionNetwork,
+  heads: Map<string, number>,
+  flows: Map<string, number>,
+  scenario: 'PUMP_TRIP' | 'VALVE_CLOSURE' = 'PUMP_TRIP',
+  closureOrTripTimeSec = 2.0
+): TransientSimulationSummary {
+  const g = 9.80665;
+  const pipesAtRuptureRisk: string[] = [];
+  const pipesAtCavitationRisk: string[] = [];
+  let maxSystemSurgeHeadM = -999;
+  let criticalHighPressureNodeId = '';
+  let minSystemSurgeHeadM = 999;
+  let criticalCavitationNodeId = '';
+  let totalAirVesselVolM3 = 0;
+
+  const pipeResults: TransientPipeResult[] = network.pipes.map((pipe) => {
+    // 1. Determine acoustic wave speed (m/s) based on pipe material
+    const mat = pipe.material || (pipe.diameter >= 250 ? 'DI' : 'PVC');
+    let a = 1050; // default DI
+    let pnBar = pipe.pressureRatingPnBar || (mat === 'PVC' || mat === 'HDPE' ? 10 : 16);
+
+    switch (mat) {
+      case 'Steel':
+        a = 1150;
+        pnBar = pipe.pressureRatingPnBar || 25;
+        break;
+      case 'DI':
+        a = 1050;
+        pnBar = pipe.pressureRatingPnBar || 16;
+        break;
+      case 'Concrete':
+        a = 950;
+        pnBar = pipe.pressureRatingPnBar || 10;
+        break;
+      case 'PVC':
+        a = 400;
+        pnBar = pipe.pressureRatingPnBar || 10;
+        break;
+      case 'HDPE':
+        a = 320;
+        pnBar = pipe.pressureRatingPnBar || 10;
+        break;
+    }
+
+    const len = Math.max(10, pipe.length);
+    const tc = (2 * len) / a; // Acoustic pipeline reflection period
+    const v0 = Math.abs(pipe.velocity ?? 1.0);
+
+    // 2. Joukowsky surge head Delta H (m)
+    // For rapid event (closureTime <= tc): full Joukowsky a * V / g
+    // For slow event (closureTime > tc): Allievi reduction 2 * L * V / (g * closureTime)
+    let deltaH = 0;
+    if (closureOrTripTimeSec <= tc) {
+      deltaH = (a * v0) / g;
+    } else {
+      deltaH = (2 * len * v0) / (g * closureOrTripTimeSec);
+    }
+    deltaH = Math.max(1.0, Math.round(deltaH * 10) / 10);
+
+    // Steady state head at midpoint
+    const hStart = heads.get(pipe.startNodeId) ?? 50;
+    const hEnd = heads.get(pipe.endNodeId) ?? 50;
+    const hSteady = (hStart + hEnd) / 2;
+
+    // Node elevations
+    const startNode =
+      network.junctions.find((j) => j.id === pipe.startNodeId) ||
+      network.reservoirs.find((r) => r.id === pipe.startNodeId) ||
+      network.tanks.find((t) => t.id === pipe.startNodeId);
+    const elev = startNode ? startNode.elevation : 30;
+
+    let hMax = hSteady;
+    let hMin = hSteady;
+
+    if (scenario === 'PUMP_TRIP') {
+      // Pump trip generates severe initial downsurge followed by return positive reflection
+      hMin = Math.round((hSteady - deltaH) * 10) / 10;
+      hMax = Math.round((hSteady + 0.85 * deltaH) * 10) / 10;
+    } else {
+      // Valve closure generates severe initial upsurge upstream followed by downsurge
+      hMax = Math.round((hSteady + deltaH) * 10) / 10;
+      hMin = Math.round((hSteady - 0.70 * deltaH) * 10) / 10;
+    }
+
+    const pMaxBar = Math.round((Math.max(0, hMax - elev) / 10.197) * 10) / 10;
+    const pMinBar = Math.round(((hMin - elev) / 10.197) * 10) / 10;
+
+    // Overpressure evaluation
+    let overpressureRisk: TransientPipeResult['overpressureRisk'] = 'Safe';
+    if (pMaxBar > pnBar * 1.25) {
+      overpressureRisk = 'Severe: Rupture Risk';
+      pipesAtRuptureRisk.push(pipe.id);
+    } else if (pMaxBar > pnBar * 0.95) {
+      overpressureRisk = 'Warning: Approaching Rating';
+    }
+
+    // Cavitation & Column separation evaluation (Vapor pressure ~ -10m H2O gauge)
+    const gaugePressureMinM = hMin - elev;
+    let cavitationRisk: TransientPipeResult['cavitationRisk'] = 'None';
+    if (gaugePressureMinM < -10.0) {
+      cavitationRisk = 'Severe Vapor Cavitation / Column Separation';
+      pipesAtCavitationRisk.push(pipe.id);
+    } else if (gaugePressureMinM < 0.0) {
+      cavitationRisk = 'Sub-atmospheric';
+    }
+
+    if (hMax > maxSystemSurgeHeadM) {
+      maxSystemSurgeHeadM = hMax;
+      criticalHighPressureNodeId = pipe.startNodeId;
+    }
+    if (hMin < minSystemSurgeHeadM) {
+      minSystemSurgeHeadM = hMin;
+      criticalCavitationNodeId = pipe.endNodeId;
+    }
+
+    // Sizing protection devices
+    let recProtection = 'Normal transient tolerance';
+    if (cavitationRisk === 'Severe Vapor Cavitation / Column Separation') {
+      const qM3s = Math.abs(pipe.flow ?? 10) / 1000;
+      const vAirM3 = Math.round(((2 * qM3s * len * a) / (g * Math.max(15, hSteady) * 0.6)) * 10) / 10;
+      totalAirVesselVolM3 += vAirM3;
+      recProtection = `Hydro-Pneumatic Air Vessel (${vAirM3} m³) or Dual-Chamber Air/Vacuum Valve DN${Math.min(200, Math.max(50, Math.round(pipe.diameter / 3)))}`;
+    } else if (overpressureRisk === 'Severe: Rupture Risk') {
+      recProtection = `Surge Anticipator Valve / Quick-Opening Relief Valve (Setting: ${(pnBar * 0.9).toFixed(1)} bar)`;
+    } else if (tc < closureOrTripTimeSec && scenario === 'VALVE_CLOSURE') {
+      recProtection = `Extend valve closure time to t_c >= ${(tc * 3).toFixed(1)}s (multi-stage damping)`;
+    }
+
+    return {
+      pipeId: pipe.id,
+      pipeMaterial: mat,
+      waveSpeedMs: a,
+      acousticPeriodSec: Math.round(tc * 100) / 100,
+      initialVelocityMs: v0,
+      joukowskySurgeM: deltaH,
+      steadyPressureM: Math.round((hSteady - elev) * 10) / 10,
+      maxTransientHeadM: hMax,
+      maxTransientPressureBar: pMaxBar,
+      minTransientHeadM: hMin,
+      minTransientPressureBar: pMinBar,
+      pressureRatingPnBar: pnBar,
+      overpressureRisk,
+      cavitationRisk,
+      recommendedProtection: recProtection,
+    };
+  });
+
+  // 3. Transient Protection Devices Schedule
+  const protectionDevices: TransientProtectionDevice[] = [];
+  if (totalAirVesselVolM3 > 0 || pipesAtCavitationRisk.length > 0) {
+    const vesselLoc =
+      criticalCavitationNodeId ||
+      network.pumps[0]?.endNodeId ||
+      network.pipes[0]?.startNodeId ||
+      'J-1';
+    const vesselVol = Math.max(1.5, Math.round(totalAirVesselVolM3 * 10) / 10);
+    protectionDevices.push({
+      type: 'AIR_VESSEL',
+      locationNodeId: vesselLoc,
+      recommendedSize: `${vesselVol} m³ Hydro-pneumatic Bladder Tank (Initial Pre-charge ${(minSystemSurgeHeadM > 0 ? minSystemSurgeHeadM * 0.07 : 2.5).toFixed(1)} bar)`,
+      effectiveVolumeM3: vesselVol,
+      mitigatedMaxHeadM: Math.round(maxSystemSurgeHeadM * 0.72 * 10) / 10,
+      mitigatedMinHeadM: Math.round(Math.max(5.0, minSystemSurgeHeadM + 18.0) * 10) / 10,
+    });
+
+    protectionDevices.push({
+      type: 'AIR_RELEASE_VALVE',
+      locationNodeId: criticalHighPressureNodeId || 'J-2',
+      recommendedSize: 'DN100 Rapid Air Intake / Slow Non-Slam Air Release Surge Valve',
+      mitigatedMaxHeadM: Math.round(maxSystemSurgeHeadM * 0.85 * 10) / 10,
+      mitigatedMinHeadM: 2.0,
+    });
+  }
+
+  // 4. Time History Timeline (0 to 10 seconds tracking wave oscillation)
+  const timeHistory: TransientTimeHistoryPoint[] = [];
+  const damping = 0.82;
+  for (let t = 0; t <= 10; t += 0.5) {
+    const decay = Math.exp(-0.25 * t);
+    const osc = Math.cos((2 * Math.PI * t) / Math.max(1.5, closureOrTripTimeSec * 1.2));
+    const deltaSurge = (maxSystemSurgeHeadM - 50) * decay * osc;
+
+    const nodeHeads: Record<string, number> = {};
+    network.junctions.forEach((j) => {
+      const h0 = heads.get(j.id) ?? 50;
+      nodeHeads[j.id] = Math.round((h0 + deltaSurge * damping) * 10) / 10;
+    });
+
+    timeHistory.push({
+      timeSec: Math.round(t * 10) / 10,
+      maxSystemHeadM: Math.round((50 + Math.abs(deltaSurge)) * 10) / 10,
+      minSystemHeadM: Math.round((50 - Math.abs(deltaSurge) * 0.9) * 10) / 10,
+      nodeHeads,
+    });
+  }
+
+  return {
+    scenario,
+    closureOrTripTimeSec,
+    maxSystemSurgeHeadM: Math.round(maxSystemSurgeHeadM * 10) / 10,
+    criticalHighPressureNodeId,
+    minSystemSurgeHeadM: Math.round(minSystemSurgeHeadM * 10) / 10,
+    criticalCavitationNodeId,
+    vaporCavitationOccurred: pipesAtCavitationRisk.length > 0,
+    pipesAtRuptureRisk,
+    pipesAtCavitationRisk,
+    airVesselRecommendedVolumeM3: Math.max(1.0, Math.round(totalAirVesselVolM3 * 10) / 10),
+    pipeResults,
+    timeHistory,
+    protectionDevices,
+  };
+}
+
+/**
+ * Applies Darwin-style constraint-based recommended pipe sizes to the network.
+ */
+export function applyWaterPipeOptimization(
+  network: WaterDistributionNetwork,
+  optimizations: PipeOptimizationResult[]
+): WaterDistributionNetwork {
+  const optMap = new Map(optimizations.map((o) => [o.pipeId, o]));
+
+  const updatedPipes = network.pipes.map((p) => {
+    const opt = optMap.get(p.id);
+    if (!opt) return { ...p };
+    return {
+      ...p,
+      diameter: opt.recommendedDiameterMm,
+    };
+  });
+
+  return {
+    ...network,
+    pipes: updatedPipes,
   };
 }

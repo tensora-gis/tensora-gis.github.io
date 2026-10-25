@@ -22,7 +22,7 @@ interface WaterFlexTablesProps {
   onExportExcel?: () => void;
 }
 
-type ActiveTableTab = 'junctions' | 'pipes' | 'pumps' | 'valves' | 'sources' | 'fireflow';
+type ActiveTableTab = 'junctions' | 'pipes' | 'pumps' | 'valves' | 'sources' | 'fireflow' | 'transient';
 
 export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
   network,
@@ -50,6 +50,15 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
       csv = 'ID,Label,FromNode,ToNode,Length(m),Diameter(mm),Roughness(C),Status,Flow(L/s),Velocity(m/s),Headloss(m/km)\n';
       network.pipes.forEach((p) => {
         csv += `${p.id},${p.label},${p.startNodeId},${p.endNodeId},${p.length},${p.diameter},${p.roughness},${p.status},${p.flow ?? ''},${p.velocity ?? ''},${p.unitHeadloss ?? ''}\n`;
+      });
+    } else if (activeTab === 'transient') {
+      csv = 'PipeID,Material,Length(m),Diameter(mm),PN(bar),WaveSpeed(m/s),Reflection(s),Velocity(m/s),MaxHead(m),MinHead(m),CavitationRisk,OverpressureRisk\n';
+      network.pipes.forEach((p) => {
+        const a = p.waveSpeedMs || 1050;
+        const refl = ((2 * p.length) / a).toFixed(2);
+        const cav = (p.minTransientHeadM ?? 0) < -10 ? 'YES' : 'NO';
+        const over = (p.maxTransientHeadM ?? 0) > (p.pressureRatingPnBar || 16) * 10 ? 'YES' : 'NO';
+        csv += `${p.id},${p.material || 'Ductile Iron'},${p.length},${p.diameter},${p.pressureRatingPnBar || 16},${a},${refl},${p.velocity ?? ''},${p.maxTransientHeadM ?? ''},${p.minTransientHeadM ?? ''},${cav},${over}\n`;
       });
     }
 
@@ -82,6 +91,7 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
                 ['valves', `Valves (${(network.valves || []).length})`],
                 ['sources', `Tanks & Res. (${network.tanks.length + network.reservoirs.length})`],
                 ['fireflow', `Fire Flow (${network.junctions.length})`],
+                ['transient', `Surge & Hammer (${network.pipes.length})`],
               ] as const
             ).map(([tabId, label]) => (
               <button
@@ -590,6 +600,82 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        )}
+
+        {/* 7. Surge & Water Hammer Table */}
+        {activeTab === 'transient' && (
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-[#121212] sticky top-0 border-b border-[#222] text-[10px] text-[#737373] uppercase font-tech">
+              <tr>
+                <th className="p-2">Pipe ID</th>
+                <th className="p-2">Material</th>
+                <th className="p-2">Length (m)</th>
+                <th className="p-2">Diam (mm)</th>
+                <th className="p-2">PN Rating</th>
+                <th className="p-2">Wave Speed a (m/s)</th>
+                <th className="p-2">Reflection 2L/a (s)</th>
+                <th className="p-2">Velocity (m/s)</th>
+                <th className="p-2">Max Head H_max (m)</th>
+                <th className="p-2">Min Head H_min (m)</th>
+                <th className="p-2">Cavitation Risk</th>
+                <th className="p-2">Rupture Risk</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#1a1a1a]">
+              {network.pipes
+                .filter(
+                  (p) =>
+                    p.id.toLowerCase().includes(filter) ||
+                    (p.label && p.label.toLowerCase().includes(filter))
+                )
+                .map((p) => {
+                  const a = p.waveSpeedMs || 1050;
+                  const refl = ((2 * p.length) / a).toFixed(2);
+                  const isCav = (p.minTransientHeadM ?? 0) < -10;
+                  const isOver = (p.maxTransientHeadM ?? 0) > (p.pressureRatingPnBar || 16) * 10;
+                  return (
+                    <tr
+                      key={p.id}
+                      onClick={() => onSelectElement(p)}
+                      className="hover:bg-[#171717] transition-colors cursor-pointer"
+                    >
+                      <td className="p-2 text-amber-400 font-bold">{p.id}</td>
+                      <td className="p-2 text-white">{p.material || 'Ductile Iron'}</td>
+                      <td className="p-2 text-[#ccc]">{p.length}</td>
+                      <td className="p-2 text-white">{p.diameter}</td>
+                      <td className="p-2 text-cyan-400 font-mono">PN{p.pressureRatingPnBar || 16}</td>
+                      <td className="p-2 text-amber-300 font-bold">{a}</td>
+                      <td className="p-2 text-white">{refl} s</td>
+                      <td className="p-2 text-white">{p.velocity ?? '—'}</td>
+                      <td className="p-2 font-bold text-rose-400">{p.maxTransientHeadM ?? '—'} m</td>
+                      <td className="p-2 font-bold text-purple-300">{p.minTransientHeadM ?? '—'} m</td>
+                      <td className="p-2">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            isCav
+                              ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                              : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          }`}
+                        >
+                          {isCav ? 'CAVITATION RISK' : 'NORMAL'}
+                        </span>
+                      </td>
+                      <td className="p-2">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            isOver
+                              ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                              : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          }`}
+                        >
+                          {isOver ? 'EXCEEDS PN' : 'SAFE'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
         )}

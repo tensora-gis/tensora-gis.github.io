@@ -24,6 +24,12 @@ import {
   GitCommit,
   Waves,
   Database,
+  Zap,
+  ShieldAlert,
+  ShieldCheck,
+  Flame,
+  Droplets,
+  Clock,
 } from 'lucide-react';
 
 const PumpInspectorIcon: React.FC<{ className?: string }> = ({ className }) => (
@@ -172,6 +178,45 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
                   <span>In PSI:</span>
                   <span>{((element as WaterJunction).pressure! * 1.42).toFixed(1)} psi</span>
                 </div>
+
+                {/* Fire Flow */}
+                {(element as WaterJunction).actualFireFlowLs !== undefined && (
+                  <div className="flex justify-between text-xs text-[#a3a3a3] pt-1 border-t border-[#1a1a1a]">
+                    <span className="flex items-center gap-1 text-orange-400">
+                      <Flame className="w-3 h-3" />
+                      <span>Fire Flow Available:</span>
+                    </span>
+                    <span className="font-mono text-white font-bold">
+                      {(element as WaterJunction).actualFireFlowLs} L/s
+                    </span>
+                  </div>
+                )}
+
+                {/* Water Age */}
+                {(element as WaterJunction).waterAgeHours !== undefined && (
+                  <div className="flex justify-between text-xs text-[#a3a3a3]">
+                    <span className="flex items-center gap-1 text-cyan-400">
+                      <Clock className="w-3 h-3" />
+                      <span>Water Age:</span>
+                    </span>
+                    <span className="font-mono text-white font-bold">
+                      {(element as WaterJunction).waterAgeHours} hrs
+                    </span>
+                  </div>
+                )}
+
+                {/* Chlorine Residual */}
+                {(element as WaterJunction).chlorineResidualMgL !== undefined && (
+                  <div className="flex justify-between text-xs text-[#a3a3a3]">
+                    <span className="flex items-center gap-1 text-emerald-400">
+                      <Droplets className="w-3 h-3" />
+                      <span>Chlorine Residual:</span>
+                    </span>
+                    <span className="font-mono text-white font-bold">
+                      {(element as WaterJunction).chlorineResidualMgL} mg/L
+                    </span>
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -279,6 +324,83 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
               </select>
             </div>
 
+            {/* Transient Material & Pressure Class */}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1">
+                  Pipe Material
+                </label>
+                <select
+                  value={(element as WaterPipe).material || 'Ductile Iron'}
+                  onChange={(e) => {
+                    const mat = e.target.value as WaterPipe['material'];
+                    const defaultWave =
+                      mat === 'Steel'
+                        ? 1150
+                        : mat === 'PVC'
+                        ? 400
+                        : mat === 'HDPE'
+                        ? 320
+                        : mat === 'Concrete'
+                        ? 950
+                        : 1050;
+                    onUpdateElement({
+                      ...element,
+                      material: mat,
+                      waveSpeedMs: defaultWave,
+                    });
+                  }}
+                  className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
+                >
+                  <option value="Ductile Iron">Ductile Iron (DI)</option>
+                  <option value="Steel">Mild Steel (MS)</option>
+                  <option value="PVC">uPVC</option>
+                  <option value="HDPE">HDPE PE100</option>
+                  <option value="Concrete">Prestressed Concrete</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1">
+                  Pressure Class
+                </label>
+                <select
+                  value={(element as WaterPipe).pressureRatingPnBar || 16}
+                  onChange={(e) =>
+                    onUpdateElement({
+                      ...element,
+                      pressureRatingPnBar: parseInt(e.target.value, 10) || 16,
+                    })
+                  }
+                  className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
+                >
+                  <option value={6}>PN6 (6 bar / 60m)</option>
+                  <option value={10}>PN10 (10 bar / 100m)</option>
+                  <option value={16}>PN16 (16 bar / 160m)</option>
+                  <option value={20}>PN20 (20 bar / 200m)</option>
+                  <option value={25}>PN25 (25 bar / 250m)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[10px] uppercase font-tech text-[#737373] mb-1">
+                Acoustic Wave Speed (a, m/s)
+              </label>
+              <input
+                type="number"
+                step="10"
+                value={(element as WaterPipe).waveSpeedMs || 1050}
+                onChange={(e) =>
+                  onUpdateElement({
+                    ...element,
+                    waveSpeedMs: parseFloat(e.target.value) || 1050,
+                  })
+                }
+                className="w-full bg-[#0a0a0a] border border-[#222] rounded px-2.5 py-1.5 text-white font-mono text-xs focus:outline-none focus:border-amber-500"
+              />
+            </div>
+
             {/* Results */}
             {(element as WaterPipe).flow !== undefined && (
               <div className="mt-4 p-3 rounded-lg bg-[#0a0a0a] border border-[#222] space-y-1.5">
@@ -305,6 +427,81 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
                   <span>Total Headloss:</span>
                   <span className="font-mono text-white">{(element as WaterPipe).totalHeadloss} m</span>
                 </div>
+              </div>
+            )}
+
+            {/* Transient Surge Results */}
+            {((element as WaterPipe).maxTransientHeadM !== undefined ||
+              (element as WaterPipe).waveSpeedMs !== undefined) && (
+              <div className="mt-3 p-3 rounded-lg bg-rose-950/20 border border-rose-900/30 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-rose-400 font-tech font-bold text-[10px] uppercase tracking-wider">
+                  <Zap className="w-3.5 h-3.5" />
+                  <span>Surge & Water Hammer (Joukowsky)</span>
+                </div>
+
+                <div className="flex justify-between text-xs text-[#a3a3a3]">
+                  <span>Acoustic Wave Speed:</span>
+                  <span className="font-mono text-white font-bold">
+                    {(element as WaterPipe).waveSpeedMs || 1050} m/s
+                  </span>
+                </div>
+
+                <div className="flex justify-between text-xs text-[#a3a3a3]">
+                  <span>Pipeline Reflection (2L/a):</span>
+                  <span className="font-mono text-white">
+                    {(
+                      (2 * (element as WaterPipe).length) /
+                      ((element as WaterPipe).waveSpeedMs || 1050)
+                    ).toFixed(2)}{' '}
+                    s
+                  </span>
+                </div>
+
+                {(element as WaterPipe).maxTransientHeadM !== undefined && (
+                  <>
+                    <div className="flex justify-between text-xs text-[#a3a3a3]">
+                      <span>Max Transient Head (H_max):</span>
+                      <span className="font-mono text-rose-300 font-bold">
+                        {(element as WaterPipe).maxTransientHeadM} m
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between text-xs text-[#a3a3a3]">
+                      <span>Min Transient Head (H_min):</span>
+                      <span className="font-mono text-purple-300 font-bold">
+                        {(element as WaterPipe).minTransientHeadM} m
+                      </span>
+                    </div>
+
+                    {/* Cavitation and Rupture Status Badges */}
+                    <div className="pt-2 border-t border-rose-900/40 flex flex-wrap gap-1.5">
+                      {((element as WaterPipe).minTransientHeadM ?? 0) < -10 ? (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/20 border border-red-500/50 text-red-300 text-[10px] font-tech font-bold">
+                          <ShieldAlert className="w-3 h-3 text-red-400" />
+                          <span>Vapor Cavitation Risk</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-tech">
+                          <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                          <span>No Cavitation</span>
+                        </div>
+                      )}
+
+                      {((element as WaterPipe).maxTransientHeadM ?? 0) >
+                      ((element as WaterPipe).pressureRatingPnBar || 16) * 10 ? (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/50 text-amber-300 text-[10px] font-tech font-bold">
+                          <AlertTriangle className="w-3 h-3 text-amber-400" />
+                          <span>Exceeds PN Rating</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-tech">
+                          <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                          <span>Within PN Limits</span>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </>
