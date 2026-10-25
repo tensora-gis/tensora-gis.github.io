@@ -1,211 +1,258 @@
-# Tensora GIS - Catchment & Stream Delineation
+# Tensora GIS
 
-A hydrological analysis tool for highway and railway corridors. It ingests a
-corridor alignment (KML/KMZ) and/or a chainage sheet (CSV/XLSX), resolves the
-latitude and longitude of **every** chainage, and delineates the upstream
-catchment and stream draining to a chosen chainage using a global Digital
-Elevation Model.
+> **Next-Generation Civil Infrastructure, Hydrology & Multi-Network Hydraulic Modelling Platform**
 
-Outputs: Google Earth KML, an Excel workbook, and an interactive
-satellite map.
+Tensora GIS is an engineering-grade geospatial modeling and simulation suite designed for highway, railway, and municipal infrastructure projects. Built with TypeScript and React, Tensora GIS unifies three core engineering disciplines into a cohesive, high-performance web platform powered by real global Digital Elevation Models (DEMs):
 
----
-
-## Running locally
-
-**Prerequisites:** Node.js 20+
-
-```bash
-npm install
-npm run dev          # http://localhost:3000
-```
-
-The dev server mounts Vite in middleware mode on the same Express app, so the
-UI and the `/api/*` endpoints share one origin. No API keys are required.
-
-```bash
-npm run build        # production bundle into dist/
-npm start            # serve the built bundle (NODE_ENV=production)
-npm run lint         # typecheck only
-```
+1. **Stormwater Catchment & Stream Delineation** — Real Earth D8 flow accumulation, formation modeling, and 70%-framed delineation reports.
+2. **Water Distribution Modelling & Transient Surge** — EPANET-standard Global Gradient Algorithm (GGA), Extended Period Simulation (EPS), Fire Flow analysis, Darwin automated pipe optimization, and Joukowsky/Allievi Water Hammer physics.
+3. **Wastewater Collection & Sewer Hydraulics** — EPA SWMM 5.2 engine, circular partial-flow Manning hydraulics, tractive force self-cleansing checks, drop structures, lift station pumping cycles, Pomeroy-Parkhurst $\text{H}_2\text{S}$ corrosion, and I&I analysis.
 
 ---
 
-## Deployment
+## Table of Contents
 
-**Live site:** https://tensora-gis.github.io - deployed from a GitHub
-organization repo (`tensora-gis/tensora-gis.github.io`) via
-`.github/workflows/deploy-pages.yml` on every push to `master`.
+- [Key Engineering Capabilities](#key-engineering-capabilities)
+  - [1. Stormwater Catchment & Stream Delineation](#1-stormwater-catchment--stream-delineation)
+  - [2. Water Distribution & Transient Surge Modelling](#2-water-distribution--transient-surge-modelling)
+  - [3. Wastewater Collection & SWMM Sewer Hydraulics](#3-wastewater-collection--swmm-sewer-hydraulics)
+- [Terrain & DEM Elevation Engine](#terrain--dem-elevation-engine)
+- [System Architecture](#system-architecture)
+- [Project Layout](#project-layout)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Local Development](#local-development)
+  - [Production Build](#production-build)
+- [Verification & Automated Self-Tests](#verification--automated-self-tests)
+- [Deployment & Containerization](#deployment--containerization)
+  - [Docker](#docker)
+  - [Static Hosting (GitHub Pages)](#static-hosting-github-pages)
+- [Engineering Standards & Data Integrity](#engineering-standards--data-integrity)
 
-GitHub Pages is static hosting, so the Express API is not available there. The
-Excel export detects this (404 on `/api/export-excel`) and falls back to an
-identical client-side workbook. The delineation engine already runs entirely
-in the browser, so the full hydrology workflow works on the static site.
+---
 
-The repo ships with a multi-stage Dockerfile that builds the SPA and serves it
-with the Express API (single container, one origin, no API keys needed):
+## Key Engineering Capabilities
+
+### 1. Stormwater Catchment & Stream Delineation
+
+Designed specifically for road and railway corridor culvert design where traditional raw DEM analysis fails due to the elevated embankment:
+
+- **Corridor Ingestion & Linear Referencing**: Ingests alignment vectors (`.kml` / `.kmz`) and survey chainage registers (`.csv` / `.xlsx`). Interactively projects any station perpendicularly onto the 3D alignment, reporting coordinates in both Decimal Degrees and Degrees-Minutes-Seconds (DMS).
+- **Physical Formation Modeling**: Models the embankment cross-section ($12\text{ m}$ formation half-width) and cuts the formation to simulate culvert invert placement at the true toe of slope, preventing artificial upstream pooling or false catchment truncation.
+- **Priority-Flood D8 Routing**: Resolves hydrological flow directions, accumulates upstream drainage areas, and extracts the primary channel draining directly into the target crossing.
+- **Dynamic Scope Expansion**: Automatically evaluates relief drop ($\Delta h$). If drop is under $5\text{ m}$, the analysis radius systematically scales ($500\text{ m} \to 1{,}000\text{ m} \to 2{,}000\text{ m}$) to locate the true hydrologic divide.
+- **70%-Framed Catchment Snapshot**: Automatic North-up canvas rendering that frames the delineated catchment boundary and stream to cover 70% of the viewport width and height.
+- **Standardized Excel Export**: Generates a clean, single-sheet calculation summary workbook embedding the high-resolution delineation snapshot, target chainage coordinates, catchment area ($A$), stream length ($L$), stream origin elevation, and highest ridge contour.
+
+### 2. Water Distribution & Transient Surge Modelling
+
+Comprehensive pressurized pipeline network analysis based on the EPANET Global Gradient Algorithm (GGA) coupled with Bentley HAMMER-grade transient water hammer physics:
+
+- **Network Elements**: Interactive placement and editing of Junctions, Pipes, Variable-Speed Booster Pumps, Storage Tanks, Open Reservoirs, and Control Valves (PRV, PSV, PBV, FCV, TCV, GPV).
+- **Steady-State Hydraulics**: Solves the non-linear Hazen-Williams and Darcy-Weisbach headloss equations via sparse matrix numerical iteration to exact flow and head balance convergence.
+- **Extended Period Simulation (EPS)**: 24-hour diurnal demand patterns with custom hourly multipliers, tracking dynamic tank water level fluctuations, system head variations, and pump duty cycles.
+- **Fire Flow Analysis**: Evaluates available fire-fighting flow capacities across all junctions subject to a mandatory residual pressure constraint (default $\ge 14\text{ m} / 20\text{ psi}$).
+- **Water Quality & Chlorine Decay**: Computes nodal water age (hours) and first-order disinfectant residual decay kinetics ($C(t) = C_0 \cdot e^{-k \cdot t}$).
+- **Automated Pipe Sizing Optimization**: Darwin-style genetic constraint optimization evaluating pipe velocity ($0.6 - 2.5\text{ m/s}$) and unit friction loss ($< 10\text{ m/km}$), recommending standardized nominal diameters ($100 - 600\text{ mm}$) with capital expenditure estimates.
+- **Transient Surge & Water Hammer Physics**:
+  - Joukowsky instantaneous surge formulation: $\Delta H = \frac{a \cdot \Delta V}{g}$ for rapid pump trip ($t \le \frac{2L}{a}$).
+  - Allievi slow-closure equation: $\Delta H = \frac{2 L V_0}{g \cdot T_c}$ for controlled closure ($t > \frac{2L}{a}$).
+  - Material-specific acoustic wave speeds ($a$): DI ($1{,}050\text{ m/s}$), Steel ($1{,}150\text{ m/s}$), PVC ($400\text{ m/s}$), HDPE ($320\text{ m/s}$), Concrete ($950\text{ m/s}$).
+  - Identifies pipes at risk of overpressure rupture vs. nominal pressure ratings ($\text{PN}$).
+  - Identifies vacuum cavitation risk ($\text{HGL} \le -5\text{ m}$) and sizes hydro-pneumatic air vessels ($\text{m}^3$) and vacuum relief air valves.
+- **EPANET Two-Way Interoperability**: Full `.INP` export and import round-trips.
+- **11-Worksheet Calculation Workbook**: Engineering export detailing Executive Summary, Junction Calculations, Pipe Hydraulics, Energy & Pumping, Control Valves, Sources & Storage, 24-Hr EPS, Fire Flow Register, Water Quality, Pipe Optimization, and Transient Surge Analysis.
+
+### 3. Wastewater Collection & SWMM Sewer Hydraulics
+
+Full dynamic sanitary and storm sewer modeling running on the EPA SWMM 5.2 computational engine with Bentley SewerGEMS-grade capabilities:
+
+- **Collection Network Topology**: Manholes, Gravity Conduits, Wet Wells, Lift Station Pumps, Force Mains, and Outfalls.
+- **Partial-Flow Manning Hydraulics**: Exact circular pipe partial-depth calculation using Newton-Raphson normal depth solver, tracking depth ratio ($d/D$), hydraulic radius ($R_h$), velocity, and Froude number ($\text{Fr}$).
+- **Diurnal Sanitary Generation**: Peaking factors computed via Babbitt ($M = 5 / P^{0.2}$), Harmon ($M = 1 + \frac{14}{4 + \sqrt{P}}$), Ten-States, or custom diurnal curves.
+- **Self-Cleansing & Tractive Force Physics**: Evaluates boundary shear stress $\tau = \gamma R_h S \ge 2.0\text{ Pa}$ and self-cleansing velocity ($\ge 0.6\text{ m/s}$) to guarantee sediment transport, flagging scour risk ($> 3.0\text{ m/s}$).
+- **Drop Manhole & Backwater Dynamics**: Detects invert elevation discrepancies $> 0.6\text{ m}$, flags internal/external drop connection requirements, and computes Hydraulic Grade Line (HGL) backwater surcharge states.
+- **Lift Station Pumping & Force Mains**: Mass balance in wet wells, cyclic pumping intervals, Hazen-Williams friction loss in force mains, and pump duty point calculation against dynamic system head curves.
+- **Hydrogen Sulfide ($\text{H}_2\text{S}$) Corrosion Assessment**: Pomeroy-Parkhurst effective BOD ($EBOD$) and climatic temperature modeling predicting sulfide buildup rates ($\text{mg/L/hr}$) and crown corrosion risk.
+- **Inflow & Infiltration (I&I) Routing**: Groundwater baseline infiltration plus RTK unit hydrograph wet weather inflow calculations.
+- **Automated Pipe Sizing & Slope Sizing**: Automatically adjusts diameters and minimum gradients to eliminate surcharges while satisfying self-cleansing constraints.
+- **EPA SWMM Two-Way Interoperability**: Standard SWMM `.INP` export and import.
+- **10-Worksheet Calculation Workbook**: Multi-worksheet calculation register covering Network Overview, Manhole Register, Gravity Pipe Hydraulics, Pump Stations, Outfalls, 24-Hr Routing, Auto-Design, Corrosion, and I&I.
+
+---
+
+## Terrain & DEM Elevation Engine
+
+Tensora GIS operates on ground-truth global terrain data without requiring local DEM file hosting:
+
+- **Data Sources**: Copernicus GLO-30 ($30\text{ m}$ global coverage) and NASA SRTM ($30\text{ m}$), queried via Open-Meteo, OpenTopoData, and Mapzen/AWS Terrain Tiles.
+- **Zero-Fabrication Principle**: The engine **never invents baseline elevations**. If DEM tiles are unreachable or coverage falls below $80\%$, the engine aborts with transparent error telemetry rather than outputting speculative figures.
+- **Batching & Spatial Quantization**: Queries are spatially quantized to $0.0003^\circ$ grid cells to maximize local caching efficiency and eliminate redundant HTTP round-trips.
+
+---
+
+## System Architecture
+
+Tensora GIS utilizes a dual-mode hybrid architecture:
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                          Tensora GIS Frontend                          │
+│     React 19 • Leaflet Interactive GIS • Tailwind CSS v4 • TypeScript  │
+└──────────────────────────────────┬─────────────────────────────────────┘
+                                   │
+              ┌────────────────────┴────────────────────┐
+              ▼                                         ▼
+   [Local/Server Mode]                         [Static Client Mode]
+   Express API Backend                         Client-Side In-Memory Engine
+   • /api/snapshot (Canvas Rendering)          • HTML5 Canvas Delineation Snapshot
+   • /api/export-excel (ExcelJS Server)        • ExcelJS Client Workbook Generator
+   • Static Production SPA Serving             • Zero Server Dependency (GitHub Pages)
+```
+
+- **Frontend**: React 19, TypeScript, Tailwind CSS v4, Leaflet GIS, Lucide icons.
+- **Backend / API**: Express 4, Node.js 20+, `@napi-rs/canvas` (high-performance C++ backend rasterization), `ExcelJS`.
+- **Static Fallback**: If the Express API is unavailable (such as on GitHub Pages), the client-side engine automatically detects the 404 and executes equivalent canvas rendering and Excel workbook generation directly in the browser.
+
+---
+
+## Project Layout
+
+```
+tensora-gis/
+├── .github/workflows/         # CI and GitHub Pages deployment pipelines
+├── scripts/                   # Automated regression and physics self-test suites
+│   ├── engine-selftest.ts             # 65 offline hydrology delineation tests
+│   ├── verify-stormwater-excel.ts     # Excel export & 70% snapshot verification
+│   ├── wastewater-selftest.ts         # SWMM hydraulic engine stability & 10-run suite
+│   ├── water-transient-selftest.ts    # EPANET GGA, EPS, Fire Flow & Hammer physics
+│   └── verify-crossing.ts             # End-to-end corridor crossing verification
+├── server.ts                  # Express backend & Vite middleware server
+├── src/
+│   ├── auth/                  # Google Identity Services authentication gate
+│   ├── components/            # React UI components
+│   │   ├── common/            # Shared components (PumpIcon, etc.)
+│   │   ├── water/             # Water Distribution UI (Toolbar, FlexTables, Profile, etc.)
+│   │   ├── wastewater/        # Wastewater UI (Toolbar, FlexTables, Profile, etc.)
+│   │   ├── Header.tsx         # Top app navigation bar
+│   │   ├── LeftMenu.tsx       # Module selector (Stormwater / Water / Wastewater)
+│   │   ├── InputPanel.tsx     # Corridor file ingestion & coordinate inputs
+│   │   ├── MapViewport.tsx    # Leaflet stormwater GIS map viewer
+│   │   ├── ReportCard.tsx     # Hydrology calculation card & calibration tools
+│   │   ├── WaterDistributionModelling.tsx   # Water distribution workspace root
+│   │   └── WastewaterModelling.tsx          # Wastewater collection workspace root
+│   ├── data/                  # Standard reference alignments and sample networks
+│   ├── server/                # Server-side snapshot canvas & Excel generators
+│   ├── types/                 # TypeScript interfaces and engineering data models
+│   └── utils/                 # Hydraulic, hydrological, and geospatial computation engines
+│       ├── geoUtils.ts                # Geodesy, Haversine, DMS formatting, polyline math
+│       ├── idUtils.ts                 # Guaranteed collision-free sequential ID generation
+│       ├── elevationService.ts        # Multi-provider DEM fetcher with rate-limit quarantine
+│       ├── flowDelineation.ts         # D8 routing, depression fill, catchment boundary
+│       ├── delineationEngine.ts       # Corridor formation cut & scope ladder resolution
+│       ├── stormwaterSnapshot.ts      # 70% viewport framing canvas snapshot engine
+│       ├── epanetParser.ts            # EPANET .INP file parser and exporter
+│       ├── waterHydraulicsEngine.ts   # EPANET GGA solver & transient surge analyzer
+│       ├── waterExcelExport.ts        # 11-sheet water distribution calculation workbook
+│       ├── swmmParser.ts              # EPA SWMM .INP file parser and exporter
+│       ├── wastewaterHydraulicsEngine.ts # Partial-flow Manning & lift station solver
+│       └── wastewaterExcelExport.ts   # 10-sheet wastewater calculation workbook
+├── index.html                 # Single SPA HTML entrypoint
+└── package.json               # Dependencies and build scripts
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- **Node.js**: `v20.0.0` or higher (Node 22 LTS recommended)
+- **npm**: `v10.0.0` or higher
+
+### Local Development
+
+1. Clone the repository and install dependencies:
+   ```bash
+   git clone https://github.com/tensora-gis/tensora-gis.github.io.git
+   cd tensora-gis.github.io
+   npm install
+   ```
+
+2. Start the integrated dev server:
+   ```bash
+   npm run dev
+   ```
+   Open [http://localhost:3000](http://localhost:3000) in your browser. The Express API and Vite HMR run concurrently on the same port.
+
+### Production Build
 
 ```bash
+# Clean previous builds
+npm run clean
+
+# Typecheck and compile production bundle
+npm run build
+
+# Run production server
+npm start
+```
+
+---
+
+## Verification & Automated Self-Tests
+
+Tensora GIS includes exhaustive regression test suites verifying mathematical accuracy, convergence stability, and file integrity:
+
+```bash
+# Run core offline hydrology delineation test suite (65 tests)
+npm test
+
+# Run Stormwater Excel export & 70% snapshot verification suite (26 tests)
+npx tsx scripts/verify-stormwater-excel.ts
+
+# Run Wastewater SWMM hydraulics, stability & 10-run suite (34 tests)
+npx tsx scripts/wastewater-selftest.ts
+
+# Run Water Distribution EPANET GGA, EPS, Fire Flow & Hammer suite (100% pass)
+npx tsx scripts/water-transient-selftest.ts
+
+# Run all test suites combined
+npm test && npx tsx scripts/verify-stormwater-excel.ts && npx tsx scripts/wastewater-selftest.ts && npx tsx scripts/water-transient-selftest.ts
+```
+
+---
+
+## Deployment & Containerization
+
+### Docker
+
+Build and run the self-contained multi-stage Docker image:
+
+```bash
+# Build Docker image
 docker build -t tensora-gis .
-docker run -p 8080:3000 tensora-gis   # http://localhost:8080
+
+# Run container on port 8080
+docker run -p 8080:3000 tensora-gis
 ```
 
-It works as-is on Render, Railway, Fly.io, Google Cloud Run, or any container
-host set `PORT` if the platform injects one (defaults to 3000). Requires
-Node 20+ at runtime (`.nvmrc` pins 22).
+The container includes Node 22, installs all native build tools required for `@napi-rs/canvas`, builds the client assets, and launches the Express production server. Ready for deployment on Google Cloud Run, AWS App Runner, Render, Railway, or Fly.io.
 
-CI runs on every push/PR to `master` (`.github/workflows/ci.yml`): install,
-typecheck, build, and the offline engine self-test (non-blocking).
+### Static Hosting (GitHub Pages)
 
----
-
-## What it does
-
-1. **Ingest** a corridor alignment (`.kml` / `.kmz`) and/or a chainage sheet
-   (`.csv` / `.xlsx`). Column and coordinate formats are detected dynamically
-   nothing about a project is hardcoded.
-2. **Linear referencing.** For every chainage, the exact latitude and longitude
-   on the corridor is computed by projecting the station perpendicularly onto
-   the alignment, and interpolated between stations for any chainage in
-   between. Coordinates are reported in both DMS (`27°14'41.44"N`) and decimal
-   degrees (`27.244844`).
-3. **Hydrological delineation** at the chosen chainage:
-   - Find the ground that **actually drains to** the chainage point. If no
-     watercourse reaches it, no catchment is reported the tool says so rather
-     than drawing one.
-   - Take the **head of the watercourse as the highest point within 1 km** of
-     the crossing that drains to it. A culvert discharges from **one direction
-     only**, so the catchment is that single drainage not the whole grid.
-   - Draw the channel as the **downhill D8 path the water actually takes**,
-     from that highest point to the culvert, continuing the last few metres
-     onto the chainage coordinate so it meets the placemark.
-   - Measure the drop between the culvert invert and the headwater. If that
-     drop is under **5 m**, widen the analysis scope (500 m → 1 km → 2 km) and
-     re-run. Distance is not fixed: the head is wherever the highest ground is.
-   - Report catchment area (km²), stream length (km), level stream origin
-     (m MSL), and highest contour (m MSL) where "highest contour" is the
-     headwater level, the highest point the culvert must collect from.
-
-### Why the corridor formation is modelled
-
-A road or railway formation is a **raised, graded bench**. Ground on both sides
-falls away from it, so the DEM cell under a chainage has essentially no
-upstream drainage at all raw flow routing cannot see the water. Tracing
-upstream from that cell returns a spurious pocket of a few cells, a metre or
-two of drop, and a stream that never touches the crossing.
-
-The engine therefore treats the crossing as the structure it is:
-
-- The formation is identified from the corridor geometry and **excluded from
-  runoff generation** - it is paved ballast and sheds no water.
-- It is **graded to drain towards the culvert**, exactly as a real formation is,
-  which is what lets ground beside it reach the crossing. Grading only ever
-  cuts the formation down; the natural ground outside is untouched.
-- The **culvert invert** is the lowest natural ground just beyond the toe of
-  the formation : the physical position of a culvert barrel. Using the crown of
-  the embankment instead leaves the invert metres *above* the surrounding
-  ground, so nothing can flow in.
-- The **pour point** is the toe cell beside the formation with the largest real
-  upstream catchment, so the water actually arrives rather than being assumed
-  to.
-
-Depressions are filled by priority-flood and flat areas are given an epsilon
-gradient measured from the outlets. Both are standard hydrological
-preprocessing: without the second, a metre-quantised DEM turns floodplain
-catchments into invisible regions. Neither affects a single reported number
-every figure is read from the untouched natural DEM.
-4. **Target a station** by typing a chainage, or by typing a latitude and
-   longitude directly in decimal degrees or DMS.
-5. **Export** a Google Earth KML, and an Excel workbook with three sheets:
-   hydrology summary, the complete chainage register, and the catchment
-   boundary vertices.
+The repository automatically deploys to GitHub Pages on every push to `master` via GitHub Actions (`.github/workflows/deploy-pages.yml`). When running in a purely static environment, all computation engines, canvas snapshot generators, and Excel builders gracefully execute inside the browser runtime.
 
 ---
 
-## Measurement integrity
+## Engineering Standards & Data Integrity
 
-This is the part worth reading before trusting a number.
-
-**Elevations are never invented.** Terrain comes from real global DEMs
-(Copernicus GLO-30 and SRTM 30 m, via Open-Meteo / OpenTopoData /
-Open-Elevation). When a provider is unreachable, rate-limited, or has no data
-for a location, the sample is recorded as unavailable.
-
-- There is **no default or assumed baseline elevation**. If the DEM cannot be
-  sampled, the run fails and reports why it does not substitute a number.
-- If DEM coverage of the analysis grid falls below 80%, the run is rejected as
-  unreliable.
-- Reported figures are exactly what was measured. The elevation drop is *not*
-  rounded up to a 5 m minimum; if a site genuinely has less than 5 m of relief
-  inside its catchment, that is what the report says, and the report flags it.
-
-**Provenance is stated.** Every report, KML, and exported image names the
-provider that actually answered, the DEM coverage of the analysis grid, the
-cell size, the number of contributing cells, and whether the level stream
-origin came from a survey sheet or from the DEM. Nothing claims to be
-"Google Earth verified", this is not Google Earth, and the imagery is Esri
-World Imagery with the attribution the basemap provider requires.
-
-**Scope is honoured.** The analysis grid is masked to the requested radius, so
-a "500 m" scope really is confined to 500 m even though the raster around it is
-square.
+- **Open Standards**: Fully compatible with EPA SWMM 5.2 and EPANET 2.2 input and output standards.
+- **Traceable Attribution**: Exported workbooks and KML packages document the DEM elevation source, spatial resolution, and boundary coordinates.
+- **Zero Proprietary Lock-In**: Models export directly to industry-standard `.INP` and `.XLSX` files for seamless import into Bentley OpenFlows (WaterGEMS, SewerGEMS, HAMMER) or EPA desktop software.
 
 ---
 
-## Testing
+## License
 
-```bash
-npm test                    # 65 offline tests: geometry, scope rule, arrival, failure paths
-npm run test:engine         # the above plus live DEM delineation at three sites (104 tests)
-npm start &                 # then, against a running server:
-npm run test:api            # 39 tests: snapshot, KML, Excel, input validation
-npx tsx scripts/verify-crossing.ts   # the reported failure site, end to end
-npm run test:all
-```
-
-`engine-selftest.ts` checks the delineation against analytically-known
-synthetic terrain, including the reported failure reproduced in miniature: a
-road on an embankment with higher ground on one side only, where naive D8 from
-the crossing finds nothing. It asserts that stormwater **arrives at the
-crossing**, that the drawn stream **terminates on the chainage coordinate**,
-and that the drop reaches 5 m in a plain-slope case and a DEM-plateau case.
-
-It also asserts that the engine *refuses* to produce a catchment for an empty,
-too-sparse, or perfectly flat DEM.
-
-### A note on first-run time
-
-A cold DEM needs to be downloaded for the region. The scope ladder only widens
-when the terrain is too flat for the smaller scope, and DEM samples are cached
-per region, so this is a one-time cost but on genuinely flat ground the 2 km
-attempt is the expensive one, taking a minute or two. The UI reports progress
-and never blocks on a fabricated result.
-
----
-
-## Project layout
-
-```
-server.ts                      Express app: /api/snapshot, /api/export-excel
-src/
-  types/hydrology.ts           Shared types
-  utils/
-    geoUtils.ts                Geodesy, DMS formatting, chainage resolution, polyline ops
-    fileParsers.ts             KML/KMZ and CSV/XLSX parsing, chainage → coordinate resolution
-    elevationService.ts        DEM sampling with provider fallbacks; never fabricates
-    flowDelineation.ts         D8 flow routing, contributing area, boundary tracing
-    delineationEngine.ts       The 500 m / 1,000 m / 2,000 m scope rule and report assembly
-    exportUtils.ts             KML and Excel generation
-  components/                  React UI
-  server/                      Server-side canvas snapshot and Excel workbook builders
-scripts/                       Self-tests
-```
-
----
-
-## Demo data
-
-"Load Demo" inserts a short **synthetic** reference alignment so the app can be
-exercised without a file. It is demo input only, it carries no hydrology
-results. Every elevation and catchment figure still has to come from a real DEM
-run.
+This software is released under the **MIT License**.
