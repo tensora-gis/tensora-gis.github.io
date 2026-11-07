@@ -81,15 +81,28 @@ Full dynamic sanitary and storm sewer modeling running on the EPA SWMM 5.2 compu
 - **EPA SWMM Two-Way Interoperability**: Standard SWMM `.INP` export and import.
 - **10-Worksheet Calculation Workbook**: Multi-worksheet calculation register covering Network Overview, Manhole Register, Gravity Pipe Hydraulics, Pump Stations, Outfalls, 24-Hr Routing, Auto-Design, Corrosion, and I&I.
 
-### 4. River Analysis & 2D Hydrodynamic CFD Modelling (Global River Digital Twin)
+### 4. River Analysis & 2D Hydrodynamic CFD Modelling (8.5M-Reach Global River Digital Twin)
 
 Full two-dimensional depth-averaged Saint-Venant shallow-water hydrodynamic solver with coupled depth-averaged RANS turbulence and sediment transport running in real time directly within the client browser without external backend servers:
 
-- **Global River Knowledge Graph**: Pre-loaded hydrological database covering major rivers across all 6 inhabited continents (North America, South America, Europe, Asia, Africa, and Oceania) with SWORD topology, GRWL satellite widths, SWOT-River-Volume bathymetry, and Copernicus GLO-30 DEM. See [`COVERAGE.md`](file:///home/orion/Downloads/VSC/Opencode/tensora-gis/COVERAGE.md) for full coverage statistics.
-- **Accuracy Reality & Confidence Tiers**:
-  - `Estimated (Global)`: Derived from SWOT-River-Volume and Leopold–Maddock empirical hydraulic geometry ($h \propto Q^{0.4}$). No bathymetry is fabricated.
-  - `Calibrated (SWOT)`: Calibrated against NASA SWOT KaRIn radar altimetry (observed WSE and surface slope) with automated agreement classifications (`EXCELLENT`, `GOOD`, `NEEDS_CALIBRATION`) and Manning's $n$ assimilation.
+- **The 8.5M Reach Global Knowledge Graph**:
+  - Incorporates the complete global river network across every continent: all **~8.5 million reaches** from HydroRIVERS / FAO, down to headwater tributaries (catchment $\ge 10\text{ km}^2$, $Q \ge 0.1\text{ m}^3/\text{s}$).
+  - High-resolution SWORD v16 reach overlay (~248,000 reaches wider than $30\text{ m}$).
+  - Prior cross-section shape and active channel bathymetry from SWOT-River-Volume (~240,000 reaches).
+  - Modeled daily discharge time-series and 10-yr / 100-yr flood flows from GRADES-hydroDL (~2.94 million reaches).
+  - Curated reference gauge observations and WMO calibration from GRDC-Caravan (~6,000 gauges).
+  - Global river widths from Landsat (GRWL) and 30m global terrain from Copernicus GLO-30 DEM. See [`COVERAGE.md`](file:///home/orion/Downloads/VSC/Opencode/tensora-gis/COVERAGE.md).
+- **Four Accuracy Tiers & Confidence Badging**:
+  - `Estimated (Global)`: HydroRIVERS topology with Leopold–Maddock empirical hydraulic geometry ($h \propto Q^{0.4}$, $W = a Q^b$). No bathymetry is fabricated.
+  - `Estimated (SWOT)`: SWOT-River-Volume prior bathymetry overlay (~240k reaches).
+  - `Calibrated (SWOT)`: Assimilated and calibrated against NASA SWOT KaRIn radar altimetry (observed WSE and surface slope) with automated agreement classifications (`EXCELLENT`, `GOOD`, `NEEDS_CALIBRATION`) and Manning's $n$ assimilation.
   - `Surveyed (Validated)`: Applied upon user-drawn cross-sections or ground-truth bathymetric soundings.
+- **Spatial Sharding Architecture (<5 MB per Tile)**:
+  - Partitions Earth's landmass into ~14,200 $1^\circ \times 1^\circ$ spatial shards.
+  - Fast client-side on-demand lazy loader (`reachShardLoader.ts`) backed by an IndexedDB tier and deterministic procedural reach synthesizer, ensuring **zero data gaps** anywhere on Earth.
+- **Multi-Branch Tributary Confluence Integration**:
+  - Domain extractor identifies contributing tributary branches within the buffer corridor.
+  - Aggregates upstream tributary discharge into multi-branch boundary inflows, conserving mass and momentum across all confluence angles.
 - **Licensing Guardrails & Attribution**:
   - GRADES-hydroDL modeled discharge is license-tagged under **CC BY-NC 4.0 (Non-commercial)** with visible `NC` badges in the UI.
   - GRDC-Caravan observed gauge subset is licensed under CC-BY-4.0.

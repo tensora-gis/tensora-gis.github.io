@@ -17,6 +17,11 @@ import {
   listAllCachedReaches,
   deleteReachFromCache,
 } from './indexedDbCache';
+import {
+  findClosestReachGlobally,
+  loadReachesForBounds,
+  synthesizeProceduralReach,
+} from './reachShardLoader';
 
 export class RiverDataService {
   public static getBundledReaches(): RiverReachDefinition[] {
@@ -37,7 +42,33 @@ export class RiverDataService {
       return createBenchmark500mReach();
     }
 
+    // Check if ID is a synthesized procedural reach id: reach-global-lat_lng
+    if (id.startsWith('reach-global-')) {
+      const parts = id.replace('reach-global-', '').split('_');
+      if (parts.length === 2) {
+        const lat = parseFloat(parts[0]);
+        const lng = parseFloat(parts[1]);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          return synthesizeProceduralReach(lat, lng);
+        }
+      }
+    }
+
     return null;
+  }
+
+  public static async findClosestReach(
+    lat: number,
+    lng: number,
+    maxRadiusKm: number = 25.0
+  ): Promise<{ reach: RiverReachDefinition; distanceKm: number }> {
+    return findClosestReachGlobally(lat, lng, maxRadiusKm);
+  }
+
+  public static async loadReachesInViewport(
+    bounds: [number, number, number, number]
+  ): Promise<RiverReachDefinition[]> {
+    return loadReachesForBounds(bounds);
   }
 
   public static async saveReach(reach: RiverReachDefinition): Promise<void> {

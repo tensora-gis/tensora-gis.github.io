@@ -95,6 +95,7 @@ export function assembleGlobalReach(inputs: RawReachInputs): RiverReachDefinitio
   // 6. License metadata & accuracy tier
   const licenseMeta = tagReachLicenseMetadata({
     hasSwotCalibration: Boolean(inputs.swotSp),
+    hasSwotBathymetry: Boolean(inputs.swotVolume),
     usesGradesDischarge: Boolean(inputs.grades),
     usesGrdcCaravan: Boolean(inputs.grdc),
   });

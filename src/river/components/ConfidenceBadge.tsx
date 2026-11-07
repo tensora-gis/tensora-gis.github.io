@@ -47,6 +47,14 @@ export const ConfidenceBadge: React.FC<ConfidenceBadgeProps> = ({
           label: 'Calibrated (SWOT)',
           description: 'Calibrated against NASA SWOT satellite radar altimetry (RiverSP WSE & slope).',
         };
+      case 'Estimated (SWOT)':
+        return {
+          bg: 'bg-blue-950/80 border-blue-500/80 text-blue-300',
+          dot: 'bg-blue-400',
+          icon: '📡',
+          label: 'Estimated (SWOT)',
+          description: 'SWOT-River-Volume bathymetry overlay (~240k reaches) with prior cross-section geometry.',
+        };
       case 'Estimated (Global)':
       default:
         return {
@@ -54,7 +62,7 @@ export const ConfidenceBadge: React.FC<ConfidenceBadgeProps> = ({
           dot: 'bg-amber-400',
           icon: '🌍',
           label: 'Estimated (Global)',
-          description: 'Empirical hydraulic geometry (SWOT-River-Volume + GRWL width + h ∝ Q^0.4).',
+          description: 'Empirical hydraulic geometry (HydroRIVERS topology + GRWL width + h ∝ Q^0.4).',
         };
     }
   };

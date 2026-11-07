@@ -18,6 +18,7 @@ export interface FieldLicenseProvenance {
 
 export function tagReachLicenseMetadata(params: {
   hasSwotCalibration?: boolean;
+  hasSwotBathymetry?: boolean;
   hasSurveyedCrossSections?: boolean;
   usesGradesDischarge?: boolean;
   usesGrdcCaravan?: boolean;
@@ -28,6 +29,8 @@ export function tagReachLicenseMetadata(params: {
     tier = 'Surveyed (Validated)';
   } else if (params.hasSwotCalibration) {
     tier = 'Calibrated (SWOT)';
+  } else if (params.hasSwotBathymetry) {
+    tier = 'Estimated (SWOT)';
   }
 
   const isNonCommercial = Boolean(params.usesGradesDischarge);
@@ -41,6 +44,6 @@ export function tagReachLicenseMetadata(params: {
       : 'CC-BY-4.0 (Open redistributable)',
     tier,
     nonCommercial: isNonCommercial,
-    citation: 'SWORD v16 (NASA/CNES), SWOT-River-Volume (Zenodo), GRADES-hydroDL (CC BY-NC 4.0)',
+    citation: 'HydroRIVERS / SWORD v16 (NASA/CNES), SWOT-River-Volume (Zenodo), GRADES-hydroDL (CC BY-NC 4.0)',
   };
 }

@@ -48,6 +48,7 @@ function openDatabase(): Promise<IDBDatabase> {
 }
 
 export async function saveReachToCache(id: string, name: string, data: any): Promise<void> {
+  if (typeof indexedDB === 'undefined') return;
   try {
     const db = await openDatabase();
     return new Promise((resolve, reject) => {
@@ -69,6 +70,7 @@ export async function saveReachToCache(id: string, name: string, data: any): Pro
 }
 
 export async function loadReachFromCache(id: string): Promise<any | null> {
+  if (typeof indexedDB === 'undefined') return null;
   try {
     const db = await openDatabase();
     return new Promise((resolve, reject) => {
@@ -87,6 +89,7 @@ export async function loadReachFromCache(id: string): Promise<any | null> {
 }
 
 export async function listAllCachedReaches(): Promise<{ id: string; name: string; timestamp: number }[]> {
+  if (typeof indexedDB === 'undefined') return [];
   try {
     const db = await openDatabase();
     return new Promise((resolve, reject) => {
@@ -109,6 +112,7 @@ export async function listAllCachedReaches(): Promise<{ id: string; name: string
 }
 
 export async function deleteReachFromCache(id: string): Promise<void> {
+  if (typeof indexedDB === 'undefined') return;
   try {
     const db = await openDatabase();
     return new Promise((resolve, reject) => {

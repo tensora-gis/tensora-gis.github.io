@@ -242,6 +242,19 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
   // Rainfall source term (m/s)
   const rainfallRateMs = (boundaries.rainfallMmPerHour || 0) / (3600.0 * 1000.0);
 
+  // Map tributary confluences to cells
+  const tribInflowMap = new Map<number, number>();
+  if (boundaries.tributaryInflows && boundaries.tributaryInflows.length > 0) {
+    for (const trib of boundaries.tributaryInflows) {
+      if (trib.cellIndices && trib.cellIndices.length > 0) {
+        const qPerCell = trib.dischargeM3s / trib.cellIndices.length;
+        for (const idx of trib.cellIndices) {
+          tribInflowMap.set(idx, (tribInflowMap.get(idx) || 0) + qPerCell);
+        }
+      }
+    }
+  }
+
   // Compute fluxes across all faces for each cell
   for (let c = 0; c < numCells; c++) {
     const cell = mesh.cells[c];
@@ -365,7 +378,8 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
 
     // Advance cell state
     const area = cell.areaM2;
-    const dH = (-fluxSumH / area + rainfallRateMs) * dtSec;
+    const tribQ = tribInflowMap.get(c) || 0;
+    const dH = (-fluxSumH / area + rainfallRateMs + tribQ / area) * dtSec;
     const newH = Math.max(0.0, hL + dH);
 
     let newHu = nextHu[c] + (-fluxSumHu / area + sBx / area) * dtSec;

@@ -49,6 +49,7 @@ export interface CrossSectionStation {
 
 export type AccuracyTier =
   | 'Estimated (Global)'
+  | 'Estimated (SWOT)'
   | 'Calibrated (SWOT)'
   | 'Surveyed (Validated)';
 
@@ -58,6 +59,18 @@ export interface LicenseMetadata {
   tier: AccuracyTier;
   nonCommercial?: boolean;
   citation?: string;
+}
+
+export interface TributaryConfluence {
+  id: string;
+  name: string;
+  strahlerOrder?: number;
+  confluenceStationM: number;
+  dischargeM3s: number;
+  angleDeg: number; // Inflow angle relative to main channel
+  bank: 'left' | 'right';
+  entryLat: number;
+  entryLng: number;
 }
 
 export type RiverGeometrySource =
@@ -80,6 +93,7 @@ export interface RiverReachDefinition {
   meanWidthM: number;
   defaultManningN: number;
   upstreamDischargeEstimateM3s?: number;
+  tributaries?: TributaryConfluence[];
 }
 
 /**
@@ -134,6 +148,11 @@ export interface RiverBoundaryConditions {
   rainfallMmPerHour: number;
   initialWaterDepthM: number;
   manningRoughnessDefault: number;
+  tributaryInflows?: {
+    confluenceId: string;
+    cellIndices: number[];
+    dischargeM3s: number;
+  }[];
 }
 
 /**
