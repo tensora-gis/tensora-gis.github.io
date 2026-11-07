@@ -5,11 +5,11 @@
  * - 2D Shallow-Water Saint-Venant CFD with Audusse well-balanced bed reconstruction
  * - Depth-Averaged RANS Turbulence Modelling (None, Mixing Length, k-ε, k-ω SST)
  * - Coupled Sediment Transport & Morphodynamic Bed Evolution (Exner equation)
- * - Custom CAD Civil Engineering Hydraulic Structures (6 formulations)
+ * - Custom CAD Civil Engineering Hydraulic Structures (6 formulations: Levees, Weirs, Bridges, Culverts, Gates, Embankments)
  * - NASA SWOT Radar Satellite Altimetry Calibration & Manning n Assimilation
  * - Real-world global terrain referencing via Copernicus GLO-30 / SRTM DEM
  * - High-Resolution Satellite & Topographic Maps (100% Free, NO API KEY REQUIRED)
- * - Global River Search Engine (Simulate ANY river on Earth with real geometry & data)
+ * - Global River Database (USGS HydroSHEDS, Copernicus GloFAS, GRDC, NASA SWOT)
  * - Multi-Format Export: 6-Sheet Engineering Excel (.xlsx), GeoJSON, ASCII Grid, CSV
  * - 100% Client-Side execution (WebGPU / WebGL2 / CPU fallback) with IndexedDB persistence
  */
@@ -37,8 +37,14 @@ import {
   SedimentState,
   DEFAULT_SEDIMENT_PARAMETERS,
 } from '../river/types/sediment';
-import { RiverHydraulicStructure } from '../river/structures/structureTypes';
-import { createRhineReach, GLOBAL_BUNDLED_REACHES } from '../river/data/hydroRiversLoader';
+import { RiverHydraulicStructure, RiverStructureType } from '../river/structures/structureTypes';
+import { createRhineReach } from '../river/data/hydroRiversLoader';
+import {
+  GLOBAL_RIVER_DATABASE,
+  findNearestGlobalRiver,
+  convertEntryToReachDefinition,
+} from '../river/data/globalRiverDatabase';
+import { createStructureFromMapPoints } from '../river/structures/cadStructureBuilder';
 import { RiverDataService } from '../river/data/riverDataService';
 import { generateRiverGridMesh } from '../river/geometry/meshGenerator';
 import {
@@ -53,7 +59,6 @@ import {
   RiverThematicField,
 } from '../river/components/RiverResultsOverlay';
 import { ReachSelector } from '../river/components/ReachSelector';
-import { CenterlineDrawer } from '../river/components/CenterlineDrawer';
 import { CrossSectionEditor } from '../river/components/CrossSectionEditor';
 import { StructurePlacer } from '../river/components/StructurePlacer';
 import { TurbulencePanel } from '../river/components/TurbulencePanel';
@@ -118,13 +123,20 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [isProbeMode, setIsProbeMode] = useState(false);
   const [probeStatus, setProbeStatus] = useState<string | null>(null);
 
+  // CAD Interactive Hydraulic Structure Drawing Mode
+  const [cadDrawMode, setCadDrawMode] = useState<RiverStructureType | null>(null);
+  const [cadDrawPoints, setCadDrawPoints] = useState<{ lat: number; lng: number }[]>([]);
+  const [cadNotification, setCadNotification] = useState<string | null>(null);
+
+  // Auto-Detected River Prompt (when clicking map)
+  const [detectedRiver, setDetectedRiver] = useState<{ river: any; distanceKm: number } | null>(null);
+
   // Real-Time Simulation State
   const [isSimulating, setIsSimulating] = useState(false);
   const [simSpeed] = useState(1);
 
   // Modals
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
-  const [isCenterlineDrawerOpen, setIsCenterlineDrawerOpen] = useState(false);
   const [isCrossSectionEditorOpen, setIsCrossSectionEditorOpen] = useState(false);
   const [isStructurePlacerOpen, setIsStructurePlacerOpen] = useState(false);
   const [isTurbulencePanelOpen, setIsTurbulencePanelOpen] = useState(false);
@@ -134,15 +146,13 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [isPersistenceOpen, setIsPersistenceOpen] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
 
-  // User Drawing Points on Map
-  const [drawnPoints, setDrawnPoints] = useState<{ lat: number; lng: number }[]>([]);
-
   // Leaflet Map Container & Tile Layer References
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const tileLayerGroupRef = useRef<L.LayerGroup | null>(null);
+  const cadPreviewLayerRef = useRef<L.LayerGroup | null>(null);
 
-  // References for Real-time Animation Loop
+  // References for Real-time Animation Loop & Event Handlers
   const hydroRef = useRef(hydro);
   hydroRef.current = hydro;
   const turbRef = useRef(turb);
@@ -165,6 +175,10 @@ export const RiverAnalysisModelling: React.FC = () => {
   simSpeedRef.current = simSpeed;
   const isProbeModeRef = useRef(isProbeMode);
   isProbeModeRef.current = isProbeMode;
+  const cadDrawModeRef = useRef(cadDrawMode);
+  cadDrawModeRef.current = cadDrawMode;
+  const cadDrawPointsRef = useRef(cadDrawPoints);
+  cadDrawPointsRef.current = cadDrawPoints;
 
   // Initialize Map with 100% Free, High-Res Satellite Tiles (No API key required!)
   useEffect(() => {
@@ -185,25 +199,62 @@ export const RiverAnalysisModelling: React.FC = () => {
     const tileGroup = L.layerGroup().addTo(map);
     tileLayerGroupRef.current = tileGroup;
 
+    const cadLayer = L.layerGroup().addTo(map);
+    cadPreviewLayerRef.current = cadLayer;
+
     // Apply default satellite imagery
     updateBasemapTiles(tileGroup, 'satellite');
 
     mapInstanceRef.current = map;
 
-    // Map click handler
+    // Map click handler: CAD structure drawing or Auto River Detection
     map.on('click', async (e: L.LeafletMouseEvent) => {
-      if (isProbeModeRef.current) {
-        // Probe real river at clicked location
-        setProbeStatus(`Probing river & sampling Copernicus DEM at [${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}]...`);
-        try {
-          const probedReach = await buildRealWorldRiverReach(
-            `probed-${Date.now()}`,
-            `Probed River (${e.latlng.lat.toFixed(3)}°, ${e.latlng.lng.toFixed(3)}°)`,
-            e.latlng.lat,
-            e.latlng.lng,
-            { reachLengthM: 2500 }
+      if (cadDrawModeRef.current) {
+        // User is drawing a CAD civil hydraulic structure transect
+        const clickPt = { lat: e.latlng.lat, lng: e.latlng.lng };
+
+        if (cadDrawPointsRef.current.length === 0) {
+          // First point placed
+          const pts = [clickPt];
+          setCadDrawPoints(pts);
+          setCadNotification(
+            `CAD: Start point placed at [${clickPt.lat.toFixed(4)}, ${clickPt.lng.toFixed(
+              4
+            )}]. Click across the channel to complete the ${cadDrawModeRef.current.toUpperCase()} transect.`
           );
-          handleSelectReach(probedReach);
+        } else {
+          // Second point placed: complete the structure!
+          const pt1 = cadDrawPointsRef.current[0];
+          const pt2 = clickPt;
+          const newStruct = createStructureFromMapPoints(pt1, pt2, cadDrawModeRef.current, meshRef.current);
+
+          setStructures((prev) => [...prev, newStruct]);
+          setCadDrawPoints([]);
+          setCadDrawMode(null);
+          setCadNotification(
+            `✅ Successfully installed ${newStruct.name} across ${newStruct.cellIndices.length} cells in the 2D CFD grid!`
+          );
+          setTimeout(() => setCadNotification(null), 6000);
+        }
+      } else if (isProbeModeRef.current) {
+        // Probe real river at clicked location
+        setProbeStatus(
+          `Probing river & sampling Copernicus DEM at [${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}]...`
+        );
+        try {
+          const nearest = findNearestGlobalRiver(e.latlng.lat, e.latlng.lng, 250);
+          if (nearest) {
+            handleSelectReach(convertEntryToReachDefinition(nearest.river));
+          } else {
+            const probedReach = await buildRealWorldRiverReach(
+              `probed-${Date.now()}`,
+              `Probed River (${e.latlng.lat.toFixed(3)}°, ${e.latlng.lng.toFixed(3)}°)`,
+              e.latlng.lat,
+              e.latlng.lng,
+              { reachLengthM: 2500 }
+            );
+            handleSelectReach(probedReach);
+          }
           setIsProbeMode(false);
           setProbeStatus(null);
         } catch (err: any) {
@@ -211,8 +262,11 @@ export const RiverAnalysisModelling: React.FC = () => {
           setTimeout(() => setProbeStatus(null), 4000);
         }
       } else {
-        // Centerline drawing point
-        setDrawnPoints((prev) => [...prev, { lat: e.latlng.lat, lng: e.latlng.lng }]);
+        // Clicked anywhere on the world map: Auto-detect nearest river
+        const match = findNearestGlobalRiver(e.latlng.lat, e.latlng.lng, 3500);
+        if (match) {
+          setDetectedRiver(match);
+        }
       }
     });
 
@@ -221,6 +275,22 @@ export const RiverAnalysisModelling: React.FC = () => {
       mapInstanceRef.current = null;
     };
   }, []);
+
+  // Update CAD Preview Line on Map when drawing
+  useEffect(() => {
+    if (!cadPreviewLayerRef.current) return;
+    cadPreviewLayerRef.current.clearLayers();
+
+    if (cadDrawPoints.length === 1) {
+      const pt = cadDrawPoints[0];
+      L.circleMarker([pt.lat, pt.lng], {
+        radius: 6,
+        color: '#f59e0b',
+        fillColor: '#fbbf24',
+        fillOpacity: 0.9,
+      }).addTo(cadPreviewLayerRef.current);
+    }
+  }, [cadDrawPoints]);
 
   // Update Basemap Tiles (Esri Satellite vs OpenStreetMap)
   const updateBasemapTiles = (group: L.LayerGroup, type: 'satellite' | 'streets') => {
@@ -324,6 +394,7 @@ export const RiverAnalysisModelling: React.FC = () => {
     setStructures([]);
     setSwotObs(RiverDataService.getSwotData(newReach.id));
     setCalibrationResult(null);
+    setDetectedRiver(null);
 
     // Smoothly fly map to the new reach coordinates
     if (mapInstanceRef.current && newReach.bounds) {
@@ -338,12 +409,6 @@ export const RiverAnalysisModelling: React.FC = () => {
     }
   };
 
-  // Handle Custom Reach from Centerline Drawer
-  const handleReachCreated = (userReach: RiverReachDefinition) => {
-    handleSelectReach(userReach);
-    setDrawnPoints([]);
-  };
-
   // Apply Copernicus DEM Bathymetry
   const handleApplyCopernicusDem = async () => {
     setIsSamplingDEM(true);
@@ -354,9 +419,11 @@ export const RiverAnalysisModelling: React.FC = () => {
       setMesh({ ...carvedMesh });
       const refreshedHydro = createInitialHydroState(carvedMesh, boundaries);
       setHydro(refreshedHydro);
-      alert('Copernicus GLO-30 DEM sampled & bathymetry carved successfully!');
+      setCadNotification('Copernicus GLO-30 DEM sampled & bathymetry carved successfully!');
+      setTimeout(() => setCadNotification(null), 4000);
     } catch (err: any) {
-      alert(`DEM sampling error: ${err.message}`);
+      setCadNotification(`DEM sampling error: ${err.message}`);
+      setTimeout(() => setCadNotification(null), 4000);
     } finally {
       setIsSamplingDEM(false);
     }
@@ -421,18 +488,25 @@ export const RiverAnalysisModelling: React.FC = () => {
     }
   };
 
+  const handleStartCadDraw = (type: RiverStructureType) => {
+    setCadDrawMode(type);
+    setCadDrawPoints([]);
+    setCadNotification(`📐 CAD Mode Active: Click 2 points on the river to install ${type.toUpperCase()}.`);
+  };
+
   return (
     <div className="relative w-full h-[calc(100vh-64px)] flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans">
       {/* Top Header & Reach Control Strip */}
-      <div className="p-2.5 bg-slate-900 border-b border-slate-800 flex flex-col gap-2 z-10">
+      <div className="p-2.5 bg-slate-900 border-b border-slate-800 flex flex-col gap-2 z-10 shadow-lg">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {/* Reach Selector & Global River Search */}
+          {/* Reach Selector & Global River Database */}
           <ReachSelector
             currentReach={reach}
             onSelectReach={handleSelectReach}
             onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
-            onOpenCenterlineDrawer={() => setIsCenterlineDrawerOpen(true)}
+            onOpenStructurePlacer={() => setIsStructurePlacerOpen(true)}
             onOpenImportModal={() => setIsPersistenceOpen(true)}
+            onUpdateDischarge={(q) => setBoundaries((prev) => ({ ...prev, upstreamDischargeM3s: q }))}
           />
 
           {/* Quick Simulation & Export Controls */}
@@ -449,22 +523,37 @@ export const RiverAnalysisModelling: React.FC = () => {
               {isSimulating ? (
                 <>
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
                   </svg>
-                  Pause
+                  <span>Pause CFD</span>
                 </>
               ) : (
                 <>
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                    />
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
                   </svg>
-                  Realtime CFD
+                  <span>Run 2D CFD</span>
                 </>
               )}
             </button>
 
-            {/* Full-Scale CFD Modal */}
+            {/* Batch CFD Simulation Modal */}
             <button
               onClick={() => setIsSimulationPanelOpen(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition shadow"
@@ -472,7 +561,7 @@ export const RiverAnalysisModelling: React.FC = () => {
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
-              Run Batch Simulation
+              <span>Batch Simulation</span>
             </button>
 
             {/* Direct Excel (.xlsx) Export */}
@@ -480,41 +569,77 @@ export const RiverAnalysisModelling: React.FC = () => {
               onClick={handleExportExcelDirect}
               disabled={isExportingExcel}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold transition shadow"
-              title="Export 6-Sheet Engineering Excel File"
+              title="Export 6-Sheet Engineering Excel File with Hydrodynamics, Turbulence & Sediment"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
               </svg>
-              {isExportingExcel ? 'Exporting...' : 'Export (.xlsx)'}
+              <span>{isExportingExcel ? 'Exporting...' : 'Export (.xlsx)'}</span>
             </button>
           </div>
         </div>
 
-        {/* Secondary Sub-Bar: Physics Panels & Thematic Selectors */}
+        {/* Secondary Sub-Bar: CAD Drawing Toolbar & Physics Configuration */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-xs">
-          {/* Engineering Panels Trigger Buttons */}
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setIsCrossSectionEditorOpen(true)}
-              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded font-medium transition"
-            >
-              Cross-Sections
-            </button>
+          {/* CAD Hydraulic Structure Quick-Draw Toolbar */}
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider mr-1">
+              Draw CAD Structure:
+            </span>
+            {[
+              { type: 'levee', label: '🧱 Levee' },
+              { type: 'weir', label: '🌊 Weir' },
+              { type: 'bridge', label: '🌉 Bridge' },
+              { type: 'culvert', label: '🕳️ Culvert' },
+              { type: 'gate', label: '🚪 Gate' },
+              { type: 'embankment', label: '🛡️ Embankment' },
+            ].map((btn) => (
+              <button
+                key={btn.type}
+                onClick={() => handleStartCadDraw(btn.type as RiverStructureType)}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium border transition ${
+                  cadDrawMode === btn.type
+                    ? 'bg-amber-600 border-amber-400 text-white shadow'
+                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
+                }`}
+                title={`Click map to place ${btn.label} structure`}
+              >
+                {btn.label}
+              </button>
+            ))}
+
             <button
               onClick={() => setIsStructurePlacerOpen(true)}
-              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded font-medium transition"
+              className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 ml-1"
             >
-              Structures ({structures.filter((s) => s.enabled).length})
+              Manage ({structures.filter((s) => s.enabled).length})
             </button>
+          </div>
+
+          {/* Physics Panels & Thematic Selectors */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={() => setIsCrossSectionEditorOpen(true)}
+              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded text-[11px] transition"
+            >
+              Sections
+            </button>
+
             <button
               onClick={() => setIsTurbulencePanelOpen(true)}
-              className="px-2.5 py-1 bg-slate-800 hover:bg-purple-900/40 text-purple-300 border border-purple-800/60 rounded font-medium transition"
+              className="px-2 py-0.5 bg-slate-800 hover:bg-purple-900/40 text-purple-300 border border-purple-800/60 rounded text-[11px] transition"
             >
               RANS: {turbParams.model.toUpperCase()}
             </button>
+
             <button
               onClick={() => setIsSedimentPanelOpen(true)}
-              className={`px-2.5 py-1 rounded font-medium transition border ${
+              className={`px-2 py-0.5 rounded text-[11px] transition border ${
                 sedParams.enabled
                   ? 'bg-amber-950/40 text-amber-300 border-amber-800/60'
                   : 'bg-slate-800 text-slate-400 border-slate-700'
@@ -522,43 +647,39 @@ export const RiverAnalysisModelling: React.FC = () => {
             >
               Sediment: {sedParams.enabled ? sedParams.formula.toUpperCase() : 'OFF'}
             </button>
+
             <button
               onClick={() => setIsCalibrationPanelOpen(true)}
-              className="px-2.5 py-1 bg-blue-950/40 hover:bg-blue-900/60 text-blue-300 border border-blue-800/60 rounded font-medium transition"
+              className="px-2 py-0.5 bg-blue-950/40 hover:bg-blue-900/60 text-blue-300 border border-blue-800/60 rounded text-[11px] transition"
             >
-              SWOT Calibration
+              SWOT Altimetry
             </button>
+
             <button
               onClick={handleApplyCopernicusDem}
               disabled={isSamplingDEM}
-              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded transition"
+              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded text-[11px] transition"
               title="Sample Copernicus GLO-30 DEM and carve river channel bathymetry"
             >
-              {isSamplingDEM ? 'Carving DEM...' : 'Carve Copernicus DEM'}
+              {isSamplingDEM ? 'Carving DEM...' : 'Carve DEM'}
             </button>
-          </div>
 
-          {/* Thematic Field Mode Selector & Basemap Toggle */}
-          <div className="flex items-center gap-1.5">
-            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
-              <span className="text-[10px] uppercase font-semibold text-slate-400 px-1.5">Layer:</span>
+            {/* Thematic Field Mode Selector */}
+            <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-lg border border-slate-800">
               {[
-                { id: 'depth', label: 'Depth (h)' },
-                { id: 'velocity', label: 'Velocity (|V|)' },
+                { id: 'depth', label: 'Depth' },
+                { id: 'velocity', label: '|V|' },
                 { id: 'wse', label: 'WSE' },
-                { id: 'froude', label: 'Froude (Fr)' },
-                { id: 'shear', label: 'Shear (τ)' },
-                { id: 'nuT', label: 'Eddy Visc (ν_t)' },
-                { id: 'sediment', label: 'Sediment (C)' },
-                { id: 'bedChange', label: 'Bed Δz_b' },
+                { id: 'shear', label: 'Shear' },
+                { id: 'nuT', label: 'ν_t' },
+                { id: 'sediment', label: 'Sed' },
+                { id: 'bedChange', label: 'Δz_b' },
               ].map((f) => (
                 <button
                   key={f.id}
                   onClick={() => setThematicDisplay(f.id as RiverThematicField)}
-                  className={`px-2 py-0.5 rounded text-[11px] font-medium transition ${
-                    thematicDisplay === f.id
-                      ? 'bg-cyan-600 text-white'
-                      : 'text-slate-400 hover:text-slate-200'
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${
+                    thematicDisplay === f.id ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
                   {f.label}
@@ -567,10 +688,8 @@ export const RiverAnalysisModelling: React.FC = () => {
 
               <button
                 onClick={() => setShowVectors(!showVectors)}
-                className={`px-1.5 py-0.5 rounded text-[11px] font-medium border ml-1 ${
-                  showVectors
-                    ? 'bg-slate-800 border-cyan-500 text-cyan-300'
-                    : 'bg-transparent border-slate-800 text-slate-500'
+                className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${
+                  showVectors ? 'bg-slate-800 border-cyan-500 text-cyan-300' : 'bg-transparent border-slate-800 text-slate-500'
                 }`}
                 title="Toggle Velocity Direction Arrows"
               >
@@ -581,17 +700,17 @@ export const RiverAnalysisModelling: React.FC = () => {
             {/* Basemap Switcher (Satellite vs Street) */}
             <button
               onClick={handleToggleBasemap}
-              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-medium transition shadow-sm flex items-center gap-1"
-              title="Toggle between High-Res Satellite Orthophoto and Topo Map"
+              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded text-[11px] font-medium transition shadow-sm"
+              title="Toggle between High-Res Satellite Orthophoto and Topo Map (No API Key Required)"
             >
-              <span>{basemapType === 'satellite' ? '🛰️ Satellite' : '🗺️ Streets'}</span>
+              {basemapType === 'satellite' ? '🛰️ Satellite' : '🗺️ Streets'}
             </button>
           </div>
         </div>
       </div>
 
       {/* Main Map Viewport */}
-      <div className="relative flex-1 w-full h-full">
+      <div className={`relative flex-1 w-full h-full ${cadDrawMode ? 'cursor-crosshair' : ''}`}>
         <div ref={mapContainerRef} className="w-full h-full z-0" />
 
         {/* 2D CFD Canvas Results Overlay */}
@@ -606,6 +725,65 @@ export const RiverAnalysisModelling: React.FC = () => {
           showVelocityVectors={showVectors}
           onSelectCell={(cell, idx) => setSelectedCell({ cell, idx })}
         />
+
+        {/* Active CAD Drawing Banner */}
+        {cadDrawMode && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] bg-amber-950/95 border border-amber-500 text-amber-200 px-5 py-2.5 rounded-xl text-xs font-semibold shadow-2xl flex items-center gap-4 animate-fade-in">
+            <span className="text-base">📐</span>
+            <span>
+              CAD Drawing Mode: Click 2 points across the river to place{' '}
+              <strong className="text-white uppercase">{cadDrawMode}</strong>.
+            </span>
+            <button
+              onClick={() => {
+                setCadDrawMode(null);
+                setCadDrawPoints([]);
+                setCadNotification(null);
+              }}
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] transition font-bold"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+
+        {/* CAD Notification Toast */}
+        {cadNotification && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[500] bg-slate-900/95 border border-amber-500/80 text-amber-200 px-4 py-2 rounded-xl text-xs font-medium shadow-2xl animate-fade-in">
+            {cadNotification}
+          </div>
+        )}
+
+        {/* Auto-Detected River Floating Pill (When clicking the map) */}
+        {detectedRiver && (
+          <div className="absolute top-4 left-4 z-[500] bg-slate-900/95 backdrop-blur-md border border-cyan-500/80 text-slate-100 p-3 rounded-2xl shadow-2xl text-xs max-w-sm flex flex-col gap-2 animate-fade-in">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+              <span className="font-bold text-cyan-400 flex items-center gap-1.5">
+                <span>🌊</span>
+                <span>Auto-Detected River</span>
+              </span>
+              <button onClick={() => setDetectedRiver(null)} className="text-slate-400 hover:text-white">
+                ✕
+              </button>
+            </div>
+            <div>
+              <div className="font-semibold text-slate-100">{detectedRiver.river.name}</div>
+              <div className="text-[11px] text-slate-400">
+                {detectedRiver.river.reachName} • Q ≈ {detectedRiver.river.meanDischargeM3s.toLocaleString()} m³/s • W ≈{' '}
+                {detectedRiver.river.meanWidthM} m
+              </div>
+              <div className="text-[10px] text-slate-500 mt-0.5">
+                Distance: {detectedRiver.distanceKm.toFixed(0)} km from map click
+              </div>
+            </div>
+            <button
+              onClick={() => handleSelectReach(convertEntryToReachDefinition(detectedRiver.river))}
+              className="w-full py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg text-xs font-bold transition shadow"
+            >
+              Simulate {detectedRiver.river.name} in 2D CFD →
+            </button>
+          </div>
+        )}
 
         {/* Map Probe Mode Notice */}
         {isProbeMode && (
@@ -633,10 +811,7 @@ export const RiverAnalysisModelling: React.FC = () => {
               <span className="font-semibold text-cyan-400">
                 Cell #{selectedCell.cell.id} ({selectedCell.cell.i}, {selectedCell.cell.j})
               </span>
-              <button
-                onClick={() => setSelectedCell(null)}
-                className="text-slate-400 hover:text-white"
-              >
+              <button onClick={() => setSelectedCell(null)} className="text-slate-400 hover:text-white">
                 ✕
               </button>
             </div>
@@ -678,7 +853,9 @@ export const RiverAnalysisModelling: React.FC = () => {
               </div>
               <div>
                 <span className="text-slate-400">Bed Shift Δz_b:</span>{' '}
-                <strong className={sed.bedElevationChangeM[selectedCell.idx] < 0 ? 'text-rose-400' : 'text-emerald-400'}>
+                <strong
+                  className={sed.bedElevationChangeM[selectedCell.idx] < 0 ? 'text-rose-400' : 'text-emerald-400'}
+                >
                   {sed.bedElevationChangeM[selectedCell.idx].toFixed(4)} m
                 </strong>
               </div>
@@ -713,15 +890,6 @@ export const RiverAnalysisModelling: React.FC = () => {
         }}
       />
 
-      {/* Centerline Drawer Modal */}
-      <CenterlineDrawer
-        isOpen={isCenterlineDrawerOpen}
-        onClose={() => setIsCenterlineDrawerOpen(false)}
-        drawnPoints={drawnPoints}
-        onClearPoints={() => setDrawnPoints([])}
-        onReachCreated={handleReachCreated}
-      />
-
       {/* Cross-Section Geometry Editor Modal */}
       <CrossSectionEditor
         isOpen={isCrossSectionEditorOpen}
@@ -743,6 +911,7 @@ export const RiverAnalysisModelling: React.FC = () => {
         mesh={mesh}
         structures={structures}
         onUpdateStructures={(updated) => setStructures(updated)}
+        onStartMapDrawStructure={handleStartCadDraw}
       />
 
       {/* RANS Turbulence Configuration Panel */}
@@ -751,77 +920,66 @@ export const RiverAnalysisModelling: React.FC = () => {
         onClose={() => setIsTurbulencePanelOpen(false)}
         parameters={turbParams}
         onUpdateParameters={(params) => setTurbParams(params)}
-        currentMaxNuT={Math.max(...Array.from(turb.nuT))}
-        currentMeanNuT={Array.from(turb.nuT).reduce((a, b) => a + b, 0) / Math.max(1, turb.nuT.length)}
-        currentMaxK={Math.max(...Array.from(turb.k))}
       />
 
-      {/* Sediment Transport & Morphodynamics Panel */}
+      {/* Sediment Transport Configuration Panel */}
       <SedimentPanel
         isOpen={isSedimentPanelOpen}
         onClose={() => setIsSedimentPanelOpen(false)}
         parameters={sedParams}
         onUpdateParameters={(params) => setSedParams(params)}
-        cumulativeScourM3={sed.cumulativeScourVolumeM3}
-        cumulativeDepoM3={sed.cumulativeDepositionVolumeM3}
       />
 
-      {/* NASA SWOT Altimetry Calibration Panel */}
+      {/* NASA SWOT Calibration Panel */}
       <CalibrationPanel
         isOpen={isCalibrationPanelOpen}
         onClose={() => setIsCalibrationPanelOpen(false)}
-        mesh={mesh}
-        hydro={hydro}
-        swotObs={swotObs}
+        reach={reach}
+        swotObservation={swotObs}
+        simulatedWse={Array.from(hydro.wse)}
         onApplyCalibratedManningN={(newN) => {
-          mesh.cells.forEach((c) => (c.manningN = newN));
-          setMesh({ ...mesh });
-          const refreshed = evaluateSwotCalibration(mesh, hydro, swotObs!);
-          setCalibrationResult(refreshed);
+          setBoundaries((prev) => ({ ...prev, manningRoughnessDefault: newN }));
+          const updatedReach = { ...reach, defaultManningN: newN };
+          setReach(updatedReach);
+          const updatedMesh = generateRiverGridMesh(updatedReach);
+          setMesh(updatedMesh);
         }}
       />
 
-      {/* 2D CFD Batch Simulation Runner Modal */}
+      {/* Full-Scale 2D CFD Simulation Panel */}
       <SimulationPanel
         isOpen={isSimulationPanelOpen}
         onClose={() => setIsSimulationPanelOpen(false)}
-        reach={reach}
         mesh={mesh}
+        initialHydro={hydro}
+        initialTurb={turb}
+        initialSed={sed}
         boundaries={boundaries}
         structures={structures}
         turbParams={turbParams}
         sedParams={sedParams}
-        onSimulationFinished={(newHydro, newTurb, newSed, newSummary) => {
-          setHydro(newHydro);
-          setTurb(newTurb);
-          setSed(newSed);
-          setSummary(newSummary);
+        onSimulationComplete={(finalHydro, finalTurb, finalSed, resSummary) => {
+          setHydro({ ...finalHydro });
+          setTurb({ ...finalTurb });
+          setSed({ ...finalSed });
+          setSummary(resSummary);
+          if (swotObs) {
+            const cal = evaluateSwotCalibration(swotObs, Array.from(finalHydro.wse), reach.defaultManningN);
+            setCalibrationResult(cal);
+          }
         }}
-        calibrationResult={calibrationResult}
       />
 
-      {/* Project Persistence Modal */}
+      {/* Local IndexedDB Project Persistence Modal */}
       <ReachPersistence
         isOpen={isPersistenceOpen}
         onClose={() => setIsPersistenceOpen(false)}
-        reach={reach}
-        mesh={mesh}
-        boundaries={boundaries}
-        structures={structures}
-        gauges={[]}
-        swotObservation={swotObs || undefined}
-        turbParams={turbParams}
-        sedParams={sedParams}
-        onLoadArchive={(archive) => {
-          setReach(archive.reach);
-          const newMesh = archive.mesh || generateRiverGridMesh(archive.reach);
-          setMesh(newMesh);
-          setBoundaries(archive.boundaries);
-          setStructures(archive.structures || []);
-          setTurbParams(archive.turbParams || DEFAULT_TURBULENCE_PARAMETERS);
-          setSedParams(archive.sedParams || DEFAULT_SEDIMENT_PARAMETERS);
-          setHydro(createInitialHydroState(newMesh, archive.boundaries));
-        }}
+        currentReach={reach}
+        currentStructures={structures}
+        currentTurbParams={turbParams}
+        currentSedParams={sedParams}
+        onLoadReach={(loadedReach) => handleSelectReach(loadedReach)}
+        onLoadStructures={(loadedStructures) => setStructures(loadedStructures)}
       />
     </div>
   );

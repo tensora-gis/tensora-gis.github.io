@@ -17,6 +17,7 @@
 
 import { RiverReachDefinition } from '../types/riverReach';
 import { createDefaultEmpiricalStation } from '../geometry/empiricalSection';
+import { GLOBAL_RIVER_DATABASE, convertEntryToReachDefinition } from './globalRiverDatabase';
 
 /**
  * Rhine River Reach (Basel, Switzerland / Germany)
@@ -378,15 +379,6 @@ export function createBenchmark500mReach(): RiverReachDefinition {
 }
 
 export const GLOBAL_BUNDLED_REACHES: RiverReachDefinition[] = [
-  createRhineReach(), // Default real-world river on first load
-  createDanubeReach(),
-  createMississippiReach(),
-  createGangesReach(),
-  createThamesReach(),
-  createSeineReach(),
-  createAmazonReach(),
-  createColoradoReach(),
-  createNileReach(),
-  createHudsonReach(),
+  ...GLOBAL_RIVER_DATABASE.map((entry) => convertEntryToReachDefinition(entry)),
   createBenchmark500mReach(),
 ];

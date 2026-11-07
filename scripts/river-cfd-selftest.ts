@@ -13,6 +13,12 @@
 import { RiverDataService } from '../src/river/data/riverDataService';
 import { RiverCfdEngine } from '../src/river/solver/riverCfdEngine';
 import { createCustomCadStructure } from '../src/river/structures/structureFlux';
+import { createStructureFromMapPoints } from '../src/river/structures/cadStructureBuilder';
+import {
+  GLOBAL_RIVER_DATABASE,
+  findNearestGlobalRiver,
+  convertEntryToReachDefinition,
+} from '../src/river/data/globalRiverDatabase';
 import { evaluateSwotCalibration } from '../src/river/calibration/swotCalibration';
 import { createRiverExcelWorkbook } from '../src/river/export/riverExport';
 import { DEFAULT_TURBULENCE_PARAMETERS } from '../src/river/types/turbulence';
@@ -21,6 +27,31 @@ import { DEFAULT_SEDIMENT_PARAMETERS } from '../src/river/types/sediment';
 console.log('--- RUNNING FULL RIVER CFD ENGINE END-TO-END TEST ---');
 
 async function run() {
+  // Test 1: Global River Database Verification
+  console.log(`✓ Verifying Global River Database (${GLOBAL_RIVER_DATABASE.length} world rivers)...`);
+  if (GLOBAL_RIVER_DATABASE.length < 20) {
+    throw new Error('Global river database has too few entries');
+  }
+
+  const continents = new Set(GLOBAL_RIVER_DATABASE.map((r) => r.continent));
+  if (continents.size < 6) {
+    throw new Error(`Expected all 6 continents, found only: ${Array.from(continents).join(', ')}`);
+  }
+  console.log(`  - Verified rivers across all 6 continents: ${Array.from(continents).join(', ')}`);
+
+  // Test 2: Spatial Index / Nearest River Lookup
+  const memphisMatch = findNearestGlobalRiver(35.15, -90.06);
+  if (!memphisMatch || memphisMatch.river.name !== 'Mississippi River') {
+    throw new Error(`Failed to locate Mississippi River near Memphis, got: ${memphisMatch?.river.name}`);
+  }
+  console.log(`  - Spatial lookup test passed: [35.15°, -90.06°] -> ${memphisMatch.river.name} (${memphisMatch.distanceKm.toFixed(1)} km)`);
+
+  const baselMatch = findNearestGlobalRiver(47.56, 7.59);
+  if (!baselMatch || baselMatch.river.name !== 'Rhine River') {
+    throw new Error(`Failed to locate Rhine River near Basel, got: ${baselMatch?.river.name}`);
+  }
+  console.log(`  - Spatial lookup test passed: [47.56°, 7.59°] -> ${baselMatch.river.name} (${baselMatch.distanceKm.toFixed(1)} km)`);
+
   const reach = await RiverDataService.getReachById('reach-benchmark-500m');
   if (!reach) throw new Error('Could not load benchmark reach');
 
@@ -62,6 +93,17 @@ async function run() {
     }
   );
   console.log(`✓ Placed custom structure: "${weir.name}" across ${weir.cellIndices.length} cells`);
+
+  // Test interactive CAD Structure builder (from map points)
+  const mapLevee = createStructureFromMapPoints(weirCoords[0], weirCoords[1], 'levee', mesh);
+  if (mapLevee.cellIndices.length !== mesh.ny || mapLevee.type !== 'levee') {
+    throw new Error('Interactive CAD levee builder failed');
+  }
+  const mapBridge = createStructureFromMapPoints(weirCoords[0], weirCoords[1], 'bridge', mesh);
+  if (mapBridge.type !== 'bridge' || (mapBridge as any).pierCount !== 3) {
+    throw new Error('Interactive CAD bridge builder failed');
+  }
+  console.log(`✓ Interactive CAD Structure Builder verified for Levees and Bridges`);
 
   const turbParams = { ...DEFAULT_TURBULENCE_PARAMETERS, model: 'k-epsilon' as const };
   const sedParams = { ...DEFAULT_SEDIMENT_PARAMETERS, formula: 'engelund-hansen' as const };
