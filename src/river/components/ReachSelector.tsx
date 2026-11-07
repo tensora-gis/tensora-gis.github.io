@@ -13,6 +13,7 @@ import {
   convertEntryToReachDefinition,
   fetchLiveCopernicusDischarge,
 } from '../data/globalRiverDatabase';
+import { ConfidenceBadge } from './ConfidenceBadge';
 
 interface ReachSelectorProps {
   currentReach: RiverReachDefinition;
@@ -112,6 +113,12 @@ export const ReachSelector: React.FC<ReachSelectorProps> = ({
               <option value="reach-benchmark-500m">500m Canonical Flume Benchmark</option>
             </optgroup>
           </select>
+
+          {/* Accuracy Tier & Confidence Badge */}
+          <ConfidenceBadge
+            tier={currentReach.accuracyTier}
+            licenseMetadata={currentReach.licenseMetadata}
+          />
         </div>
 
         {/* Live Copernicus GloFAS Discharge Ingestion Button */}

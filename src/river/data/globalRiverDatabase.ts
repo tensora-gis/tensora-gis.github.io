@@ -13,7 +13,7 @@
  * - Copernicus GLO-30 / SRTM 30m Global DEM
  */
 
-import { RiverReachDefinition, RiverCenterlinePoint, CrossSectionStation } from '../types/riverReach';
+import { RiverReachDefinition, RiverCenterlinePoint, CrossSectionStation, AccuracyTier, LicenseMetadata } from '../types/riverReach';
 import { createDefaultEmpiricalStation } from '../geometry/empiricalSection';
 
 export interface GlobalRiverEntry {
@@ -35,6 +35,7 @@ export interface GlobalRiverEntry {
   swotWseM: number;
   swotSlopeMmPerKm: number;
   description: string;
+  accuracyTier?: AccuracyTier;
   centerline: RiverCenterlinePoint[];
   bounds: [number, number, number, number]; // [minLat, minLng, maxLat, maxLng]
 }
@@ -854,6 +855,15 @@ export const GLOBAL_RIVER_DATABASE: GlobalRiverEntry[] = [
  */
 export function convertEntryToReachDefinition(entry: GlobalRiverEntry): RiverReachDefinition {
   const reachLengthM = entry.centerline[entry.centerline.length - 1]?.stationM || 3000;
+  const tier: AccuracyTier = entry.accuracyTier || (entry.swotWseM > 0 ? 'Calibrated (SWOT)' : 'Estimated (Global)');
+
+  const licenseMetadata: LicenseMetadata = {
+    source: 'SWORD / HydroRIVERS / SWOT-River-Volume / Copernicus GLO-30 / GRADES-hydroDL',
+    license: 'CC BY-NC 4.0 (Non-commercial modeled discharge) / CC BY 4.0',
+    tier,
+    nonCommercial: true,
+    citation: 'SWORD v16, SWOT-River-Volume (NASA/Zenodo), GRADES-hydroDL',
+  };
 
   // Build 3 representative cross-sections
   const crossSections: CrossSectionStation[] = [
@@ -877,6 +887,8 @@ export function convertEntryToReachDefinition(entry: GlobalRiverEntry): RiverRea
     name: `${entry.name} (${entry.reachName})`,
     description: `${entry.description} Basin: ${entry.basin}. Catchment: ${entry.catchmentAreaKm2.toLocaleString()} km². Strahler Order: ${entry.strahlerOrder}.`,
     source: 'hydrorivers',
+    accuracyTier: tier,
+    licenseMetadata,
     centerline: entry.centerline,
     crossSections,
     bounds: entry.bounds,

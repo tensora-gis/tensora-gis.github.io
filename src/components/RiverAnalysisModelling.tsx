@@ -59,6 +59,8 @@ import {
   RiverThematicField,
 } from '../river/components/RiverResultsOverlay';
 import { ReachSelector } from '../river/components/ReachSelector';
+import { ConfidenceBadge } from '../river/components/ConfidenceBadge';
+import { RiverSearchBar } from '../river/components/RiverSearchBar';
 import { CrossSectionEditor } from '../river/components/CrossSectionEditor';
 import { StructurePlacer } from '../river/components/StructurePlacer';
 import { TurbulencePanel } from '../river/components/TurbulencePanel';
@@ -68,6 +70,7 @@ import { SimulationPanel } from '../river/components/SimulationPanel';
 import { ReachPersistence } from '../river/components/ReachPersistence';
 import { GlobalRiverSearchModal } from '../river/components/GlobalRiverSearchModal';
 import { buildRealWorldRiverReach } from '../river/data/globalRiverSearchService';
+import { runInstantSimulation } from '../river/instant/instantSimulation';
 import {
   createRiverExcelWorkbook,
   triggerFileDownload,
@@ -227,14 +230,39 @@ export const RiverAnalysisModelling: React.FC = () => {
           const pt1 = cadDrawPointsRef.current[0];
           const pt2 = clickPt;
           const newStruct = createStructureFromMapPoints(pt1, pt2, cadDrawModeRef.current, meshRef.current);
+          const updatedStructs = [...structuresRef.current, newStruct];
 
-          setStructures((prev) => [...prev, newStruct]);
+          setStructures(updatedStructs);
           setCadDrawPoints([]);
           setCadDrawMode(null);
           setCadNotification(
-            `✅ Successfully installed ${newStruct.name} across ${newStruct.cellIndices.length} cells in the 2D CFD grid!`
+            `✅ Installed ${newStruct.name} across ${newStruct.cellIndices.length} cells. Running instant 2D CFD...`
           );
-          setTimeout(() => setCadNotification(null), 6000);
+
+          // Execute instant 2D CFD simulation on demand
+          runInstantSimulation({
+            reach,
+            mesh: meshRef.current,
+            boundaries: boundariesRef.current,
+            structures: updatedStructs,
+            turbParams: turbParamsRef.current,
+            sedParams: sedParamsRef.current,
+            mode: 'preview',
+          })
+            .then((res) => {
+              setHydro(res.hydro);
+              setTurb(res.turb);
+              setSed(res.sed);
+              setSummary(res.summary);
+              setCadNotification(
+                `✅ Instant 2D CFD complete for ${newStruct.name} (${res.fromCache ? 'Cached' : 'Computed in <2s'})! Wake & backwater updated.`
+              );
+              setTimeout(() => setCadNotification(null), 5000);
+            })
+            .catch((err) => {
+              console.warn('Instant simulation error:', err);
+              setTimeout(() => setCadNotification(null), 3000);
+            });
         }
       } else if (isProbeModeRef.current) {
         // Probe real river at clicked location
@@ -500,14 +528,17 @@ export const RiverAnalysisModelling: React.FC = () => {
       <div className="p-2.5 bg-slate-900 border-b border-slate-800 flex flex-col gap-2 z-10 shadow-lg">
         <div className="flex flex-wrap items-center justify-between gap-2">
           {/* Reach Selector & Global River Database */}
-          <ReachSelector
-            currentReach={reach}
-            onSelectReach={handleSelectReach}
-            onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
-            onOpenStructurePlacer={() => setIsStructurePlacerOpen(true)}
-            onOpenImportModal={() => setIsPersistenceOpen(true)}
-            onUpdateDischarge={(q) => setBoundaries((prev) => ({ ...prev, upstreamDischargeM3s: q }))}
-          />
+          <div className="flex items-center gap-2 flex-wrap flex-1">
+            <ReachSelector
+              currentReach={reach}
+              onSelectReach={handleSelectReach}
+              onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
+              onOpenStructurePlacer={() => setIsStructurePlacerOpen(true)}
+              onOpenImportModal={() => setIsPersistenceOpen(true)}
+              onUpdateDischarge={(q) => setBoundaries((prev) => ({ ...prev, upstreamDischargeM3s: q }))}
+            />
+            <RiverSearchBar onSelectReach={handleSelectReach} />
+          </div>
 
           {/* Quick Simulation & Export Controls */}
           <div className="flex items-center gap-2">
@@ -811,9 +842,12 @@ export const RiverAnalysisModelling: React.FC = () => {
               <span className="font-semibold text-cyan-400">
                 Cell #{selectedCell.cell.id} ({selectedCell.cell.i}, {selectedCell.cell.j})
               </span>
-              <button onClick={() => setSelectedCell(null)} className="text-slate-400 hover:text-white">
-                ✕
-              </button>
+              <div className="flex items-center gap-1.5">
+                <ConfidenceBadge tier={reach.accuracyTier} compact />
+                <button onClick={() => setSelectedCell(null)} className="text-slate-400 hover:text-white">
+                  ✕
+                </button>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px]">
@@ -939,7 +973,11 @@ export const RiverAnalysisModelling: React.FC = () => {
         simulatedWse={Array.from(hydro.wse)}
         onApplyCalibratedManningN={(newN) => {
           setBoundaries((prev) => ({ ...prev, manningRoughnessDefault: newN }));
-          const updatedReach = { ...reach, defaultManningN: newN };
+          const updatedReach: RiverReachDefinition = {
+            ...reach,
+            defaultManningN: newN,
+            accuracyTier: 'Calibrated (SWOT)',
+          };
           setReach(updatedReach);
           const updatedMesh = generateRiverGridMesh(updatedReach);
           setMesh(updatedMesh);

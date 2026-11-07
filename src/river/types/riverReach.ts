@@ -47,6 +47,19 @@ export interface CrossSectionStation {
   manningN: number;
 }
 
+export type AccuracyTier =
+  | 'Estimated (Global)'
+  | 'Calibrated (SWOT)'
+  | 'Surveyed (Validated)';
+
+export interface LicenseMetadata {
+  source: string;
+  license: string;
+  tier: AccuracyTier;
+  nonCommercial?: boolean;
+  citation?: string;
+}
+
 export type RiverGeometrySource =
   | 'swot-inversion'
   | 'user-drawn'
@@ -58,6 +71,8 @@ export interface RiverReachDefinition {
   name: string;
   description?: string;
   source: RiverGeometrySource;
+  accuracyTier?: AccuracyTier;
+  licenseMetadata?: LicenseMetadata;
   centerline: RiverCenterlinePoint[];
   crossSections: CrossSectionStation[];
   bounds: [number, number, number, number]; // [minLat, minLng, maxLat, maxLng]
@@ -185,6 +200,8 @@ export interface RiverCfdSummary {
   totalTimeSimulatedSec: number;
   totalSteps: number;
   backendUsed: 'webgpu' | 'webgl2' | 'cpu';
+  accuracyTier?: AccuracyTier;
+  licenseMetadata?: LicenseMetadata;
   maxWaterDepthM: number;
   maxVelocityMs: number;
   maxWseM: number;
