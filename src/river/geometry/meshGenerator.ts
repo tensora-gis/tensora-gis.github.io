@@ -367,3 +367,157 @@ function findClosestCrossSection(
 
   return closest;
 }
+
+/**
+ * Interactively translate the entire computational mesh by offsetXM and offsetYM (meters)
+ */
+export function translateMesh(
+  mesh: RiverGridMesh,
+  offsetXM: number,
+  offsetYM: number
+): RiverGridMesh {
+  if (offsetXM === 0 && offsetYM === 0) return mesh;
+
+  const originLat = mesh.centerline[0]?.lat || (mesh.bounds[0] + mesh.bounds[2]) * 0.5;
+  const dLat = offsetYM / METERS_PER_DEG_LAT;
+  const dLng = offsetXM / (METERS_PER_DEG_LAT * Math.max(0.1, Math.cos((originLat * Math.PI) / 180.0)));
+
+  const updatedCells: RiverGridCell[] = mesh.cells.map((cell) => {
+    const updatedCorners: [number, number][] = cell.corners.map(([cLat, cLng]) => [
+      cLat + dLat,
+      cLng + dLng,
+    ]);
+
+    return {
+      ...cell,
+      centerX: cell.centerX + offsetXM,
+      centerY: cell.centerY + offsetYM,
+      centerLat: cell.centerLat + dLat,
+      centerLng: cell.centerLng + dLng,
+      corners: updatedCorners,
+    };
+  });
+
+  const updatedCenterline: RiverCenterlinePoint[] = mesh.centerline.map((pt) => ({
+    ...pt,
+    lat: pt.lat + dLat,
+    lng: pt.lng + dLng,
+  }));
+
+  const updatedBounds: [number, number, number, number] = [
+    mesh.bounds[0] + dLat,
+    mesh.bounds[1] + dLng,
+    mesh.bounds[2] + dLat,
+    mesh.bounds[3] + dLng,
+  ];
+
+  return {
+    ...mesh,
+    cells: updatedCells,
+    centerline: updatedCenterline,
+    bounds: updatedBounds,
+  };
+}
+
+/**
+ * Interactively rotate the computational mesh by angleDeg (degrees) around a pivot
+ */
+export function rotateMesh(
+  mesh: RiverGridMesh,
+  angleDeg: number,
+  pivot?: [number, number] // [pivotLat, pivotLng]
+): RiverGridMesh {
+  if (angleDeg === 0) return mesh;
+
+  const rad = (angleDeg * Math.PI) / 180.0;
+  const cosT = Math.cos(rad);
+  const sinT = Math.sin(rad);
+
+  const pivotLat = pivot ? pivot[0] : (mesh.bounds[0] + mesh.bounds[2]) * 0.5;
+  const pivotLng = pivot ? pivot[1] : (mesh.bounds[1] + mesh.bounds[3]) * 0.5;
+  const cosLat = Math.cos((pivotLat * Math.PI) / 180.0);
+
+  const rotateCoord = (lat: number, lng: number): [number, number] => {
+    const yM = (lat - pivotLat) * METERS_PER_DEG_LAT;
+    const xM = (lng - pivotLng) * METERS_PER_DEG_LAT * cosLat;
+    const rotXM = xM * cosT - yM * sinT;
+    const rotYM = xM * sinT + yM * cosT;
+    const newLat = pivotLat + rotYM / METERS_PER_DEG_LAT;
+    const newLng = pivotLng + rotXM / (METERS_PER_DEG_LAT * cosLat);
+    return [newLat, newLng];
+  };
+
+  const updatedCells: RiverGridCell[] = mesh.cells.map((cell) => {
+    const [cLat, cLng] = rotateCoord(cell.centerLat, cell.centerLng);
+    const updatedCorners: [number, number][] = cell.corners.map(([lat, lng]) => rotateCoord(lat, lng));
+
+    // Rotate face normals
+    const updatedNormals: [number, number][] = cell.faceNormals.map(([nx, ny]) => [
+      nx * cosT - ny * sinT,
+      nx * sinT + ny * cosT,
+    ]);
+
+    return {
+      ...cell,
+      centerLat: cLat,
+      centerLng: cLng,
+      corners: updatedCorners,
+      faceNormals: updatedNormals,
+    };
+  });
+
+  const updatedCenterline: RiverCenterlinePoint[] = mesh.centerline.map((pt) => {
+    const [rLat, rLng] = rotateCoord(pt.lat, pt.lng);
+    return { ...pt, lat: rLat, lng: rLng };
+  });
+
+  // Recompute bounding box
+  let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+  for (const c of updatedCells) {
+    for (const [lat, lng] of c.corners) {
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+    }
+  }
+
+  return {
+    ...mesh,
+    cells: updatedCells,
+    centerline: updatedCenterline,
+    bounds: [minLat, minLng, maxLat, maxLng],
+  };
+}
+
+/**
+ * Shifts the mesh along the reach thalweg (stationShiftM) and laterally (lateralShiftM)
+ */
+export function shiftMeshAlongThalweg(
+  reach: RiverReachDefinition,
+  stationShiftM: number,
+  lateralShiftM: number,
+  targetSpacingM: number = 20.0,
+  ny: number = 8
+): RiverGridMesh {
+  const baseMesh = generateRiverGridMesh(reach, targetSpacingM, ny);
+  if (stationShiftM === 0 && lateralShiftM === 0) return baseMesh;
+
+  // Approximate metric vector based on centerline tangent
+  const p0 = baseMesh.centerline[0];
+  const p1 = baseMesh.centerline[baseMesh.centerline.length - 1];
+  const dLat = p1.lat - p0.lat;
+  const dLng = p1.lng - p0.lng;
+  const len = Math.hypot(dLat, dLng) || 1e-5;
+
+  const unitTx = dLng / len;
+  const unitTy = dLat / len;
+  const unitNx = -unitTy;
+  const unitNy = unitTx;
+
+  const totalShiftX = unitTx * stationShiftM + unitNx * lateralShiftM;
+  const totalShiftY = unitTy * stationShiftM + unitNy * lateralShiftM;
+
+  return translateMesh(baseMesh, totalShiftX, totalShiftY);
+}
+

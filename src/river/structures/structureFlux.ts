@@ -18,6 +18,9 @@ import {
   RiverCulvertStructure,
   RiverGateStructure,
   RiverEmbankmentStructure,
+  RiverSpurdikeStructure,
+  RiverBridgePierStructure,
+  RiverCustomDeflectorStructure,
   RiverStructureType,
 } from './structureTypes';
 import { RiverGridCell, RiverGridMesh, RiverCoordinate } from '../types/riverReach';
@@ -63,6 +66,12 @@ export function evaluateStructureInteraction(
       return evaluateGate(struct, etaA, etaB);
     case 'embankment':
       return evaluateEmbankment(struct, etaA, etaB, faceLength);
+    case 'spurdike':
+      return evaluateSpurdike(struct, etaA, etaB, faceLength);
+    case 'bridge-pier':
+      return evaluateBridgePier(struct, hA, hB, faceLength);
+    case 'custom-deflector':
+      return evaluateCustomDeflector(struct, etaA, etaB, faceLength);
     default:
       return { blocked: false, description: 'Standard' };
   }
@@ -510,7 +519,123 @@ export function createCustomCadStructure(
         sideSlopeHtoV: options.sideSlopeHtoV ?? 2.0,
         overtopDischargeCoeff: options.dischargeCoeff ?? 1.45,
       } as RiverEmbankmentStructure;
+
+    case 'spurdike':
+      return {
+        ...baseProps,
+        type: 'spurdike',
+        crestElevationM: options.crestElevationM ?? Math.round((refBedElev + 2.5) * 10) / 10,
+        lengthM: 35.0,
+        crestWidthM: 3.5,
+        permeability: 0.0,
+        deflectionAngleDeg: 90.0,
+        bank: 'left',
+        headSlopeHtoV: 2.0,
+        headScourDepthM: 1.8,
+      } as RiverSpurdikeStructure;
+
+    case 'bridge-pier':
+      return {
+        ...baseProps,
+        type: 'bridge-pier',
+        shape: 'round-nose',
+        widthM: 1.8,
+        lengthM: 6.0,
+        topElevationM: Math.round((refBedElev + 8.0) * 10) / 10,
+        dragCoefficientCd: 1.0,
+        scourDepthM: 2.1,
+      } as RiverBridgePierStructure;
+
+    case 'custom-deflector':
+      return {
+        ...baseProps,
+        type: 'custom-deflector',
+        heightM: 3.0,
+        wallThicknessM: 0.8,
+        deflectionEfficiency: 0.85,
+        dragCoeff: 1.2,
+      } as RiverCustomDeflectorStructure;
   }
+}
+
+/**
+ * 7. Spur Dike / Groyne Evaluation
+ */
+export function evaluateSpurdike(
+  spur: RiverSpurdikeStructure,
+  etaA: number,
+  etaB: number,
+  faceLength: number
+): StructureFluxCorrection {
+  const maxEta = Math.max(etaA, etaB);
+  if (maxEta <= spur.crestElevationM) {
+    if (spur.permeability <= 0.05) {
+      return {
+        blocked: true,
+        effectiveCrestElevationM: spur.crestElevationM,
+        overrideDischargeM3s: 0,
+        description: `Impermeable spur dike crest ${spur.crestElevationM.toFixed(2)}m deflects flow into thalweg`,
+      };
+    } else {
+      return {
+        blocked: false,
+        addedHeadlossM: 0.15 * (1.0 - spur.permeability),
+        description: `Permeable spur dike (${(spur.permeability * 100).toFixed(0)}% porosity) decelerates near-bank flow`,
+      };
+    }
+  }
+
+  // Overtopped spur dike
+  const headAboveCrest = maxEta - spur.crestElevationM;
+  return {
+    blocked: false,
+    effectiveCrestElevationM: spur.crestElevationM,
+    description: `Submerged spur dike overtopping with ${headAboveCrest.toFixed(2)}m head`,
+  };
+}
+
+/**
+ * 8. Standalone Bridge Pier Evaluation & HEC-18 Scour
+ */
+export function evaluateBridgePier(
+  pier: RiverBridgePierStructure,
+  hA: number,
+  hB: number,
+  faceLength: number
+): StructureFluxCorrection {
+  const avgDepth = Math.max(0.1, 0.5 * (hA + hB));
+  const k1Map: Record<string, number> = {
+    'sharp-nose': 0.9,
+    'round-nose': 1.0,
+    circular: 1.0,
+    square: 1.1,
+  };
+  const k1 = k1Map[pier.shape] || 1.0;
+  // HEC-18 Pier Scour equation: ys / a = 2.0 * K1 * K2 * K3 * (y0 / a)^0.35 * Fr1^0.43
+  const fr = 0.35;
+  const scourDepth = 2.0 * k1 * 1.0 * 1.1 * Math.pow(avgDepth / pier.widthM, 0.35) * Math.pow(fr, 0.43) * pier.widthM;
+
+  return {
+    blocked: false,
+    addedHeadlossM: 0.08 * pier.dragCoefficientCd,
+    description: `Bridge Pier (${pier.shape}, width ${pier.widthM}m) — HEC-18 Scour Depth ~ ${scourDepth.toFixed(2)}m`,
+  };
+}
+
+/**
+ * 9. Custom Deflector Wall Evaluation
+ */
+export function evaluateCustomDeflector(
+  deflector: RiverCustomDeflectorStructure,
+  etaA: number,
+  etaB: number,
+  faceLength: number
+): StructureFluxCorrection {
+  return {
+    blocked: deflector.deflectionEfficiency > 0.8,
+    addedHeadlossM: 0.12 * deflector.dragCoeff,
+    description: `Custom flow training deflector (Efficiency: ${(deflector.deflectionEfficiency * 100).toFixed(0)}%)`,
+  };
 }
 
 /**
@@ -528,6 +653,28 @@ export function computeStructureFluxModifier(
   const etaL = zL + hL;
   const etaR = zR + hR;
   const etaMax = Math.max(etaL, etaR);
+
+  if (struct.type === 'spurdike') {
+    const s = struct as RiverSpurdikeStructure;
+    if (etaMax < s.crestElevationM) {
+      return { fluxReductionFactor: s.permeability };
+    } else {
+      const head = etaMax - s.crestElevationM;
+      const overtopFactor = Math.min(1.0, Math.max(0.1, head / Math.max(0.5, hL)));
+      return { fluxReductionFactor: Math.min(1.0, s.permeability + (1.0 - s.permeability) * overtopFactor) };
+    }
+  }
+
+  if (struct.type === 'bridge-pier') {
+    const p = struct as RiverBridgePierStructure;
+    const obstructionRatio = Math.min(0.9, p.widthM / Math.max(2.0, faceLength));
+    return { fluxReductionFactor: 1.0 - obstructionRatio * 0.85 };
+  }
+
+  if (struct.type === 'custom-deflector') {
+    const d = struct as RiverCustomDeflectorStructure;
+    return { fluxReductionFactor: 1.0 - Math.min(0.95, d.deflectionEfficiency * 0.9) };
+  }
 
   let crestElev: number | undefined;
   if ('crestElevationM' in struct) {

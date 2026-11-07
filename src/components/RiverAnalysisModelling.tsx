@@ -80,6 +80,9 @@ import {
   SwotCalibrationResult,
 } from '../river/calibration/swotCalibration';
 import { applyTerrainAndCarveBathymetry } from '../river/geometry/geometryBuilder';
+import { translateMesh, rotateMesh } from '../river/geometry/meshGenerator';
+import { createStructureFromMapPolyline } from '../river/structures/cadStructureBuilder';
+import { buildOpenFoamCaseZip, exportRiverToVtk3D } from '../river/openfoam/openfoamCaseGenerator';
 
 export const RiverAnalysisModelling: React.FC = () => {
   // Default to actual real-world river: Rhine River (Basel, Switzerland/Germany)
@@ -131,6 +134,10 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [cadDrawPoints, setCadDrawPoints] = useState<{ lat: number; lng: number }[]>([]);
   const [cadNotification, setCadNotification] = useState<string | null>(null);
 
+  // Mesh Movement & Alignment Mode
+  const [isMoveMeshMode, setIsMoveMeshMode] = useState(false);
+  const [meshShiftM, setMeshShiftM] = useState({ x: 0, y: 0, rot: 0 });
+
   // Auto-Detected River Prompt (when clicking map)
   const [detectedRiver, setDetectedRiver] = useState<{ river: any; distanceKm: number } | null>(null);
 
@@ -148,6 +155,7 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [isSimulationPanelOpen, setIsSimulationPanelOpen] = useState(false);
   const [isPersistenceOpen, setIsPersistenceOpen] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [isExportingOpenFoam, setIsExportingOpenFoam] = useState(false);
 
   // Leaflet Map Container & Tile Layer References
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -213,33 +221,18 @@ export const RiverAnalysisModelling: React.FC = () => {
     // Map click handler: CAD structure drawing or Auto River Detection
     map.on('click', async (e: L.LeafletMouseEvent) => {
       if (cadDrawModeRef.current) {
-        // User is drawing a CAD civil hydraulic structure transect
+        // User is drawing a CAD civil hydraulic structure
         const clickPt = { lat: e.latlng.lat, lng: e.latlng.lng };
 
-        if (cadDrawPointsRef.current.length === 0) {
-          // First point placed
-          const pts = [clickPt];
-          setCadDrawPoints(pts);
-          setCadNotification(
-            `CAD: Start point placed at [${clickPt.lat.toFixed(4)}, ${clickPt.lng.toFixed(
-              4
-            )}]. Click across the channel to complete the ${cadDrawModeRef.current.toUpperCase()} transect.`
-          );
-        } else {
-          // Second point placed: complete the structure!
-          const pt1 = cadDrawPointsRef.current[0];
-          const pt2 = clickPt;
-          const newStruct = createStructureFromMapPoints(pt1, pt2, cadDrawModeRef.current, meshRef.current);
+        // 1. Bridge Pier: single click places the pier!
+        if (cadDrawModeRef.current === 'bridge-pier') {
+          const newStruct = createStructureFromMapPolyline([clickPt], 'bridge-pier', meshRef.current);
           const updatedStructs = [...structuresRef.current, newStruct];
-
           setStructures(updatedStructs);
           setCadDrawPoints([]);
           setCadDrawMode(null);
-          setCadNotification(
-            `✅ Installed ${newStruct.name} across ${newStruct.cellIndices.length} cells. Running instant 2D CFD...`
-          );
+          setCadNotification(`✅ Installed ${newStruct.name}. Running instant 2D CFD...`);
 
-          // Execute instant 2D CFD simulation on demand
           runInstantSimulation({
             reach,
             mesh: meshRef.current,
@@ -248,21 +241,108 @@ export const RiverAnalysisModelling: React.FC = () => {
             turbParams: turbParamsRef.current,
             sedParams: sedParamsRef.current,
             mode: 'preview',
-          })
-            .then((res) => {
+          }).then((res) => {
+            setHydro(res.hydro);
+            setTurb(res.turb);
+            setSed(res.sed);
+            setSummary(res.summary);
+            setCadNotification(`✅ Bridge Pier active! Wake vortex & HEC-18 scour updated.`);
+            setTimeout(() => setCadNotification(null), 5000);
+          }).catch((err) => {
+            console.warn('Instant simulation error:', err);
+            setTimeout(() => setCadNotification(null), 3000);
+          });
+          return;
+        }
+
+        // 2. Spur Dike / Groyne: 2 clicks (bank root -> channel head)
+        if (cadDrawModeRef.current === 'spurdike') {
+          if (cadDrawPointsRef.current.length === 0) {
+            setCadDrawPoints([clickPt]);
+            setCadNotification(`Spur Dike: Bank root placed. Click in river to set length & deflection angle.`);
+            return;
+          } else {
+            const pt1 = cadDrawPointsRef.current[0];
+            const pt2 = clickPt;
+            const newStruct = createStructureFromMapPolyline([pt1, pt2], 'spurdike', meshRef.current);
+            const updatedStructs = [...structuresRef.current, newStruct];
+            setStructures(updatedStructs);
+            setCadDrawPoints([]);
+            setCadDrawMode(null);
+            setCadNotification(`✅ Installed ${newStruct.name}. Running instant 2D CFD...`);
+
+            runInstantSimulation({
+              reach,
+              mesh: meshRef.current,
+              boundaries: boundariesRef.current,
+              structures: updatedStructs,
+              turbParams: turbParamsRef.current,
+              sedParams: sedParamsRef.current,
+              mode: 'preview',
+            }).then((res) => {
               setHydro(res.hydro);
               setTurb(res.turb);
               setSed(res.sed);
               setSummary(res.summary);
-              setCadNotification(
-                `✅ Instant 2D CFD complete for ${newStruct.name} (${res.fromCache ? 'Cached' : 'Computed in <2s'})! Wake & backwater updated.`
-              );
+              setCadNotification(`✅ Spur Dike active! Recirculation eddy & flow deflection updated.`);
               setTimeout(() => setCadNotification(null), 5000);
-            })
-            .catch((err) => {
+            }).catch((err) => {
               console.warn('Instant simulation error:', err);
               setTimeout(() => setCadNotification(null), 3000);
             });
+            return;
+          }
+        }
+
+        // 3. Multi-point polyline structures (levee, weir, bridge, culvert, gate, embankment, custom-deflector)
+        const updatedPoints = [...cadDrawPointsRef.current, clickPt];
+        setCadDrawPoints(updatedPoints);
+
+        if (updatedPoints.length === 1) {
+          setCadNotification(
+            `CAD: Start point placed. Click next vertex across/along the river, or click 'Done' when finished.`
+          );
+        } else if (
+          updatedPoints.length === 2 &&
+          (cadDrawModeRef.current === 'weir' ||
+            cadDrawModeRef.current === 'bridge' ||
+            cadDrawModeRef.current === 'culvert')
+        ) {
+          // Standard 2-point cross-channel transect
+          const newStruct = createStructureFromMapPolyline(
+            updatedPoints,
+            cadDrawModeRef.current,
+            meshRef.current
+          );
+          const updatedStructs = [...structuresRef.current, newStruct];
+          setStructures(updatedStructs);
+          setCadDrawPoints([]);
+          setCadDrawMode(null);
+          setCadNotification(`✅ Installed ${newStruct.name}. Running instant 2D CFD...`);
+
+          runInstantSimulation({
+            reach,
+            mesh: meshRef.current,
+            boundaries: boundariesRef.current,
+            structures: updatedStructs,
+            turbParams: turbParamsRef.current,
+            sedParams: sedParamsRef.current,
+            mode: 'preview',
+          }).then((res) => {
+            setHydro(res.hydro);
+            setTurb(res.turb);
+            setSed(res.sed);
+            setSummary(res.summary);
+            setCadNotification(`✅ Instant 2D CFD complete for ${newStruct.name}! Wake & backwater updated.`);
+            setTimeout(() => setCadNotification(null), 5000);
+          }).catch((err) => {
+            console.warn('Instant simulation error:', err);
+            setTimeout(() => setCadNotification(null), 3000);
+          });
+        } else {
+          setCadNotification(
+            `CAD: ${updatedPoints.length} vertices placed. Click more vertices, or click 'Complete Structure'.`
+          );
         }
       } else if (isProbeModeRef.current) {
         // Probe real river at clicked location
@@ -309,14 +389,28 @@ export const RiverAnalysisModelling: React.FC = () => {
     if (!cadPreviewLayerRef.current) return;
     cadPreviewLayerRef.current.clearLayers();
 
-    if (cadDrawPoints.length === 1) {
-      const pt = cadDrawPoints[0];
-      L.circleMarker([pt.lat, pt.lng], {
-        radius: 6,
-        color: '#f59e0b',
-        fillColor: '#fbbf24',
-        fillOpacity: 0.9,
-      }).addTo(cadPreviewLayerRef.current);
+    if (cadDrawPoints.length > 0) {
+      // Draw circular markers at each clicked vertex
+      for (let i = 0; i < cadDrawPoints.length; i++) {
+        const pt = cadDrawPoints[i];
+        L.circleMarker([pt.lat, pt.lng], {
+          radius: i === 0 ? 6 : 5,
+          color: '#f59e0b',
+          fillColor: i === 0 ? '#fbbf24' : '#f59e0b',
+          fillOpacity: 0.95,
+          weight: 2,
+        }).addTo(cadPreviewLayerRef.current);
+      }
+
+      // Draw dashed connecting polyline across vertices
+      if (cadDrawPoints.length >= 2) {
+        const latlngs = cadDrawPoints.map((p) => [p.lat, p.lng] as [number, number]);
+        L.polyline(latlngs, {
+          color: '#f59e0b',
+          weight: 3.5,
+          dashArray: '6, 6',
+        }).addTo(cadPreviewLayerRef.current);
+      }
     }
   }, [cadDrawPoints]);
 
@@ -516,10 +610,118 @@ export const RiverAnalysisModelling: React.FC = () => {
     }
   };
 
+  // OpenFOAM 3D CFD Case Generation & Download (.zip)
+  const handleExportOpenFoam = async () => {
+    setIsExportingOpenFoam(true);
+    try {
+      const zipBlob = await buildOpenFoamCaseZip({
+        mesh,
+        hydro,
+        turb,
+        structures,
+        reach,
+        upstreamDischargeM3s: boundaries.upstreamDischargeM3s,
+        downstreamStageM: boundaries.downstreamStageM,
+        manningN: boundaries.manningRoughnessDefault,
+        verticalLayers: 12,
+        simEndTimeSec: 60,
+      });
+      triggerFileDownload(zipBlob, `openfoam_3d_case_${reach.id}.zip`);
+      setCadNotification('✅ Generated full 3D OpenFOAM Case (interFoam)! Downloaded openfoam_3d_case.zip');
+      setTimeout(() => setCadNotification(null), 5000);
+    } catch (err: any) {
+      alert(`OpenFOAM generation failed: ${err.message}`);
+    } finally {
+      setIsExportingOpenFoam(false);
+    }
+  };
+
+  // 3D VTK Export for ParaView
+  const handleExportVtk3D = () => {
+    try {
+      const vtkContent = exportRiverToVtk3D(mesh, hydro, turb, 8);
+      const blob = new Blob([vtkContent], { type: 'text/plain' });
+      triggerFileDownload(blob, `river_3d_flow_field_${reach.id}.vtk`);
+      setCadNotification('✅ Exported 3D Structured Grid (.vtk for ParaView)!');
+      setTimeout(() => setCadNotification(null), 5000);
+    } catch (err: any) {
+      alert(`VTK export failed: ${err.message}`);
+    }
+  };
+
+  // Mesh Movement & Alignment Actions
+  const handleTranslateMesh = (dxM: number, dyM: number) => {
+    const updated = translateMesh(meshRef.current, dxM, dyM);
+    setMesh(updated);
+    meshRef.current = updated;
+    setMeshShiftM((prev) => ({ ...prev, x: prev.x + dxM, y: prev.y + dyM }));
+    setCadNotification(`Mesh shifted: dx = ${dxM > 0 ? '+' : ''}${dxM}m, dy = ${dyM > 0 ? '+' : ''}${dyM}m`);
+    setTimeout(() => setCadNotification(null), 3000);
+  };
+
+  const handleRotateMesh = (dAngleDeg: number) => {
+    const updated = rotateMesh(meshRef.current, dAngleDeg);
+    setMesh(updated);
+    meshRef.current = updated;
+    setMeshShiftM((prev) => ({ ...prev, rot: prev.rot + dAngleDeg }));
+    setCadNotification(`Mesh rotated: ${dAngleDeg > 0 ? '+' : ''}${dAngleDeg}°`);
+    setTimeout(() => setCadNotification(null), 3000);
+  };
+
+  const handleResetMesh = () => {
+    const defaultMesh = RiverDataService.buildMesh(reach);
+    setMesh(defaultMesh);
+    meshRef.current = defaultMesh;
+    setMeshShiftM({ x: 0, y: 0, rot: 0 });
+    setCadNotification('Mesh alignment reset to river thalweg centerline.');
+    setTimeout(() => setCadNotification(null), 3000);
+  };
+
+  // Complete Multi-Point Polyline CAD Structure
+  const handleCompleteCadPolyline = () => {
+    if (!cadDrawMode || cadDrawPoints.length < 2) return;
+    const newStruct = createStructureFromMapPolyline(
+      cadDrawPoints,
+      cadDrawMode,
+      meshRef.current
+    );
+    const updatedStructs = [...structuresRef.current, newStruct];
+    setStructures(updatedStructs);
+    setCadDrawPoints([]);
+    setCadDrawMode(null);
+    setCadNotification(`✅ Installed ${newStruct.name} across ${newStruct.cellIndices.length} cells. Running instant 2D CFD...`);
+
+    runInstantSimulation({
+      reach,
+      mesh: meshRef.current,
+      boundaries: boundariesRef.current,
+      structures: updatedStructs,
+      turbParams: turbParamsRef.current,
+      sedParams: sedParamsRef.current,
+      mode: 'preview',
+    }).then((res) => {
+      setHydro(res.hydro);
+      setTurb(res.turb);
+      setSed(res.sed);
+      setSummary(res.summary);
+      setCadNotification(`✅ Instant 2D CFD complete for ${newStruct.name}! Wake & backwater updated.`);
+      setTimeout(() => setCadNotification(null), 5000);
+    }).catch((err) => {
+      console.warn('Instant simulation error:', err);
+      setTimeout(() => setCadNotification(null), 3000);
+    });
+  };
+
   const handleStartCadDraw = (type: RiverStructureType) => {
     setCadDrawMode(type);
     setCadDrawPoints([]);
-    setCadNotification(`📐 CAD Mode Active: Click 2 points on the river to install ${type.toUpperCase()}.`);
+    if (type === 'bridge-pier') {
+      setCadNotification('🏛️ Pier Mode: Click once in the river channel to place a Bridge Pier.');
+    } else if (type === 'spurdike') {
+      setCadNotification('📐 Spur Dike Mode: Click bank root, then click inside river to set groyne length & angle.');
+    } else {
+      setCadNotification(`📐 CAD Mode Active: Click points on the river to install ${type.toUpperCase()}.`);
+    }
   };
 
   return (
@@ -612,6 +814,27 @@ export const RiverAnalysisModelling: React.FC = () => {
               </svg>
               <span>{isExportingExcel ? 'Exporting...' : 'Export (.xlsx)'}</span>
             </button>
+
+            {/* OpenFOAM 3D CFD Case Export */}
+            <button
+              onClick={handleExportOpenFoam}
+              disabled={isExportingOpenFoam}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white rounded-lg text-xs font-semibold transition shadow"
+              title="Export complete 3D OpenFOAM Case (interFoam VOF + RANS k-ω SST + snappyHexMesh)"
+            >
+              <span>🌊</span>
+              <span>{isExportingOpenFoam ? 'Generating 3D...' : 'OpenFOAM 3D'}</span>
+            </button>
+
+            {/* 3D VTK Export for ParaView */}
+            <button
+              onClick={handleExportVtk3D}
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold transition shadow"
+              title="Export 3D Structured Grid (.vtk) for ParaView 3D Streamlines & Volumes"
+            >
+              <span>📊</span>
+              <span>3D VTK</span>
+            </button>
           </div>
         </div>
 
@@ -620,14 +843,17 @@ export const RiverAnalysisModelling: React.FC = () => {
           {/* CAD Hydraulic Structure Quick-Draw Toolbar */}
           <div className="flex items-center gap-1 flex-wrap">
             <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider mr-1">
-              Draw CAD Structure:
+              Draw Structure:
             </span>
             {[
+              { type: 'spurdike', label: '📐 Spur Dike' },
+              { type: 'bridge-pier', label: '🏛️ Pier' },
               { type: 'levee', label: '🧱 Levee' },
               { type: 'weir', label: '🌊 Weir' },
               { type: 'bridge', label: '🌉 Bridge' },
               { type: 'culvert', label: '🕳️ Culvert' },
               { type: 'gate', label: '🚪 Gate' },
+              { type: 'custom-deflector', label: '🧭 Deflector' },
               { type: 'embankment', label: '🛡️ Embankment' },
             ].map((btn) => (
               <button
@@ -638,7 +864,7 @@ export const RiverAnalysisModelling: React.FC = () => {
                     ? 'bg-amber-600 border-amber-400 text-white shadow'
                     : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
                 }`}
-                title={`Click map to place ${btn.label} structure`}
+                title={`Click map to draw ${btn.label}`}
               >
                 {btn.label}
               </button>
@@ -649,6 +875,19 @@ export const RiverAnalysisModelling: React.FC = () => {
               className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 ml-1"
             >
               Manage ({structures.filter((s) => s.enabled).length})
+            </button>
+
+            {/* Move & Align Mesh Button */}
+            <button
+              onClick={() => setIsMoveMeshMode(!isMoveMeshMode)}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition ml-1 ${
+                isMoveMeshMode
+                  ? 'bg-cyan-600 border-cyan-400 text-white shadow ring-2 ring-cyan-400/50'
+                  : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-cyan-300'
+              }`}
+              title="Translate, nudge or rotate the 2D finite-volume computational mesh"
+            >
+              🕹️ Move Mesh
             </button>
           </div>
 
@@ -762,9 +1001,24 @@ export const RiverAnalysisModelling: React.FC = () => {
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] bg-amber-950/95 border border-amber-500 text-amber-200 px-5 py-2.5 rounded-xl text-xs font-semibold shadow-2xl flex items-center gap-4 animate-fade-in">
             <span className="text-base">📐</span>
             <span>
-              CAD Drawing Mode: Click 2 points across the river to place{' '}
-              <strong className="text-white uppercase">{cadDrawMode}</strong>.
+              {cadDrawMode === 'bridge-pier'
+                ? 'Drop Pier: Click any point in the river channel to place Bridge Pier.'
+                : cadDrawMode === 'spurdike'
+                ? cadDrawPoints.length === 0
+                  ? 'Spur Dike: Click bank root to anchor.'
+                  : 'Spur Dike: Click inside river to set groyne length.'
+                : `Drawing ${cadDrawMode.toUpperCase()} (${cadDrawPoints.length} pts placed): Click vertices along structure.`}
             </span>
+
+            {cadDrawPoints.length >= 2 && (
+              <button
+                onClick={handleCompleteCadPolyline}
+                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold transition shadow"
+              >
+                ✓ Complete Structure ({cadDrawPoints.length} pts)
+              </button>
+            )}
+
             <button
               onClick={() => {
                 setCadDrawMode(null);
@@ -775,6 +1029,104 @@ export const RiverAnalysisModelling: React.FC = () => {
             >
               Cancel
             </button>
+          </div>
+        )}
+
+        {/* Move & Align Mesh Floating Controls */}
+        {isMoveMeshMode && (
+          <div className="absolute top-4 left-4 z-[500] bg-slate-900/95 backdrop-blur-md border border-cyan-500/80 rounded-2xl p-4 shadow-2xl text-xs space-y-3 max-w-xs animate-fade-in text-slate-100">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+              <span className="font-bold text-cyan-300 flex items-center gap-1.5">
+                <span>🕹️</span>
+                <span>Mesh Alignment Controls</span>
+              </span>
+              <button
+                onClick={() => setIsMoveMeshMode(false)}
+                className="text-slate-400 hover:text-white transition"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              Translate or rotate the 2D finite-volume mesh over the reach corridor and civil structure sites.
+            </p>
+
+            {/* Translation Nudge Controls */}
+            <div className="space-y-1.5">
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                Translate Mesh (Meters)
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={() => handleTranslateMesh(0, 50)}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
+                  title="Shift 50m North"
+                >
+                  ▲ North (+50m)
+                </button>
+                <button
+                  onClick={() => handleTranslateMesh(0, -50)}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
+                  title="Shift 50m South"
+                >
+                  ▼ South (-50m)
+                </button>
+                <button
+                  onClick={() => handleTranslateMesh(-50, 0)}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
+                  title="Shift 50m West"
+                >
+                  ◄ West (-50m)
+                </button>
+                <button
+                  onClick={() => handleTranslateMesh(50, 0)}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
+                  title="Shift 50m East"
+                >
+                  ► East (+50m)
+                </button>
+              </div>
+            </div>
+
+            {/* Rotation Controls */}
+            <div className="space-y-1.5">
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                Rotate Grid Angle
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={() => handleRotateMesh(-5)}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
+                  title="Rotate 5° Counter-Clockwise"
+                >
+                  ↺ Rotate (-5°)
+                </button>
+                <button
+                  onClick={() => handleRotateMesh(5)}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
+                  title="Rotate 5° Clockwise"
+                >
+                  ↻ Rotate (+5°)
+                </button>
+              </div>
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="pt-2 flex items-center justify-between border-t border-slate-800">
+              <button
+                onClick={handleResetMesh}
+                className="text-[11px] text-amber-400 hover:underline font-semibold"
+              >
+                Reset Alignment
+              </button>
+              <button
+                onClick={() => setIsMoveMeshMode(false)}
+                className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-bold text-[11px] transition shadow"
+              >
+                Done
+              </button>
+            </div>
           </div>
         )}
 

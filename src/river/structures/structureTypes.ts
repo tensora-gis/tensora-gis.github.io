@@ -18,7 +18,10 @@ export type RiverStructureType =
   | 'bridge'
   | 'culvert'
   | 'gate'
-  | 'embankment';
+  | 'embankment'
+  | 'spurdike'
+  | 'bridge-pier'
+  | 'custom-deflector';
 
 export interface RiverStructureBase {
   id: string;
@@ -89,10 +92,44 @@ export interface RiverEmbankmentStructure extends RiverStructureBase {
   overtopDischargeCoeff: number; // e.g. 1.45
 }
 
+export interface RiverSpurdikeStructure extends RiverStructureBase {
+  type: 'spurdike';
+  crestElevationM: number;
+  lengthM: number; // Length projecting into river from bank
+  crestWidthM: number;
+  permeability: number; // 0.0 (impermeable rock) to 0.5 (permeable pile)
+  deflectionAngleDeg: number; // 90 perpendicular, <90 repelling, >90 attracting
+  bank: 'left' | 'right';
+  headSlopeHtoV: number;
+  headScourDepthM?: number; // Melville & Coleman contraction scour
+}
+
+export interface RiverBridgePierStructure extends RiverStructureBase {
+  type: 'bridge-pier';
+  shape: 'circular' | 'square' | 'round-nose' | 'sharp-nose';
+  widthM: number;
+  lengthM: number;
+  topElevationM: number;
+  dragCoefficientCd: number; // 1.2 circular, 2.0 square, 0.9 round-nose, 0.7 sharp-nose
+  noseAngleDeg?: number;
+  scourDepthM?: number; // HEC-18 pier scour estimate
+}
+
+export interface RiverCustomDeflectorStructure extends RiverStructureBase {
+  type: 'custom-deflector';
+  heightM: number;
+  wallThicknessM: number;
+  deflectionEfficiency: number; // 0.0 to 1.0
+  dragCoeff: number;
+}
+
 export type RiverHydraulicStructure =
   | RiverLeveeStructure
   | RiverWeirStructure
   | RiverBridgeStructure
   | RiverCulvertStructure
   | RiverGateStructure
-  | RiverEmbankmentStructure;
+  | RiverEmbankmentStructure
+  | RiverSpurdikeStructure
+  | RiverBridgePierStructure
+  | RiverCustomDeflectorStructure;

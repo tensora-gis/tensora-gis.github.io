@@ -20,6 +20,9 @@ import {
   RiverCulvertStructure,
   RiverGateStructure,
   RiverEmbankmentStructure,
+  RiverSpurdikeStructure,
+  RiverBridgePierStructure,
+  RiverCustomDeflectorStructure,
 } from '../structures/structureTypes';
 import { RiverGridMesh } from '../types/riverReach';
 
@@ -80,6 +83,23 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
   const [openingM, setOpeningM] = useState(1.5);
   const [gateWidthM, setGateWidthM] = useState(15.0);
 
+  // Spur Dike parameters
+  const [spurLengthM, setSpurLengthM] = useState(30.0);
+  const [spurPermeability, setSpurPermeability] = useState(0.0);
+  const [spurAngleDeg, setSpurAngleDeg] = useState(90.0);
+  const [spurBank, setSpurBank] = useState<'left' | 'right'>('left');
+
+  // Bridge Pier parameters
+  const [pierShape, setPierShape] = useState<'round-nose' | 'circular' | 'sharp-nose' | 'square'>('round-nose');
+  const [standalonePierWidthM, setStandalonePierWidthM] = useState(1.8);
+  const [standalonePierLengthM, setStandalonePierLengthM] = useState(6.0);
+  const [pierDragCd, setPierDragCd] = useState(1.0);
+
+  // Custom Deflector parameters
+  const [deflectorHeightM, setDeflectorHeightM] = useState(3.0);
+  const [deflectorThicknessM, setDeflectorThicknessM] = useState(1.0);
+  const [deflectorEfficiency, setDeflectorEfficiency] = useState(0.85);
+
   if (!isOpen) return null;
 
   const handleToggleStructure = (id: string) => {
@@ -127,9 +147,31 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
       setCadColor('#3b82f6');
       setOpeningM(1.2);
       setGateWidthM(18.0);
+    } else if (type === 'spurdike') {
+      setStructureName('Rock Armor Spur Dike / Groyne');
+      setCadLayer('RIVER_TRAINING');
+      setCadColor('#10b981');
+      setCrestElevM(parseFloat((localBedElev + 2.5).toFixed(2)));
+      setSpurLengthM(35.0);
+      setSpurPermeability(0.0);
+      setSpurAngleDeg(90.0);
+    } else if (type === 'bridge-pier') {
+      setStructureName('Hydrodynamic Bridge Pier (Round-Nose)');
+      setCadLayer('BRIDGE_SUBSTRUCTURE');
+      setCadColor('#8b5cf6');
+      setCrestElevM(parseFloat((localBedElev + 8.0).toFixed(2)));
+      setStandalonePierWidthM(1.8);
+      setPierShape('round-nose');
+      setPierDragCd(1.0);
+    } else if (type === 'custom-deflector') {
+      setStructureName('Curved Flow Training Guide Bank');
+      setCadLayer('GUIDE_BANKS');
+      setCadColor('#06b6d4');
+      setDeflectorHeightM(3.5);
+      setDeflectorEfficiency(0.85);
     } else {
       setStructureName('Riverbank Training Embankment');
-      setCadLayer('RIVER_TRAINING');
+      setCadLayer('ROAD_NETWORK');
       setCadColor('#ef4444');
       setCrestElevM(parseFloat((localBedElev + 3.0).toFixed(2)));
       setTopWidthM(6.0);
@@ -238,6 +280,63 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
         cadProperties: { layerName: cadLayer, color: cadColor },
       };
       structObj = gate;
+    } else if (selectedType === 'spurdike') {
+      const spurCells = affectedCells.slice(0, Math.max(1, Math.floor(mesh.ny * 0.4)));
+      const spur: RiverSpurdikeStructure = {
+        id: `spurdike-${Date.now()}`,
+        name: structureName || 'Custom Spur Dike',
+        type: 'spurdike',
+        enabled: true,
+        coordinates: coords.slice(0, spurCells.length),
+        cellIndices: spurCells,
+        stationM,
+        crestElevationM: crestElevM,
+        lengthM: spurLengthM,
+        crestWidthM: 3.5,
+        permeability: spurPermeability,
+        deflectionAngleDeg: spurAngleDeg,
+        bank: spurBank,
+        headSlopeHtoV: 2.0,
+        headScourDepthM: 1.85,
+        cadProperties: { layerName: cadLayer, color: cadColor },
+      };
+      structObj = spur;
+    } else if (selectedType === 'bridge-pier') {
+      const midIdx = Math.floor(affectedCells.length / 2);
+      const pierCell = affectedCells[midIdx] || affectedCells[0];
+      const pier: RiverBridgePierStructure = {
+        id: `pier-${Date.now()}`,
+        name: structureName || 'Custom Bridge Pier',
+        type: 'bridge-pier',
+        enabled: true,
+        coordinates: [coords[midIdx] || coords[0]],
+        cellIndices: [pierCell],
+        stationM,
+        shape: pierShape,
+        widthM: standalonePierWidthM,
+        lengthM: standalonePierLengthM,
+        topElevationM: crestElevM,
+        dragCoefficientCd: pierDragCd,
+        scourDepthM: 2.1,
+        cadProperties: { layerName: cadLayer, color: cadColor },
+      };
+      structObj = pier;
+    } else if (selectedType === 'custom-deflector') {
+      const deflector: RiverCustomDeflectorStructure = {
+        id: `deflector-${Date.now()}`,
+        name: structureName || 'Custom Deflector',
+        type: 'custom-deflector',
+        enabled: true,
+        coordinates: coords,
+        cellIndices: affectedCells,
+        stationM,
+        heightM: deflectorHeightM,
+        wallThicknessM: deflectorThicknessM,
+        deflectionEfficiency: deflectorEfficiency,
+        dragCoeff: 1.2,
+        cadProperties: { layerName: cadLayer, color: cadColor },
+      };
+      structObj = deflector;
     } else {
       const emb: RiverEmbankmentStructure = {
         id: `emb-${Date.now()}`,
@@ -379,14 +478,17 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
             )}
           </div>
 
-          <div className="grid grid-cols-6 gap-2 mb-3">
+          <div className="grid grid-cols-3 md:grid-cols-9 gap-2 mb-3">
             {[
-              { type: 'levee', label: '🧱 Flood Levee', desc: 'Overbank containment' },
-              { type: 'weir', label: '🌊 Overflow Weir', desc: 'Stage regulation' },
-              { type: 'bridge', label: '🌉 Highway Bridge', desc: 'Piers & contraction' },
-              { type: 'culvert', label: '🕳️ Box Culvert', desc: 'FHWA HDS-5 barrel' },
-              { type: 'gate', label: '🚪 Sluice Gate', desc: 'Underflow orifice' },
-              { type: 'embankment', label: '🛡️ Embankment', desc: 'River training dyke' },
+              { type: 'levee', label: '🧱 Levee', desc: 'Overbank flood barrier' },
+              { type: 'weir', label: '🌊 Weir', desc: 'Stage control overflow' },
+              { type: 'bridge', label: '🌉 Bridge', desc: 'Deck & pier contraction' },
+              { type: 'culvert', label: '🕳️ Culvert', desc: 'FHWA HDS-5 barrel' },
+              { type: 'gate', label: '🚪 Gate', desc: 'Sluice & radial orifice' },
+              { type: 'embankment', label: '🛡️ Embankment', desc: 'Highway river dyke' },
+              { type: 'spurdike', label: '📐 Spur Dike', desc: 'Groyne flow deflection' },
+              { type: 'bridge-pier', label: '🏛️ Bridge Pier', desc: 'Pier scour & wake' },
+              { type: 'custom-deflector', label: '🧭 Deflector', desc: 'Guide wall training' },
             ].map((p) => (
               <button
                 key={p.type}
@@ -602,6 +704,139 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                     step="0.05"
                     value={weirCd}
                     onChange={(e) => setWeirCd(parseFloat(e.target.value) || 1.7)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                  />
+                </div>
+              </div>
+            )}
+
+            {selectedType === 'spurdike' && (
+              <div className="grid grid-cols-4 gap-3 text-xs bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+                <div>
+                  <label className="text-slate-400 block mb-1">Spur Length (m)</label>
+                  <input
+                    type="number"
+                    step="1"
+                    value={spurLengthM}
+                    onChange={(e) => setSpurLengthM(parseFloat(e.target.value) || 20)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1">Permeability (0 = Rock, 0.4 = Piles)</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    max="0.8"
+                    value={spurPermeability}
+                    onChange={(e) => setSpurPermeability(parseFloat(e.target.value) || 0)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1">Deflection Angle (°)</label>
+                  <input
+                    type="number"
+                    step="5"
+                    value={spurAngleDeg}
+                    onChange={(e) => setSpurAngleDeg(parseFloat(e.target.value) || 90)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1">Anchor Bank</label>
+                  <select
+                    value={spurBank}
+                    onChange={(e) => setSpurBank(e.target.value as any)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                  >
+                    <option value="left">Left Bank Groyne</option>
+                    <option value="right">Right Bank Groyne</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {selectedType === 'bridge-pier' && (
+              <div className="grid grid-cols-4 gap-3 text-xs bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+                <div>
+                  <label className="text-slate-400 block mb-1">Pier Nose Shape</label>
+                  <select
+                    value={pierShape}
+                    onChange={(e) => setPierShape(e.target.value as any)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                  >
+                    <option value="round-nose">Round Nose (Cd ≈ 1.0, K1 = 1.0)</option>
+                    <option value="sharp-nose">Sharp Aerodynamic Nose (Cd ≈ 0.7, K1 = 0.9)</option>
+                    <option value="circular">Circular Cylinder (Cd ≈ 1.2, K1 = 1.0)</option>
+                    <option value="square">Square / Blunt (Cd ≈ 2.0, K1 = 1.1)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1">Pier Width a (m)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={standalonePierWidthM}
+                    onChange={(e) => setStandalonePierWidthM(parseFloat(e.target.value) || 1.5)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1">Pier Length L (m)</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={standalonePierLengthM}
+                    onChange={(e) => setStandalonePierLengthM(parseFloat(e.target.value) || 6.0)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1">Drag Coeff Cd</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={pierDragCd}
+                    onChange={(e) => setPierDragCd(parseFloat(e.target.value) || 1.0)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                  />
+                </div>
+              </div>
+            )}
+
+            {selectedType === 'custom-deflector' && (
+              <div className="grid grid-cols-3 gap-3 text-xs bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+                <div>
+                  <label className="text-slate-400 block mb-1">Wall Height (m)</label>
+                  <input
+                    type="number"
+                    step="0.2"
+                    value={deflectorHeightM}
+                    onChange={(e) => setDeflectorHeightM(parseFloat(e.target.value) || 3.0)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1">Thickness (m)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={deflectorThicknessM}
+                    onChange={(e) => setDeflectorThicknessM(parseFloat(e.target.value) || 1.0)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1">Deflection Efficiency (0 - 1)</label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0.1"
+                    max="1.0"
+                    value={deflectorEfficiency}
+                    onChange={(e) => setDeflectorEfficiency(parseFloat(e.target.value) || 0.85)}
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100"
                   />
                 </div>
