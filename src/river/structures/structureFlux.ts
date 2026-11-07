@@ -1,30 +1,30 @@
 /**
- * 2D River Hydraulic Structures Physics Module
+ * Hydraulic Structures Flux Formulations & Physics Interactions
  *
  * Implements rigorous fluid dynamics formulations for:
- * 1. Levees & Dykes (Lateral flow barrier & overtopping weir flow)
- * 2. Weirs (Broad-crested & sharp-crested with Villemonte submergence correction)
- * 3. Bridges & Piers (Yarnell / drag headloss & pressure orifice deck flow)
- * 4. Culverts (FHWA HDS-5 inlet/outlet control flow)
- * 5. Sluice & Radial Gates (Free and submerged orifice discharge)
- * 6. Road Embankments (Submerged roadway overflow)
+ * 1. Levees & Dykes (Lateral flow barrier & broad-crested overtopping)
+ * 2. Weirs (Broad-crested & sharp-crested with Villemonte submergence)
+ * 3. Bridges & Piers (Yarnell contraction energy loss, low-chord pressure flow, deck overflow)
+ * 4. Culverts (FHWA HDS-5 governing inlet/outlet control flow)
+ * 5. Sluice & Radial Gates (Free and submerged underflow orifice discharge)
+ * 6. Transportation Road Embankments (Submerged roadway overflow)
  */
 
 import {
-  RiverStructure,
+  RiverHydraulicStructure,
   RiverLeveeStructure,
   RiverWeirStructure,
   RiverBridgeStructure,
   RiverCulvertStructure,
   RiverGateStructure,
   RiverEmbankmentStructure,
-  RiverMeshCell,
-} from '../types/riverAnalysis';
+  RiverStructureType,
+} from './structureTypes';
+import { RiverGridCell, RiverGridMesh, RiverCoordinate } from '../types/riverReach';
 
-const G = 9.80665; // Acceleration due to gravity (m/s^2)
+const G = 9.80665; // m/s^2
 
 export interface StructureFluxCorrection {
-  faceIndex?: number;
   blocked: boolean;
   effectiveCrestElevationM?: number;
   overrideDischargeM3s?: number;
@@ -34,18 +34,11 @@ export interface StructureFluxCorrection {
 
 /**
  * Evaluates the hydraulic influence of a structure on flow across two adjacent cells.
- *
- * @param struct Hydraulic structure
- * @param cellA Upstream/first cell
- * @param cellB Downstream/second cell
- * @param hA Water depth in cell A (m)
- * @param hB Water depth in cell B (m)
- * @param faceLength Length of boundary face between cells (m)
  */
 export function evaluateStructureInteraction(
-  struct: RiverStructure,
-  cellA: RiverMeshCell,
-  cellB: RiverMeshCell,
+  struct: RiverHydraulicStructure,
+  cellA: RiverGridCell,
+  cellB: RiverGridCell,
   hA: number,
   hB: number,
   faceLength: number
@@ -54,35 +47,29 @@ export function evaluateStructureInteraction(
     return { blocked: false, description: 'Disabled' };
   }
 
-  const etaA = cellA.bedElevation + hA; // Water stage in cell A
-  const etaB = cellB.bedElevation + hB; // Water stage in cell B
+  const etaA = cellA.bedElevation + hA;
+  const etaB = cellB.bedElevation + hB;
 
   switch (struct.type) {
-    case 'levee': {
+    case 'levee':
       return evaluateLevee(struct, etaA, etaB, faceLength);
-    }
-    case 'weir': {
+    case 'weir':
       return evaluateWeir(struct, etaA, etaB, faceLength);
-    }
-    case 'bridge': {
+    case 'bridge':
       return evaluateBridge(struct, cellA, cellB, hA, hB, faceLength);
-    }
-    case 'culvert': {
+    case 'culvert':
       return evaluateCulvert(struct, etaA, etaB);
-    }
-    case 'gate': {
+    case 'gate':
       return evaluateGate(struct, etaA, etaB);
-    }
-    case 'embankment': {
+    case 'embankment':
       return evaluateEmbankment(struct, etaA, etaB, faceLength);
-    }
     default:
       return { blocked: false, description: 'Standard' };
   }
 }
 
 /**
- * Levee / Flood Wall Barrier Evaluation
+ * 1. Levee / Flood Wall Barrier Evaluation
  */
 function evaluateLevee(
   levee: RiverLeveeStructure,
@@ -92,13 +79,13 @@ function evaluateLevee(
 ): StructureFluxCorrection {
   const maxEta = Math.max(etaA, etaB);
 
-  // If water level is below levee crest, 100% barrier block
+  // If water level is below levee crest: 100% barrier block
   if (maxEta <= levee.crestElevationM) {
     return {
       blocked: true,
       effectiveCrestElevationM: levee.crestElevationM,
       overrideDischargeM3s: 0,
-      description: `Levee crest ${levee.crestElevationM.toFixed(2)}m holds back floodwater (dry overbank)`,
+      description: `Levee crest ${levee.crestElevationM.toFixed(2)}m holds back floodwater`,
     };
   }
 
@@ -107,7 +94,6 @@ function evaluateLevee(
   const tailwater = Math.min(etaA, etaB);
   const headAboveCrest = headwater - levee.crestElevationM;
 
-  // Villemonte submergence factor
   let submergenceCoeff = 1.0;
   if (tailwater > levee.crestElevationM) {
     const tailHead = tailwater - levee.crestElevationM;
@@ -119,8 +105,7 @@ function evaluateLevee(
     }
   }
 
-  // Q = C_d * L * H^(3/2)
-  const cd = 1.6; // Metric broad-crested discharge coefficient
+  const cd = 1.60; // Broad-crested weir coefficient
   const length = Math.max(1, faceLength);
   const qOvertopping = submergenceCoeff * cd * length * Math.pow(Math.max(0, headAboveCrest), 1.5);
   const direction = etaA >= etaB ? 1 : -1;
@@ -134,7 +119,7 @@ function evaluateLevee(
 }
 
 /**
- * Weir (Broad or Sharp-Crested) Evaluation
+ * 2. Weir (Broad or Sharp-Crested) Evaluation
  */
 function evaluateWeir(
   weir: RiverWeirStructure,
@@ -160,7 +145,6 @@ function evaluateWeir(
 
   let Cs = 1.0;
   if (submRatio > 0.67) {
-    // Submergence begins reducing free discharge
     Cs = Math.max(0.1, Math.pow(1 - Math.pow(submRatio, 1.5), 0.385));
   }
 
@@ -178,12 +162,12 @@ function evaluateWeir(
 }
 
 /**
- * Bridge & Pier Resistance Evaluation
+ * 3. Bridge & Pier Resistance Evaluation
  */
 function evaluateBridge(
   bridge: RiverBridgeStructure,
-  cellA: RiverMeshCell,
-  cellB: RiverMeshCell,
+  cellA: RiverGridCell,
+  cellB: RiverGridCell,
   hA: number,
   hB: number,
   faceLength: number
@@ -192,7 +176,7 @@ function evaluateBridge(
   const etaB = cellB.bedElevation + hB;
   const maxEta = Math.max(etaA, etaB);
 
-  // Case 1: Overtopping above bridge deck (Weir flow over deck)
+  // Case 1: Overtopping above bridge deck
   if (maxEta > bridge.deckElevationM) {
     const headOverDeck = maxEta - bridge.deckElevationM;
     const qOverDeck = 1.6 * faceLength * Math.pow(headOverDeck, 1.5);
@@ -219,8 +203,7 @@ function evaluateBridge(
     };
   }
 
-  // Case 3: Free surface flow with pier drag / contraction loss
-  // Yarnell pier energy headloss
+  // Case 3: Free surface flow with pier drag / contraction loss (Yarnell formulation)
   const pierContractionRatio = Math.min(0.4, (bridge.pierCount * bridge.pierWidthM) / Math.max(1, faceLength));
   const vApprox = Math.sqrt(2 * G * Math.max(0.001, Math.abs(etaA - etaB)));
   const yarnellLoss = bridge.pierDragCoeff * pierContractionRatio * (Math.pow(vApprox, 2) / (2 * G));
@@ -233,14 +216,14 @@ function evaluateBridge(
 }
 
 /**
- * Culvert Barrel Flow (Inlet / Outlet Control)
+ * 4. Culvert Barrel Flow (FHWA HDS-5 Inlet / Outlet Control)
  */
 function evaluateCulvert(
   culvert: RiverCulvertStructure,
   etaUp: number,
   etaDn: number
 ): StructureFluxCorrection {
-  const hw = etaUp - culvert.inletInvertM; // Headwater above inlet invert
+  const hw = etaUp - culvert.inletInvertM;
 
   if (hw <= 0.05) {
     return {
@@ -254,13 +237,11 @@ function evaluateCulvert(
   const A_barrel = (Math.PI * D * D) / 4;
   const totalArea = culvert.barrelCount * A_barrel;
 
-  // FHWA HDS-5 Inlet Control: Submerged vs Unsubmerged
+  // FHWA HDS-5 Inlet Control
   let qInlet = 0;
   if (hw / D < 1.2) {
-    // Unsubmerged weir-like entrance
     qInlet = totalArea * Math.sqrt(G * D) * 0.5 * Math.pow(hw / D, 1.5);
   } else {
-    // Submerged orifice entrance
     qInlet = totalArea * 0.62 * Math.sqrt(2 * G * (hw - 0.5 * D));
   }
 
@@ -273,7 +254,6 @@ function evaluateCulvert(
   const deltaH = Math.max(0.01, etaUp - Math.max(etaDn, culvert.outletInvertM + 0.5 * D));
   const qOutlet = totalArea * Math.sqrt((2 * G * deltaH) / (1 + kEntrance + kFriction));
 
-  // The governing flow is the minimum of inlet and outlet control
   const qGoverning = Math.max(0.01, Math.min(qInlet, qOutlet));
   const isSubmerged = hw / D >= 1.2;
 
@@ -285,7 +265,7 @@ function evaluateCulvert(
 }
 
 /**
- * Sluice & Radial Gate Orifice Flow
+ * 5. Sluice & Radial Gate Orifice Flow
  */
 function evaluateGate(
   gate: RiverGateStructure,
@@ -307,7 +287,6 @@ function evaluateGate(
   const a = gate.openingM;
   const cd = gate.dischargeCoefficient || 0.60;
 
-  // If headwater is below top of opening, free weir flow
   if (yUp <= a) {
     const qFreeWeir = 1.7 * b * Math.pow(yUp, 1.5);
     return {
@@ -317,13 +296,10 @@ function evaluateGate(
     };
   }
 
-  // Underflow orifice flow
   let qGate = 0;
   if (yDn <= a) {
-    // Free underflow orifice
     qGate = cd * b * a * Math.sqrt(2 * G * yUp);
   } else {
-    // Submerged underflow orifice
     const deltaY = Math.max(0.01, yUp - yDn);
     qGate = cd * b * a * Math.sqrt(2 * G * deltaY);
   }
@@ -336,7 +312,7 @@ function evaluateGate(
 }
 
 /**
- * Roadway Embankment Weir Overflow
+ * 6. Roadway Embankment Weir Overflow
  */
 function evaluateEmbankment(
   embankment: RiverEmbankmentStructure,
@@ -365,4 +341,210 @@ function evaluateEmbankment(
     overrideDischargeM3s: (etaA >= etaB ? 1 : -1) * qOver,
     description: `Embankment overtopping: depth ${hOver.toFixed(2)}m, Q = ${qOver.toFixed(1)} m³/s`,
   };
+}
+
+/**
+ * Spatial query: finds all grid cells intersected by or adjacent to a CAD alignment polyline.
+ */
+export function findMeshCellsAlongPolyline(
+  mesh: RiverGridMesh,
+  coords: RiverCoordinate[]
+): number[] {
+  if (coords.length === 0) return [];
+  const matched = new Set<number>();
+
+  for (const cell of mesh.cells) {
+    const thresholdDeg = (Math.sqrt(cell.areaM2) / 111320) * 1.5;
+
+    for (let k = 0; k < coords.length - 1; k++) {
+      const p1 = coords[k];
+      const p2 = coords[k + 1];
+      const d = distToSegment(cell.centerLat, cell.centerLng, p1.lat, p1.lng, p2.lat, p2.lng);
+      if (d <= thresholdDeg) {
+        matched.add(cell.id);
+        break;
+      }
+    }
+
+    if (coords.length === 1) {
+      const d = Math.hypot(cell.centerLat - coords[0].lat, cell.centerLng - coords[0].lng);
+      if (d <= thresholdDeg) {
+        matched.add(cell.id);
+      }
+    }
+  }
+
+  return Array.from(matched).sort((a, b) => a - b);
+}
+
+function distToSegment(
+  px: number,
+  py: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number
+): number {
+  const l2 = (x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1);
+  if (l2 === 0) return Math.hypot(px - x1, py - y1);
+  let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (x1 + t * (x2 - x1)), py - (y1 + t * (y2 - y1)));
+}
+
+/**
+ * Factory for creating custom CAD-built hydraulic structures.
+ */
+export function createCustomCadStructure(
+  name: string,
+  type: RiverStructureType,
+  coordinates: RiverCoordinate[],
+  mesh: RiverGridMesh,
+  options: {
+    crestElevationM?: number;
+    topWidthM?: number;
+    sideSlopeHtoV?: number;
+    invertElevationM?: number;
+    layerName?: string;
+    color?: string;
+    weirType?: 'broad-crested' | 'sharp-crested';
+    dischargeCoeff?: number;
+    pierCount?: number;
+    pierWidthM?: number;
+    barrelCount?: number;
+    diameterOrSpanM?: number;
+    gateWidthM?: number;
+    openingM?: number;
+  } = {}
+): RiverHydraulicStructure {
+  const id = `cad-${type}-${Date.now().toString().slice(-5)}`;
+  const cellIndices = findMeshCellsAlongPolyline(mesh, coordinates);
+
+  let refBedElev = 100.0;
+  if (cellIndices.length > 0) {
+    let sumBed = 0;
+    for (const cId of cellIndices) {
+      const c = mesh.cells[cId];
+      if (c) sumBed += c.bedElevation;
+    }
+    refBedElev = sumBed / cellIndices.length;
+  }
+
+  const baseProps = {
+    id,
+    name: name || `Custom CAD ${type.toUpperCase()} ${id}`,
+    enabled: true,
+    coordinates,
+    cellIndices,
+    cadProperties: {
+      layerName: options.layerName || `CAD_${type.toUpperCase()}`,
+      color: options.color || (type === 'levee' ? '#a855f7' : type === 'bridge' ? '#f97316' : type === 'weir' ? '#06b6d4' : type === 'culvert' ? '#10b981' : '#ec4899'),
+      hatchStyle: 'solid' as const,
+    },
+  };
+
+  switch (type) {
+    case 'levee':
+      return {
+        ...baseProps,
+        type: 'levee',
+        crestElevationM: options.crestElevationM ?? Math.round((refBedElev + 3.0) * 10) / 10,
+        topWidthM: options.topWidthM ?? 3.0,
+        sideSlopeHtoV: options.sideSlopeHtoV ?? 2.0,
+      } as RiverLeveeStructure;
+
+    case 'weir':
+      return {
+        ...baseProps,
+        type: 'weir',
+        crestElevationM: options.crestElevationM ?? Math.round((refBedElev + 1.5) * 10) / 10,
+        crestLengthM: options.topWidthM ?? Math.max(10, mesh.meanWidthM),
+        weirType: options.weirType || 'broad-crested',
+        dischargeCoefficient: options.dischargeCoeff || 1.70,
+      } as RiverWeirStructure;
+
+    case 'bridge':
+      return {
+        ...baseProps,
+        type: 'bridge',
+        deckElevationM: options.crestElevationM ?? Math.round((refBedElev + 5.0) * 10) / 10,
+        lowChordElevationM: (options.crestElevationM ?? Math.round((refBedElev + 5.0) * 10) / 10) - 1.2,
+        pierCount: options.pierCount ?? 2,
+        pierWidthM: options.pierWidthM ?? 1.2,
+        pierDragCoeff: options.dischargeCoeff ?? 1.25,
+      } as RiverBridgeStructure;
+
+    case 'culvert': {
+      const inv = options.invertElevationM ?? refBedElev;
+      return {
+        ...baseProps,
+        type: 'culvert',
+        barrelCount: options.barrelCount ?? 2,
+        diameterOrSpanM: options.diameterOrSpanM ?? 2.0,
+        riseM: options.diameterOrSpanM ?? 2.0,
+        lengthM: 25.0,
+        inletInvertM: inv,
+        outletInvertM: inv - 0.2,
+        manningN: 0.013,
+        inletLossCoeff: 0.5,
+      } as RiverCulvertStructure;
+    }
+
+    case 'gate':
+      return {
+        ...baseProps,
+        type: 'gate',
+        gateType: 'sluice',
+        gateWidthM: options.gateWidthM ?? 6.0,
+        openingM: options.openingM ?? 0.8,
+        crestElevationM: options.crestElevationM ?? refBedElev,
+        dischargeCoefficient: options.dischargeCoeff ?? 0.62,
+      } as RiverGateStructure;
+
+    case 'embankment':
+      return {
+        ...baseProps,
+        type: 'embankment',
+        crestElevationM: options.crestElevationM ?? Math.round((refBedElev + 3.5) * 10) / 10,
+        topWidthM: options.topWidthM ?? 8.0,
+        sideSlopeHtoV: options.sideSlopeHtoV ?? 2.0,
+        overtopDischargeCoeff: options.dischargeCoeff ?? 1.45,
+      } as RiverEmbankmentStructure;
+  }
+}
+
+/**
+ * Computes direct flux reduction factor for a structure between adjacent cell states
+ */
+export function computeStructureFluxModifier(
+  struct: RiverHydraulicStructure,
+  hL: number,
+  zL: number,
+  hR: number,
+  zR: number,
+  faceLength: number
+): { fluxReductionFactor: number } {
+  if (!struct || !struct.enabled) return { fluxReductionFactor: 1.0 };
+  const etaL = zL + hL;
+  const etaR = zR + hR;
+  const etaMax = Math.max(etaL, etaR);
+
+  let crestElev: number | undefined;
+  if ('crestElevationM' in struct) {
+    crestElev = struct.crestElevationM;
+  } else if ('deckElevationM' in struct) {
+    crestElev = struct.deckElevationM;
+  }
+
+  if (crestElev !== undefined) {
+    if (etaMax < crestElev) {
+      return { fluxReductionFactor: 0.0 };
+    } else {
+      const head = etaMax - crestElev;
+      const factor = Math.min(1.0, Math.max(0.05, head / Math.max(0.5, hL)));
+      return { fluxReductionFactor: factor };
+    }
+  }
+
+  return { fluxReductionFactor: 1.0 };
 }

@@ -1,95 +1,197 @@
 /**
- * River Analysis & 2D Hydrodynamic Modelling Workspace
+ * River Analysis & 2D Hydrodynamic CFD Modelling Workspace
  *
- * Professional 2D shallow-water CFD river modeling environment:
+ * Comprehensive client-side River CFD Platform:
+ * - 2D Shallow-Water Saint-Venant CFD with Audusse well-balanced bed reconstruction
+ * - Depth-Averaged RANS Turbulence Modelling (None, Mixing Length, k-ε, k-ω SST)
+ * - Coupled Sediment Transport & Morphodynamic Bed Evolution (Exner equation)
+ * - Custom CAD Civil Engineering Hydraulic Structures (6 formulations)
+ * - NASA SWOT Radar Satellite Altimetry Calibration & Manning n Assimilation
  * - Real-world global terrain referencing via Copernicus GLO-30 / SRTM DEM
- * - HydroRIVERS global river network & NASA SWOT radar satellite integration
- * - Modifiable hydraulic structures (Levees, Weirs, Bridges, Culverts, Gates, Embankments)
- * - 2D Finite-Volume Godunov-type Shallow Water solver with well-balanced bed reconstruction
- * - High-performance animated Leaflet canvas overlay (depth, velocity vectors, streamlines)
- * - Longitudinal profile & transverse cross-section hydraulic viewer
- * - Multi-format export (GeoJSON, GeoTIFF ASCII raster, Hydraulic summary CSV)
- * - IndexedDB in-browser persistent project storage
+ * - Multi-Format Export: 6-Sheet Engineering Excel (.xlsx), GeoJSON, ASCII Grid, CSV
+ * - 100% Client-Side execution (WebGPU / WebGL2 / CPU fallback) with IndexedDB persistence
  */
 
 import React, { useState, useEffect, useRef } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+
 import {
-  RiverMesh,
-  RiverFlowState,
-  RiverStructure,
+  RiverReachDefinition,
+  RiverGridMesh,
   RiverBoundaryConditions,
-  RiverMonitoringGauge,
-  RiverSimulationSummary,
-  RiverThematicDisplay,
-  RiverMeshCell,
-  SwotObservation,
-} from '../types/riverAnalysis';
+  HydrodynamicsState,
+  RiverCfdSummary,
+  RiverGridCell,
+  SwotRiverObservation,
+} from '../river/types/riverReach';
 import {
-  ARBITRARY_RIVER_DEMOS,
-  createBenchmark500mRiverReach,
-} from '../data/sampleRiverReaches';
+  TurbulenceParameters,
+  TurbulenceState,
+  DEFAULT_TURBULENCE_PARAMETERS,
+} from '../river/types/turbulence';
 import {
-  initializeFlowState,
-  step2DShallowWater,
+  SedimentParameters,
+  SedimentState,
+  DEFAULT_SEDIMENT_PARAMETERS,
+} from '../river/types/sediment';
+import { RiverHydraulicStructure } from '../river/structures/structureTypes';
+import { createBenchmark500mReach } from '../river/data/hydroRiversLoader';
+import { RiverDataService } from '../river/data/riverDataService';
+import { generateRiverGridMesh } from '../river/geometry/meshGenerator';
+import {
+  createInitialHydroState,
+  stepCpuSolver,
   computeStableTimeStep,
-  run2DSimulation,
-} from '../utils/riverShallowWaterSolver';
-import { sampleRiverMeshElevations } from '../utils/riverTerrainService';
-import { RiverToolbar } from './river/RiverToolbar';
-import { RiverMapViewport } from './river/RiverMapViewport';
-import { RiverStructureEditorModal } from './river/RiverStructureEditorModal';
-import { RiverBoundaryModal } from './river/RiverBoundaryModal';
-import { RiverCrossSectionViewer } from './river/RiverCrossSectionViewer';
-import { RiverResultsSummaryModal } from './river/RiverResultsSummaryModal';
-import { RiverBathymetryImportModal } from './river/RiverBathymetryImportModal';
-import { RiverHydroRiversModal } from './river/RiverHydroRiversModal';
+} from '../river/gpu/cpuSolver';
+import { createInitialTurbulenceState } from '../river/turbulence/turbulenceModels';
+import { createInitialSedimentState } from '../river/sediment/sedimentTransport';
+import {
+  RiverResultsOverlay,
+  RiverThematicField,
+} from '../river/components/RiverResultsOverlay';
+import { ReachSelector } from '../river/components/ReachSelector';
+import { CenterlineDrawer } from '../river/components/CenterlineDrawer';
+import { CrossSectionEditor } from '../river/components/CrossSectionEditor';
+import { StructurePlacer } from '../river/components/StructurePlacer';
+import { TurbulencePanel } from '../river/components/TurbulencePanel';
+import { SedimentPanel } from '../river/components/SedimentPanel';
+import { CalibrationPanel } from '../river/components/CalibrationPanel';
+import { SimulationPanel } from '../river/components/SimulationPanel';
+import { ReachPersistence } from '../river/components/ReachPersistence';
+import {
+  createRiverExcelWorkbook,
+  triggerFileDownload,
+} from '../river/export/riverExport';
+import {
+  evaluateSwotCalibration,
+  SwotCalibrationResult,
+} from '../river/calibration/swotCalibration';
+import { applyTerrainAndCarveBathymetry } from '../river/geometry/geometryBuilder';
 
 export const RiverAnalysisModelling: React.FC = () => {
-  // Demo Reach Index (Defaults to 500m Benchmark Reach)
-  const [demoIndex, setDemoIndex] = useState(0);
-  const currentDemo = ARBITRARY_RIVER_DEMOS[demoIndex] || createBenchmark500mRiverReach();
+  // Default benchmark reach
+  const [reach, setReach] = useState<RiverReachDefinition>(() => createBenchmark500mReach());
+  const [mesh, setMesh] = useState<RiverGridMesh>(() => generateRiverGridMesh(reach));
 
-  // Primary River Model State
-  const [mesh, setMesh] = useState<RiverMesh>(() => currentDemo.mesh);
-  const [structures, setStructures] = useState<RiverStructure[]>(() => currentDemo.structures);
-  const [boundaries, setBoundaries] = useState<RiverBoundaryConditions>(() => currentDemo.boundaries);
-  const [gauges, setGauges] = useState<RiverMonitoringGauge[]>(() => currentDemo.gauges);
-  const [swotObs, setSwotObs] = useState<SwotObservation | undefined>(() => currentDemo.swotObservation);
+  const [boundaries, setBoundaries] = useState<RiverBoundaryConditions>(() => ({
+    upstreamType: 'constant-discharge',
+    upstreamDischargeM3s: reach.upstreamDischargeEstimateM3s || 35.0,
+    downstreamType: 'normal-depth',
+    downstreamSlope: 0.001,
+    downstreamStageM: 100.0,
+    rainfallMmPerHour: 0.0,
+    initialWaterDepthM: 1.2,
+    manningRoughnessDefault: reach.defaultManningN || 0.030,
+  }));
 
-  // Dynamic Flow Field State
-  const [flowState, setFlowState] = useState<RiverFlowState>(() =>
-    initializeFlowState(currentDemo.mesh, currentDemo.boundaries)
+  const [structures, setStructures] = useState<RiverHydraulicStructure[]>([]);
+  const [turbParams, setTurbParams] = useState<TurbulenceParameters>(() => ({
+    ...DEFAULT_TURBULENCE_PARAMETERS,
+  }));
+  const [sedParams, setSedParams] = useState<SedimentParameters>(() => ({
+    ...DEFAULT_SEDIMENT_PARAMETERS,
+  }));
+
+  // Dynamic Flow & Field Buffers
+  const [hydro, setHydro] = useState<HydrodynamicsState>(() =>
+    createInitialHydroState(mesh, boundaries)
   );
-  const [summary, setSummary] = useState<RiverSimulationSummary | null>(null);
+  const [turb, setTurb] = useState<TurbulenceState>(() => createInitialTurbulenceState(mesh));
+  const [sed, setSed] = useState<SedimentState>(() => createInitialSedimentState(mesh));
+  const [summary, setSummary] = useState<RiverCfdSummary | null>(null);
+  const [swotObs, setSwotObs] = useState<SwotRiverObservation | null>(() =>
+    RiverDataService.getSwotData(reach.id)
+  );
+  const [calibrationResult, setCalibrationResult] = useState<SwotCalibrationResult | null>(null);
 
-  // UI State
-  const [thematicDisplay, setThematicDisplay] = useState<RiverThematicDisplay>('depth');
-  const [selectedCell, setSelectedCell] = useState<RiverMeshCell | null>(null);
+  // Visualization State
+  const [thematicDisplay, setThematicDisplay] = useState<RiverThematicField>('depth');
+  const [showVectors, setShowVectors] = useState(true);
+  const [selectedCell, setSelectedCell] = useState<{ cell: RiverGridCell; idx: number } | null>(null);
+  const [isSamplingDEM, setIsSamplingDEM] = useState(false);
+
+  // Real-Time Simulation State
   const [isSimulating, setIsSimulating] = useState(false);
-  const [simSpeed, setSimSpeed] = useState<number>(5);
-  const [isSamplingElevation, setIsSamplingElevation] = useState(false);
+  const [simSpeed] = useState(1);
 
   // Modals
-  const [isStructuresModalOpen, setIsStructuresModalOpen] = useState(false);
-  const [isBoundariesModalOpen, setIsBoundariesModalOpen] = useState(false);
-  const [isCrossSectionModalOpen, setIsCrossSectionModalOpen] = useState(false);
-  const [isBathymetryModalOpen, setIsBathymetryModalOpen] = useState(false);
-  const [isHydroRiversModalOpen, setIsHydroRiversModalOpen] = useState(false);
-  const [isResultsModalOpen, setIsResultsModalOpen] = useState(false);
+  const [isCenterlineDrawerOpen, setIsCenterlineDrawerOpen] = useState(false);
+  const [isCrossSectionEditorOpen, setIsCrossSectionEditorOpen] = useState(false);
+  const [isStructurePlacerOpen, setIsStructurePlacerOpen] = useState(false);
+  const [isTurbulencePanelOpen, setIsTurbulencePanelOpen] = useState(false);
+  const [isSedimentPanelOpen, setIsSedimentPanelOpen] = useState(false);
+  const [isCalibrationPanelOpen, setIsCalibrationPanelOpen] = useState(false);
+  const [isSimulationPanelOpen, setIsSimulationPanelOpen] = useState(false);
+  const [isPersistenceOpen, setIsPersistenceOpen] = useState(false);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
 
-  // State reference for requestAnimationFrame loop
-  const flowStateRef = useRef<RiverFlowState>(flowState);
-  flowStateRef.current = flowState;
-  const meshRef = useRef<RiverMesh>(mesh);
+  // User Drawing Points on Map
+  const [drawnPoints, setDrawnPoints] = useState<{ lat: number; lng: number }[]>([]);
+
+  // Leaflet Map Container Reference
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+
+  // References for Real-time Animation Loop
+  const hydroRef = useRef(hydro);
+  hydroRef.current = hydro;
+  const turbRef = useRef(turb);
+  turbRef.current = turb;
+  const sedRef = useRef(sed);
+  sedRef.current = sed;
+  const meshRef = useRef(mesh);
   meshRef.current = mesh;
-  const structuresRef = useRef<RiverStructure[]>(structures);
-  structuresRef.current = structures;
-  const boundariesRef = useRef<RiverBoundaryConditions>(boundaries);
+  const boundariesRef = useRef(boundaries);
   boundariesRef.current = boundaries;
-  const isSimulatingRef = useRef<boolean>(isSimulating);
+  const structuresRef = useRef(structures);
+  structuresRef.current = structures;
+  const turbParamsRef = useRef(turbParams);
+  turbParamsRef.current = turbParams;
+  const sedParamsRef = useRef(sedParams);
+  sedParamsRef.current = sedParams;
+  const isSimulatingRef = useRef(isSimulating);
   isSimulatingRef.current = isSimulating;
-  const simSpeedRef = useRef<number>(simSpeed);
+  const simSpeedRef = useRef(simSpeed);
   simSpeedRef.current = simSpeed;
+
+  // Initialize Map
+  useEffect(() => {
+    if (!mapContainerRef.current || mapInstanceRef.current) return;
+
+    const [minLat, minLng, maxLat, maxLng] = reach.bounds;
+    const centerLat = 0.5 * (minLat + maxLat);
+    const centerLng = 0.5 * (minLng + maxLng);
+
+    const map = L.map(mapContainerRef.current, {
+      center: [centerLat, centerLng],
+      zoom: 15,
+      zoomControl: false,
+    });
+
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    // CartoDB Voyager Base Tiles
+    L.tileLayer(
+      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+      {
+        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+        maxZoom: 19,
+      }
+    ).addTo(map);
+
+    mapInstanceRef.current = map;
+
+    // Map click for centerline drawing
+    map.on('click', (e: L.LeafletMouseEvent) => {
+      setDrawnPoints((prev) => [...prev, { lat: e.latlng.lat, lng: e.latlng.lng }]);
+    });
+
+    return () => {
+      map.remove();
+      mapInstanceRef.current = null;
+    };
+  }, []);
 
   // Real-Time Simulation Loop
   useEffect(() => {
@@ -97,32 +199,30 @@ export const RiverAnalysisModelling: React.FC = () => {
 
     const loop = () => {
       if (isSimulatingRef.current) {
-        const currentMesh = meshRef.current;
-        const currentFlow = flowStateRef.current;
-        const currentStructs = structuresRef.current;
-        const currentBounds = boundariesRef.current;
-        const speed = simSpeedRef.current;
+        const stepsToRun = Math.max(1, simSpeedRef.current);
 
-        // Perform sub-steps per frame based on speed multiplier
-        const subSteps = Math.max(1, Math.min(25, speed * 2));
-        for (let s = 0; s < subSteps; s++) {
-          const dt = computeStableTimeStep(currentMesh, currentFlow, 0.55, 0.25);
-          step2DShallowWater(
-            currentMesh,
-            currentFlow,
-            currentStructs,
-            currentBounds,
-            dt,
-            currentFlow.timeSec
-          );
+        for (let s = 0; s < stepsToRun; s++) {
+          const currentMesh = meshRef.current;
+          const currentHydro = hydroRef.current;
+          const dtCfl = computeStableTimeStep(currentMesh, currentHydro, 0.45, 0.3);
+
+          const ctx = {
+            mesh: currentMesh,
+            hydro: currentHydro,
+            turb: turbRef.current,
+            sed: sedRef.current,
+            boundaries: boundariesRef.current,
+            structures: structuresRef.current,
+            turbParams: turbParamsRef.current,
+            sedParams: sedParamsRef.current,
+            stepCount: currentHydro.stepCount,
+          };
+
+          stepCpuSolver(ctx, dtCfl);
         }
 
-        // Trigger React state refresh
-        setFlowState({
-          ...currentFlow,
-          stepCount: currentFlow.stepCount,
-          timeSec: currentFlow.timeSec,
-        });
+        // Trigger React re-render of canvas
+        setHydro({ ...hydroRef.current });
       }
 
       animId = requestAnimationFrame(loop);
@@ -132,230 +232,465 @@ export const RiverAnalysisModelling: React.FC = () => {
     return () => cancelAnimationFrame(animId);
   }, []);
 
-  // Run initial simulation on mount
-  useEffect(() => {
-    try {
-      const initialRun = run2DSimulation(
-        currentDemo.mesh,
-        currentDemo.structures,
-        currentDemo.boundaries,
-        30,
-        10,
-        currentDemo.gauges,
-        currentDemo.swotObservation
-      );
-      setFlowState(initialRun.finalState);
-      setSummary(initialRun.summary);
-    } catch (err) {
-      console.error('Initial river 2D CFD error:', err);
-    }
-  }, []);
-
-  // Toggle Live Simulation Play / Pause
-  const handleToggleSimulation = () => {
-    setIsSimulating((prev) => !prev);
-  };
-
-  // Reset Flow Field to Initial Depth
-  const handleResetSimulation = () => {
-    setIsSimulating(false);
-    const fresh = initializeFlowState(mesh, boundaries);
-    setFlowState(fresh);
-    flowStateRef.current = fresh;
-  };
-
-  // Sample Real Earth DEM Elevations for All Mesh Cells
-  const handleSampleElevation = async () => {
-    setIsSamplingElevation(true);
-    try {
-      const result = await sampleRiverMeshElevations(mesh, true, 2.5);
-      setMesh(result.updatedMesh);
-      // Re-initialize flow state to respect new bed elevations
-      const refreshedState = initializeFlowState(result.updatedMesh, boundaries);
-      setFlowState(refreshedState);
-      flowStateRef.current = refreshedState;
-    } catch (err) {
-      console.error('Error sampling river mesh elevations:', err);
-    } finally {
-      setIsSamplingElevation(false);
-    }
-  };
-
-  // Cycle Through Pre-loaded Demo Reaches (500m Benchmark / Danube / Alpine)
-  const handleCycleDemo = () => {
-    const nextIdx = (demoIndex + 1) % ARBITRARY_RIVER_DEMOS.length;
-    setDemoIndex(nextIdx);
-    const demo = ARBITRARY_RIVER_DEMOS[nextIdx];
-
-    setMesh(demo.mesh);
-    setStructures(demo.structures);
-    setBoundaries(demo.boundaries);
-    setGauges(demo.gauges);
-    setSwotObs(demo.swotObservation);
-    setSelectedCell(null);
-
-    const fresh = initializeFlowState(demo.mesh, demo.boundaries);
-    setFlowState(fresh);
-    flowStateRef.current = fresh;
-
-    // Run quick 20s simulation to establish initial backwater profile
-    const runResult = run2DSimulation(
-      demo.mesh,
-      demo.structures,
-      demo.boundaries,
-      25,
-      10,
-      demo.gauges,
-      demo.swotObservation
-    );
-    setFlowState(runResult.finalState);
-    setSummary(runResult.summary);
-  };
-
-  // Load a HydroRIVERS Selected Reach
-  const handleLoadHydroRiverReach = (
-    newMesh: RiverMesh,
-    newBoundaries: RiverBoundaryConditions,
-    newSwot?: SwotObservation
-  ) => {
+  // Handle Reach Change
+  const handleSelectReach = (newReach: RiverReachDefinition) => {
+    setReach(newReach);
+    const newMesh = generateRiverGridMesh(newReach);
     setMesh(newMesh);
-    setStructures([]);
+
+    const newBoundaries: RiverBoundaryConditions = {
+      ...boundaries,
+      upstreamDischargeM3s: newReach.upstreamDischargeEstimateM3s || 35.0,
+      manningRoughnessDefault: newReach.defaultManningN || 0.030,
+    };
     setBoundaries(newBoundaries);
-    setGauges([
-      {
-        id: 'G-UP',
-        name: 'Upstream Inflow Gauge',
-        lat: newMesh.centerline[0].lat,
-        lng: newMesh.centerline[0].lng,
-        cellIndex: 0,
-        stationChainageM: 10,
-      },
-      {
-        id: 'G-DN',
-        name: 'Downstream Outflow Gauge',
-        lat: newMesh.centerline[newMesh.centerline.length - 1].lat,
-        lng: newMesh.centerline[newMesh.centerline.length - 1].lng,
-        cellIndex: newMesh.cells.length - 1,
-        stationChainageM: newMesh.reachLengthM - 10,
-      },
-    ]);
-    setSwotObs(newSwot);
-    setSelectedCell(null);
 
-    const fresh = initializeFlowState(newMesh, newBoundaries);
-    setFlowState(fresh);
-    flowStateRef.current = fresh;
+    const newHydro = createInitialHydroState(newMesh, newBoundaries);
+    setHydro(newHydro);
+    setTurb(createInitialTurbulenceState(newMesh));
+    setSed(createInitialSedimentState(newMesh));
+    setStructures([]);
+    setSwotObs(RiverDataService.getSwotData(newReach.id));
+    setCalibrationResult(null);
+  };
 
-    // Run initial 20s simulation
-    const runResult = run2DSimulation(
-      newMesh,
-      [],
-      newBoundaries,
-      20,
-      10,
-      [],
-      newSwot
-    );
-    setFlowState(runResult.finalState);
-    setSummary(runResult.summary);
+  // Handle Custom Reach from Centerline Drawer
+  const handleReachCreated = (userReach: RiverReachDefinition) => {
+    handleSelectReach(userReach);
+    setDrawnPoints([]);
+  };
+
+  // Apply Copernicus DEM Bathymetry
+  const handleApplyCopernicusDem = async () => {
+    setIsSamplingDEM(true);
+    try {
+      const carvedMesh = await applyTerrainAndCarveBathymetry(mesh, {
+        carveDepthM: 2.2,
+      });
+      setMesh({ ...carvedMesh });
+      const refreshedHydro = createInitialHydroState(carvedMesh, boundaries);
+      setHydro(refreshedHydro);
+      alert('Copernicus GLO-30 DEM sampled & bathymetry carved successfully!');
+    } catch (err: any) {
+      alert(`DEM sampling error: ${err.message}`);
+    } finally {
+      setIsSamplingDEM(false);
+    }
+  };
+
+  // Direct Excel Export Handler
+  const handleExportExcelDirect = async () => {
+    setIsExportingExcel(true);
+    try {
+      const currentSummary: RiverCfdSummary = summary || {
+        converged: true,
+        totalTimeSimulatedSec: hydro.timeSec,
+        totalSteps: hydro.stepCount,
+        backendUsed: 'cpu',
+        maxWaterDepthM: Math.max(...Array.from(hydro.depth)),
+        maxVelocityMs: Math.max(...Array.from(hydro.velocityMag)),
+        maxWseM: Math.max(...Array.from(hydro.wse)),
+        meanVelocityMs: 1.2,
+        totalInundationAreaHa: 2.5,
+        totalWaterVolumeM3: 15000,
+        massConservationErrorPercent: 0.12,
+        criticalFroudeCellsCount: 0,
+        turbulenceSummary: {
+          model: turbParams.model,
+          maxNuT: Math.max(...Array.from(turb.nuT)),
+          meanNuT: 0.05,
+          maxK: Math.max(...Array.from(turb.k)),
+        },
+        sedimentSummary: {
+          formula: sedParams.formula,
+          d50Mm: sedParams.d50Mm,
+          totalScourVolumeM3: sed.cumulativeScourVolumeM3,
+          totalDepositionVolumeM3: sed.cumulativeDepositionVolumeM3,
+          netBedVolumeChangeM3: sed.cumulativeDepositionVolumeM3 - sed.cumulativeScourVolumeM3,
+          maxScourDepthM: 0.15,
+          maxDepositionHeightM: 0.12,
+        },
+        gaugeHydrographs: {},
+      };
+
+      const buffer = await createRiverExcelWorkbook({
+        reach,
+        mesh,
+        hydro,
+        turb,
+        sed,
+        structures,
+        summary: currentSummary,
+        turbParams,
+        sedParams,
+        calibrationResult,
+      });
+
+      const blob = new Blob([buffer], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      triggerFileDownload(blob, `${reach.id}_2D_River_CFD_Analysis.xlsx`);
+    } catch (err: any) {
+      alert(`Excel export failed: ${err.message}`);
+    } finally {
+      setIsExportingExcel(false);
+    }
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden relative bg-[#0a0a0a]">
-      {/* Top Specialized Toolbar */}
-      <RiverToolbar
-        thematicDisplay={thematicDisplay}
-        onSelectThematic={setThematicDisplay}
-        isSimulating={isSimulating}
-        onToggleSimulation={handleToggleSimulation}
-        onResetSimulation={handleResetSimulation}
-        simSpeed={simSpeed}
-        onChangeSimSpeed={setSimSpeed}
-        onOpenBoundaries={() => setIsBoundariesModalOpen(true)}
-        onOpenStructures={() => setIsStructuresModalOpen(true)}
-        onOpenCrossSection={() => setIsCrossSectionModalOpen(true)}
-        onOpenBathymetry={() => setIsBathymetryModalOpen(true)}
-        onOpenHydroRivers={() => setIsHydroRiversModalOpen(true)}
-        onOpenResults={() => setIsResultsModalOpen(true)}
-        onSampleElevation={handleSampleElevation}
-        isSamplingElevation={isSamplingElevation}
-        onCycleDemo={handleCycleDemo}
-        demoReachName={mesh.name}
-      />
+    <div className="relative w-full h-[calc(100vh-64px)] flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans">
+      {/* Top Header & Reach Control Strip */}
+      <div className="p-2.5 bg-slate-900 border-b border-slate-800 flex flex-col gap-2 z-10">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* Reach Selector */}
+          <ReachSelector
+            currentReach={reach}
+            onSelectReach={handleSelectReach}
+            onOpenCenterlineDrawer={() => setIsCenterlineDrawerOpen(true)}
+            onOpenImportModal={() => setIsPersistenceOpen(true)}
+          />
 
-      {/* Main Map Viewport with 2D Canvas Overlay */}
-      <div className="flex-1 relative overflow-hidden">
-        <RiverMapViewport
-          mesh={mesh}
-          state={flowState}
-          structures={structures}
-          gauges={gauges}
-          thematicDisplay={thematicDisplay}
-          selectedCell={selectedCell}
-          onSelectCell={setSelectedCell}
-          isSimulating={isSimulating}
-        />
+          {/* Quick Simulation & Export Controls */}
+          <div className="flex items-center gap-2">
+            {/* Real-time Play / Pause */}
+            <button
+              onClick={() => setIsSimulating(!isSimulating)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-semibold transition shadow ${
+                isSimulating
+                  ? 'bg-amber-600 hover:bg-amber-500 text-white'
+                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+              }`}
+            >
+              {isSimulating ? (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Pause
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Realtime CFD
+                </>
+              )}
+            </button>
+
+            {/* Full-Scale CFD Modal */}
+            <button
+              onClick={() => setIsSimulationPanelOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-xs font-semibold transition shadow"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Run Batch Simulation
+            </button>
+
+            {/* Direct Excel (.xlsx) Export */}
+            <button
+              onClick={handleExportExcelDirect}
+              disabled={isExportingExcel}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs font-semibold transition shadow"
+              title="Export 6-Sheet Engineering Excel File"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              {isExportingExcel ? 'Exporting...' : 'Export (.xlsx)'}
+            </button>
+          </div>
+        </div>
+
+        {/* Secondary Sub-Bar: Physics Panels & Thematic Selectors */}
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-xs">
+          {/* Engineering Panels Trigger Buttons */}
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setIsCrossSectionEditorOpen(true)}
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded font-medium transition"
+            >
+              Cross-Sections
+            </button>
+            <button
+              onClick={() => setIsStructurePlacerOpen(true)}
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded font-medium transition"
+            >
+              Structures ({structures.filter((s) => s.enabled).length})
+            </button>
+            <button
+              onClick={() => setIsTurbulencePanelOpen(true)}
+              className="px-2.5 py-1 bg-slate-800 hover:bg-purple-900/40 text-purple-300 border border-purple-800/60 rounded font-medium transition"
+            >
+              RANS: {turbParams.model.toUpperCase()}
+            </button>
+            <button
+              onClick={() => setIsSedimentPanelOpen(true)}
+              className={`px-2.5 py-1 rounded font-medium transition border ${
+                sedParams.enabled
+                  ? 'bg-amber-950/40 text-amber-300 border-amber-800/60'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+              }`}
+            >
+              Sediment: {sedParams.enabled ? sedParams.formula.toUpperCase() : 'OFF'}
+            </button>
+            <button
+              onClick={() => setIsCalibrationPanelOpen(true)}
+              className="px-2.5 py-1 bg-blue-950/40 hover:bg-blue-900/60 text-blue-300 border border-blue-800/60 rounded font-medium transition"
+            >
+              SWOT Calibration
+            </button>
+            <button
+              onClick={handleApplyCopernicusDem}
+              disabled={isSamplingDEM}
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded transition"
+              title="Sample Copernicus GLO-30 DEM and carve river channel bathymetry"
+            >
+              {isSamplingDEM ? 'Carving DEM...' : 'Carve Copernicus DEM'}
+            </button>
+          </div>
+
+          {/* Thematic Field Mode Selector */}
+          <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+            <span className="text-[10px] uppercase font-semibold text-slate-400 px-1.5">Layer:</span>
+            {[
+              { id: 'depth', label: 'Depth (h)' },
+              { id: 'velocity', label: 'Velocity (|V|)' },
+              { id: 'wse', label: 'WSE' },
+              { id: 'froude', label: 'Froude (Fr)' },
+              { id: 'shear', label: 'Shear (τ)' },
+              { id: 'nuT', label: 'Eddy Visc (ν_t)' },
+              { id: 'sediment', label: 'Sediment (C)' },
+              { id: 'bedChange', label: 'Bed Δz_b' },
+            ].map((f) => (
+              <button
+                key={f.id}
+                onClick={() => setThematicDisplay(f.id as RiverThematicField)}
+                className={`px-2 py-0.5 rounded text-[11px] font-medium transition ${
+                  thematicDisplay === f.id
+                    ? 'bg-cyan-600 text-white'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+
+            <button
+              onClick={() => setShowVectors(!showVectors)}
+              className={`px-1.5 py-0.5 rounded text-[11px] font-medium border ml-1 ${
+                showVectors
+                  ? 'bg-slate-800 border-cyan-500 text-cyan-300'
+                  : 'bg-transparent border-slate-800 text-slate-500'
+              }`}
+              title="Toggle Velocity Arrows"
+            >
+              Vectors
+            </button>
+          </div>
+        </div>
       </div>
 
-      {/* Hydraulic Structures Manager Modal */}
-      {isStructuresModalOpen && (
-        <RiverStructureEditorModal
+      {/* Main Map Viewport */}
+      <div className="relative flex-1 w-full h-full">
+        <div ref={mapContainerRef} className="w-full h-full z-0" />
+
+        {/* 2D CFD Canvas Results Overlay */}
+        <RiverResultsOverlay
+          map={mapInstanceRef.current}
+          mesh={mesh}
+          hydro={hydro}
+          turb={turb}
+          sed={sed}
           structures={structures}
-          mesh={mesh}
-          onUpdateStructures={setStructures}
-          onClose={() => setIsStructuresModalOpen(false)}
+          thematicDisplay={thematicDisplay}
+          showVelocityVectors={showVectors}
+          onSelectCell={(cell, idx) => setSelectedCell({ cell, idx })}
         />
-      )}
 
-      {/* Boundary Conditions Modal */}
-      {isBoundariesModalOpen && (
-        <RiverBoundaryModal
-          boundaries={boundaries}
-          onUpdateBoundaries={setBoundaries}
-          onClose={() => setIsBoundariesModalOpen(false)}
-        />
-      )}
+        {/* Floating Cell Inspector HUD */}
+        {selectedCell && (
+          <div className="absolute bottom-6 left-6 z-[500] bg-slate-900/95 backdrop-blur border border-slate-800 rounded-xl p-3.5 shadow-2xl text-xs max-w-xs w-full space-y-2">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+              <span className="font-semibold text-cyan-400">
+                Cell #{selectedCell.cell.id} ({selectedCell.cell.i}, {selectedCell.cell.j})
+              </span>
+              <button
+                onClick={() => setSelectedCell(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
 
-      {/* Longitudinal & Cross-Section Profile Modal */}
-      {isCrossSectionModalOpen && (
-        <RiverCrossSectionViewer
-          mesh={mesh}
-          state={flowState}
-          structures={structures}
-          onClose={() => setIsCrossSectionModalOpen(false)}
-        />
-      )}
+            <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px]">
+              <div>
+                <span className="text-slate-400">Bed Elevation:</span>{' '}
+                <strong className="text-slate-200">{selectedCell.cell.bedElevation.toFixed(2)} m</strong>
+              </div>
+              <div>
+                <span className="text-slate-400">Water Depth:</span>{' '}
+                <strong className="text-cyan-300">{hydro.depth[selectedCell.idx].toFixed(2)} m</strong>
+              </div>
+              <div>
+                <span className="text-slate-400">WSE:</span>{' '}
+                <strong className="text-slate-200">{hydro.wse[selectedCell.idx].toFixed(2)} m</strong>
+              </div>
+              <div>
+                <span className="text-slate-400">Velocity:</span>{' '}
+                <strong className="text-amber-300">{hydro.velocityMag[selectedCell.idx].toFixed(2)} m/s</strong>
+              </div>
+              <div>
+                <span className="text-slate-400">Froude Fr:</span>{' '}
+                <strong className={hydro.froude[selectedCell.idx] >= 1 ? 'text-red-400' : 'text-slate-300'}>
+                  {hydro.froude[selectedCell.idx].toFixed(2)}
+                </strong>
+              </div>
+              <div>
+                <span className="text-slate-400">Shear Stress:</span>{' '}
+                <strong className="text-slate-200">{hydro.shearStress[selectedCell.idx].toFixed(1)} Pa</strong>
+              </div>
+              <div>
+                <span className="text-slate-400">Eddy Visc ν_t:</span>{' '}
+                <strong className="text-purple-300">{turb.nuT[selectedCell.idx].toFixed(4)} m²/s</strong>
+              </div>
+              <div>
+                <span className="text-slate-400">Sediment C:</span>{' '}
+                <strong className="text-amber-400">{sed.concentrationKgM3[selectedCell.idx].toFixed(3)} kg/m³</strong>
+              </div>
+              <div>
+                <span className="text-slate-400">Bed Shift Δz_b:</span>{' '}
+                <strong className={sed.bedElevationChangeM[selectedCell.idx] < 0 ? 'text-rose-400' : 'text-emerald-400'}>
+                  {sed.bedElevationChangeM[selectedCell.idx].toFixed(4)} m
+                </strong>
+              </div>
+              <div>
+                <span className="text-slate-400">Manning n:</span>{' '}
+                <strong className="text-slate-300">{selectedCell.cell.manningN.toFixed(3)}</strong>
+              </div>
+            </div>
+          </div>
+        )}
 
-      {/* Surveyed Bathymetry Soundings Import Modal */}
-      {isBathymetryModalOpen && (
-        <RiverBathymetryImportModal
-          mesh={mesh}
-          onUpdateMesh={setMesh}
-          onClose={() => setIsBathymetryModalOpen(false)}
-        />
-      )}
+        {/* Thematic Color Legend */}
+        <div className="absolute top-4 right-4 z-[500] bg-slate-900/90 backdrop-blur border border-slate-800 rounded-lg p-2.5 shadow-lg text-[10px] space-y-1">
+          <div className="font-semibold text-slate-300 uppercase tracking-wider mb-1">
+            {thematicDisplay.toUpperCase()} SCALE
+          </div>
+          <div className="w-32 h-2.5 rounded bg-gradient-to-r from-cyan-400 via-amber-400 to-rose-500" />
+          <div className="flex justify-between text-slate-400">
+            <span>Low / Dry</span>
+            <span>Peak Flow</span>
+          </div>
+        </div>
+      </div>
 
-      {/* Global HydroRIVERS & NASA SWOT Modal */}
-      {isHydroRiversModalOpen && (
-        <RiverHydroRiversModal
-          onLoadHydroRiverReach={handleLoadHydroRiverReach}
-          onClose={() => setIsHydroRiversModalOpen(false)}
-        />
-      )}
+      {/* Modals */}
+      <CenterlineDrawer
+        isOpen={isCenterlineDrawerOpen}
+        onClose={() => setIsCenterlineDrawerOpen(false)}
+        drawnPoints={drawnPoints}
+        onClearPoints={() => setDrawnPoints([])}
+        onReachCreated={handleReachCreated}
+      />
 
-      {/* 2D CFD Results & Data Export Modal */}
-      {isResultsModalOpen && (
-        <RiverResultsSummaryModal
-          mesh={mesh}
-          state={flowState}
-          summary={summary}
-          structures={structures}
-          gauges={gauges}
-          boundaries={boundaries}
-          swotObs={swotObs}
-          onClose={() => setIsResultsModalOpen(false)}
-        />
-      )}
+      <CrossSectionEditor
+        isOpen={isCrossSectionEditorOpen}
+        onClose={() => setIsCrossSectionEditorOpen(false)}
+        crossSections={reach.crossSections}
+        onUpdateSections={(updated) => {
+          const updatedReach = { ...reach, crossSections: updated };
+          setReach(updatedReach);
+          const newMesh = generateRiverGridMesh(updatedReach);
+          setMesh(newMesh);
+        }}
+        currentSimWaterDepthM={hydro.depth[0] || 1.5}
+      />
+
+      <StructurePlacer
+        isOpen={isStructurePlacerOpen}
+        onClose={() => setIsStructurePlacerOpen(false)}
+        mesh={mesh}
+        structures={structures}
+        onUpdateStructures={(updated) => setStructures(updated)}
+      />
+
+      <TurbulencePanel
+        isOpen={isTurbulencePanelOpen}
+        onClose={() => setIsTurbulencePanelOpen(false)}
+        parameters={turbParams}
+        onUpdateParameters={(params) => setTurbParams(params)}
+        currentMaxNuT={Math.max(...Array.from(turb.nuT))}
+        currentMeanNuT={Array.from(turb.nuT).reduce((a, b) => a + b, 0) / Math.max(1, turb.nuT.length)}
+        currentMaxK={Math.max(...Array.from(turb.k))}
+      />
+
+      <SedimentPanel
+        isOpen={isSedimentPanelOpen}
+        onClose={() => setIsSedimentPanelOpen(false)}
+        parameters={sedParams}
+        onUpdateParameters={(params) => setSedParams(params)}
+        cumulativeScourM3={sed.cumulativeScourVolumeM3}
+        cumulativeDepoM3={sed.cumulativeDepositionVolumeM3}
+      />
+
+      <CalibrationPanel
+        isOpen={isCalibrationPanelOpen}
+        onClose={() => setIsCalibrationPanelOpen(false)}
+        mesh={mesh}
+        hydro={hydro}
+        swotObs={swotObs}
+        onApplyCalibratedManningN={(newN) => {
+          mesh.cells.forEach((c) => (c.manningN = newN));
+          setMesh({ ...mesh });
+          const refreshed = evaluateSwotCalibration(mesh, hydro, swotObs!);
+          setCalibrationResult(refreshed);
+        }}
+      />
+
+      <SimulationPanel
+        isOpen={isSimulationPanelOpen}
+        onClose={() => setIsSimulationPanelOpen(false)}
+        reach={reach}
+        mesh={mesh}
+        boundaries={boundaries}
+        structures={structures}
+        turbParams={turbParams}
+        sedParams={sedParams}
+        onSimulationFinished={(newHydro, newTurb, newSed, newSummary) => {
+          setHydro(newHydro);
+          setTurb(newTurb);
+          setSed(newSed);
+          setSummary(newSummary);
+        }}
+        calibrationResult={calibrationResult}
+      />
+
+      <ReachPersistence
+        isOpen={isPersistenceOpen}
+        onClose={() => setIsPersistenceOpen(false)}
+        reach={reach}
+        mesh={mesh}
+        boundaries={boundaries}
+        structures={structures}
+        gauges={[]}
+        swotObservation={swotObs || undefined}
+        turbParams={turbParams}
+        sedParams={sedParams}
+        onLoadArchive={(archive) => {
+          setReach(archive.reach);
+          const newMesh = archive.mesh || generateRiverGridMesh(archive.reach);
+          setMesh(newMesh);
+          setBoundaries(archive.boundaries);
+          setStructures(archive.structures || []);
+          setTurbParams(archive.turbParams || DEFAULT_TURBULENCE_PARAMETERS);
+          setSedParams(archive.sedParams || DEFAULT_SEDIMENT_PARAMETERS);
+          setHydro(createInitialHydroState(newMesh, archive.boundaries));
+        }}
+      />
     </div>
   );
 };

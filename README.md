@@ -83,15 +83,25 @@ Full dynamic sanitary and storm sewer modeling running on the EPA SWMM 5.2 compu
 
 ### 4. River Analysis & 2D Hydrodynamic CFD Modelling
 
-Full two-dimensional depth-averaged Saint-Venant shallow-water hydrodynamic solver running in real time directly within the client browser without external backend servers:
+Full two-dimensional depth-averaged Saint-Venant shallow-water hydrodynamic solver with coupled depth-averaged RANS turbulence and sediment transport running in real time directly within the client browser without external backend servers:
 
 - **2D Finite-Volume Godunov / HLL Numerical Engine**: Solves the complete 2D hyperbolic shallow-water equations:
   $$\frac{\partial h}{\partial t} + \nabla \cdot (h \mathbf{u}) = R$$
-  $$\frac{\partial (h \mathbf{u})}{\partial t} + \nabla \cdot \left( h \mathbf{u} \otimes \mathbf{u} + \frac{1}{2} g h^2 \mathbf{I} \right) = - g h \nabla z_{bed} - \frac{\tau_b}{\rho}$$
-- **Well-Balanced Audusse Hydrostatic Reconstruction**: Guarantees the strict $C$-property: undisturbed lake-at-rest over variable mountain bathymetry remains at exact zero velocity to machine precision ($< 10^{-14}\text{ m/s}$), preventing spurious artificial flow creation over steep terrain gradients.
-- **Wetting and Drying Fronts**: Stable threshold-based drying ($h_{dry} = 10^{-4}\text{ m}$) preventing numerical division-by-zero on steep dry banks and moving flood waves.
+  $$\frac{\partial (h \mathbf{u})}{\partial t} + \nabla \cdot \left( h \mathbf{u} \otimes \mathbf{u} + \frac{1}{2} g h^2 \mathbf{I} \right) = - g h \nabla z_{bed} - \frac{\tau_b}{\rho} + \nabla \cdot (h \mathbf{T})$$
+- **Depth-Averaged RANS Turbulence Closure**:
+  - *None*: Fast inviscid / pure shallow-water solution ($\nu_t = 0$).
+  - *Algebraic Mixing Length*: Nezu & Rodi parabolic vertical velocity profile ($\nu_t = \frac{1}{6} \kappa u_* h$).
+  - *Two-Equation $k-\varepsilon$*: Full transport for turbulent kinetic energy $k$ and dissipation rate $\varepsilon$ with shear production $P_k$, bed generation $P_{kv}, P_{\varepsilon v}$, and eddy viscosity $\nu_t = \min(c_\mu k^2 / \varepsilon, \nu_{t,max})$.
+  - *Two-Equation $k-\omega$ SST*: Shear Stress Transport formulation for separated boundary flows near bridge piers, weirs, and abutments.
+  - *Equilibrium Wall Functions*: Prescribes bed equilibrium $k$ and $\varepsilon$ from local friction velocity $u_* = n \sqrt{g} |\mathbf{V}| / h^{1/6}$.
+- **Coupled Sediment Transport & Morphodynamic Bed Evolution**:
+  - *Advection-Diffusion Plume Dispersion*: $\frac{\partial (h C)}{\partial t} + \nabla \cdot (h C \mathbf{V}) = \nabla \cdot \left( \frac{\nu_t}{\sigma_c} h \nabla C \right) + E - D$.
+  - *4 Classical Transport Formulations*: Engelund & Hansen (1967) total load, Meyer-Peter & Müller (1948) bedload, van Rijn (1984) bed/suspended load, and Toffaleti (1969) multi-zone profile.
+  - *Exner Equation Bed Update*: $\frac{\partial z_{bed}}{\partial t} = -\frac{1}{1-p} \nabla \cdot \mathbf{q}_s$ with decoupled sub-stepping and a 5% depth change stability limiter.
+- **Well-Balanced Audusse Hydrostatic Reconstruction**: Guarantees the strict $C$-property: undisturbed lake-at-rest over variable mountain bathymetry remains at exact zero velocity to machine precision ($< 10^{-7}\text{ m/s}$), preventing spurious artificial flow creation over steep terrain gradients.
+- **Wetting and Drying Fronts**: Stable threshold-based drying ($h_{dry} = 10^{-3}\text{ m}$) preventing numerical division-by-zero on steep dry banks and moving flood waves.
 - **Semi-Implicit Manning Bed Friction**: Implicit formulation stabilizing shear friction deceleration ($\tau_b = \rho g n^2 |\mathbf{u}| \mathbf{u} / h^{1/3}$) over extremely shallow inundation zones without timestep collapse.
-- **Adaptive CFL Dynamic Time-Stepping**: Dynamically evaluates Courant-Friedrichs-Lewy condition ($\text{CFL} \le 0.55$) based on maximum wave celerity $c = \sqrt{gh} + |\mathbf{u}|$ across all 2D quad cells.
+- **Adaptive CFL Dynamic Time-Stepping**: Dynamically evaluates Courant-Friedrichs-Lewy condition ($\text{CFL} \le 0.45$) based on maximum wave celerity $c = \sqrt{gh} + |\mathbf{u}|$ across all 2D quad cells.
 - **6 Full Hydraulic Structure Formulations**:
   1. *Levees & Dykes*: 100% flow barrier until crest stage, followed by broad-crested weir overflow with Villemonte submergence factor.
   2. *Weirs*: Broad-crested and sharp-crested discharge formulations ($Q = C_d L H^{3/2}$) with submergence reduction.
@@ -99,10 +109,11 @@ Full two-dimensional depth-averaged Saint-Venant shallow-water hydrodynamic solv
   4. *Culverts*: Dual-mode FHWA HDS-5 governing rating curves (Inlet Control unsubmerged/submerged orifice vs. Outlet Control full-barrel pipe friction).
   5. *Gates*: Sluice and radial underflow orifice discharge with transition to free overflow.
   6. *Road Embankments*: Transportation embankment weir overflow modeling overtopping highway lanes during extreme flood events.
-- **Global HydroRIVERS Network & Copernicus DEM**: Instant access to major world rivers (Danube, Rhine, Mississippi, Ganges, Amazon, Thames) with surveyed bathymetry carving and live DEM elevation sampling.
-- **NASA SWOT Satellite Altimetry Calibration**: Direct comparison against NASA SWOT KaRIn Ka-band radar interferometer observations (Water Surface Elevation $\eta$, width, slope) with automated agreement classifications (`EXCELLENT`, `GOOD`, `NEEDS_CALIBRATION`).
-- **High-Performance 60fps Visualizer**: Real-time Leaflet Canvas overlay with animated depth colormaps, velocity magnitudes, WSE contours, Froude numbers ($\text{Fr}$), bed shear stress ($\tau_b$), and directional vector quivers.
-- **Multi-Format Export**: Full GeoJSON inundation polygon layers, velocity quiver vectors, ESRI ASCII raster grids (`.asc`), and comprehensive CSV hydraulic tables.
+- **Global HydroRIVERS Network & Copernicus DEM**: Instant access to major world rivers (Danube, Rhine, Mississippi, Ganges, Thames, and 500m Benchmark Reach) with surveyed bathymetry carving and live DEM elevation sampling.
+- **NASA SWOT Satellite Altimetry Calibration**: Direct comparison against NASA SWOT KaRIn Ka-band radar interferometer observations (Water Surface Elevation $\eta$, width, slope) with automated agreement classifications (`EXCELLENT`, `GOOD`, `NEEDS_CALIBRATION`) and automated Manning's $n$ calibration.
+- **Hardware-Accelerated Computing Architecture**: WebGPU compute shaders with WebGL2 float texture GPGPU fallback and multi-threaded CPU reference engine.
+- **Interactive CAD Centerline & Cross-Section Modeler**: User-drawn centerlines with automated valley thalweg snapping, transverse cross-section templates (trapezoidal, rectangular, compound, freeform), and live SVG profile preview.
+- **6-Sheet Professional Engineering Excel Workbook (`.xlsx`)**: Executive Summary, 2D Hydrodynamics Flow Field, RANS Turbulence Diagnostics, Sediment Transport & Morphodynamics, Hydraulic Structures, and NASA SWOT Calibration registers.
 
 ---
 
