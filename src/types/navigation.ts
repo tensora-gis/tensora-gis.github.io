@@ -1,4 +1,4 @@
-export type ActiveModuleTab = 'stormwater' | 'water-distribution' | 'wastewater';
+export type ActiveModuleTab = 'stormwater' | 'water-distribution' | 'wastewater' | 'river-analysis';
 
 export interface ModuleTabItem {
   id: ActiveModuleTab;
@@ -25,5 +25,11 @@ export const MODULE_TABS: ModuleTabItem[] = [
     label: 'Wastewater Modelling',
     shortLabel: 'Wastewater',
     description: 'Gravity Sewer Collection & Lift Station Hydraulics',
+  },
+  {
+    id: 'river-analysis',
+    label: 'River Analysis & Modelling',
+    shortLabel: 'River Analysis',
+    description: '2D Finite-Volume CFD, HydroRIVERS, NASA SWOT & Hydraulic Structures',
   },
 ];

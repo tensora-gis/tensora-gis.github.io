@@ -4,6 +4,7 @@ import {
   CloudRain,
   Network,
   Waves,
+  Spline,
   PanelLeftClose,
   PanelLeftOpen,
   X,
@@ -42,6 +43,11 @@ export const LeftMenu: React.FC<LeftMenuProps> = ({
       id: 'wastewater' as const,
       name: 'Wastewater Modelling',
       icon: Waves,
+    },
+    {
+      id: 'river-analysis' as const,
+      name: 'River Analysis & Modelling',
+      icon: Spline,
     },
   ];
 

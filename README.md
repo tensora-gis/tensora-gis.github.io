@@ -2,11 +2,12 @@
 
 > **Next-Generation Civil Infrastructure, Hydrology & Multi-Network Hydraulic Modelling Platform**
 
-Tensora GIS is an engineering-grade geospatial modeling and simulation suite designed for highway, railway, and municipal infrastructure projects. Built with TypeScript and React, Tensora GIS unifies three core engineering disciplines into a cohesive, high-performance web platform powered by real global Digital Elevation Models (DEMs):
+Tensora GIS is an engineering-grade geospatial modeling and simulation suite designed for highway, railway, and municipal infrastructure projects. Built with TypeScript and React, Tensora GIS unifies four core engineering disciplines into a cohesive, high-performance web platform powered by real global Digital Elevation Models (DEMs):
 
 1. **Stormwater Catchment & Stream Delineation** - Real Earth D8 flow accumulation, formation modeling, and 70%-framed delineation reports.
 2. **Water Distribution Modelling & Transient Surge** - EPANET-standard Global Gradient Algorithm (GGA), Extended Period Simulation (EPS), Fire Flow analysis, Darwin automated pipe optimization, and Joukowsky/Allievi Water Hammer physics.
 3. **Wastewater Collection & Sewer Hydraulics** - EPA SWMM 5.2 engine, circular partial-flow Manning hydraulics, tractive force self-cleansing checks, drop structures, lift station pumping cycles, Pomeroy-Parkhurst $\text{H}_2\text{S}$ corrosion, and I&I analysis.
+4. **River Analysis & 2D Hydrodynamic CFD** - Finite-volume 2D Saint-Venant shallow-water solver with well-balanced Audusse hydrostatic reconstruction, dynamic CFL time-stepping, 6 hydraulic structure physics formulations, global HydroRIVERS reach catalog, NASA SWOT radar calibration, and multi-format GIS export.
 
 ---
 
@@ -16,6 +17,7 @@ Tensora GIS is an engineering-grade geospatial modeling and simulation suite des
   - [1. Stormwater Catchment & Stream Delineation](#1-stormwater-catchment--stream-delineation)
   - [2. Water Distribution & Transient Surge Modelling](#2-water-distribution--transient-surge-modelling)
   - [3. Wastewater Collection & SWMM Sewer Hydraulics](#3-wastewater-collection--swmm-sewer-hydraulics)
+  - [4. River Analysis & 2D Hydrodynamic CFD Modelling](#4-river-analysis--2d-hydrodynamic-cfd-modelling)
 - [Terrain & DEM Elevation Engine](#terrain--dem-elevation-engine)
 - [System Architecture](#system-architecture)
 - [Project Layout](#project-layout)
@@ -78,6 +80,29 @@ Full dynamic sanitary and storm sewer modeling running on the EPA SWMM 5.2 compu
 - **Automated Pipe Sizing & Slope Sizing**: Automatically adjusts diameters and minimum gradients to eliminate surcharges while satisfying self-cleansing constraints.
 - **EPA SWMM Two-Way Interoperability**: Standard SWMM `.INP` export and import.
 - **10-Worksheet Calculation Workbook**: Multi-worksheet calculation register covering Network Overview, Manhole Register, Gravity Pipe Hydraulics, Pump Stations, Outfalls, 24-Hr Routing, Auto-Design, Corrosion, and I&I.
+
+### 4. River Analysis & 2D Hydrodynamic CFD Modelling
+
+Full two-dimensional depth-averaged Saint-Venant shallow-water hydrodynamic solver running in real time directly within the client browser without external backend servers:
+
+- **2D Finite-Volume Godunov / HLL Numerical Engine**: Solves the complete 2D hyperbolic shallow-water equations:
+  $$\frac{\partial h}{\partial t} + \nabla \cdot (h \mathbf{u}) = R$$
+  $$\frac{\partial (h \mathbf{u})}{\partial t} + \nabla \cdot \left( h \mathbf{u} \otimes \mathbf{u} + \frac{1}{2} g h^2 \mathbf{I} \right) = - g h \nabla z_{bed} - \frac{\tau_b}{\rho}$$
+- **Well-Balanced Audusse Hydrostatic Reconstruction**: Guarantees the strict $C$-property: undisturbed lake-at-rest over variable mountain bathymetry remains at exact zero velocity to machine precision ($< 10^{-14}\text{ m/s}$), preventing spurious artificial flow creation over steep terrain gradients.
+- **Wetting and Drying Fronts**: Stable threshold-based drying ($h_{dry} = 10^{-4}\text{ m}$) preventing numerical division-by-zero on steep dry banks and moving flood waves.
+- **Semi-Implicit Manning Bed Friction**: Implicit formulation stabilizing shear friction deceleration ($\tau_b = \rho g n^2 |\mathbf{u}| \mathbf{u} / h^{1/3}$) over extremely shallow inundation zones without timestep collapse.
+- **Adaptive CFL Dynamic Time-Stepping**: Dynamically evaluates Courant-Friedrichs-Lewy condition ($\text{CFL} \le 0.55$) based on maximum wave celerity $c = \sqrt{gh} + |\mathbf{u}|$ across all 2D quad cells.
+- **6 Full Hydraulic Structure Formulations**:
+  1. *Levees & Dykes*: 100% flow barrier until crest stage, followed by broad-crested weir overflow with Villemonte submergence factor.
+  2. *Weirs*: Broad-crested and sharp-crested discharge formulations ($Q = C_d L H^{3/2}$) with submergence reduction.
+  3. *Bridges & Piers*: Yarnell pier drag headloss, submerged low-chord orifice pressure flow, and roadway deck weir overtopping.
+  4. *Culverts*: Dual-mode FHWA HDS-5 governing rating curves (Inlet Control unsubmerged/submerged orifice vs. Outlet Control full-barrel pipe friction).
+  5. *Gates*: Sluice and radial underflow orifice discharge with transition to free overflow.
+  6. *Road Embankments*: Transportation embankment weir overflow modeling overtopping highway lanes during extreme flood events.
+- **Global HydroRIVERS Network & Copernicus DEM**: Instant access to major world rivers (Danube, Rhine, Mississippi, Ganges, Amazon, Thames) with surveyed bathymetry carving and live DEM elevation sampling.
+- **NASA SWOT Satellite Altimetry Calibration**: Direct comparison against NASA SWOT KaRIn Ka-band radar interferometer observations (Water Surface Elevation $\eta$, width, slope) with automated agreement classifications (`EXCELLENT`, `GOOD`, `NEEDS_CALIBRATION`).
+- **High-Performance 60fps Visualizer**: Real-time Leaflet Canvas overlay with animated depth colormaps, velocity magnitudes, WSE contours, Froude numbers ($\text{Fr}$), bed shear stress ($\tau_b$), and directional vector quivers.
+- **Multi-Format Export**: Full GeoJSON inundation polygon layers, velocity quiver vectors, ESRI ASCII raster grids (`.asc`), and comprehensive CSV hydraulic tables.
 
 ---
 
@@ -217,8 +242,11 @@ npx tsx scripts/wastewater-selftest.ts
 # Run Water Distribution EPANET GGA, EPS, Fire Flow & Hammer suite (100% pass)
 npx tsx scripts/water-transient-selftest.ts
 
+# Run River Analysis 2D Shallow-Water CFD & Hydraulic Structures suite (43 tests)
+npx tsx scripts/river-cfd-selftest.ts
+
 # Run all test suites combined
-npm test && npx tsx scripts/verify-stormwater-excel.ts && npx tsx scripts/wastewater-selftest.ts && npx tsx scripts/water-transient-selftest.ts
+npm test && npx tsx scripts/verify-stormwater-excel.ts && npx tsx scripts/wastewater-selftest.ts && npx tsx scripts/water-transient-selftest.ts && npx tsx scripts/river-cfd-selftest.ts
 ```
 
 ---

@@ -16,6 +16,7 @@ import { ActiveModuleTab } from './types/navigation';
 import { LeftMenu } from './components/LeftMenu';
 import { WaterDistributionModelling } from './components/WaterDistributionModelling';
 import { WastewaterModelling } from './components/WastewaterModelling';
+import { RiverAnalysisModelling } from './components/RiverAnalysisModelling';
 
 /** Clicks within this distance of the centreline snap to the nearest station. */
 const SNAP_TO_CORRIDOR_M = 50;
@@ -335,6 +336,11 @@ export default function App({
         {/* Wastewater Modelling Workspace */}
         {activeTab === 'wastewater' && (
           <WastewaterModelling />
+        )}
+
+        {/* River Analysis & Modelling Workspace */}
+        {activeTab === 'river-analysis' && (
+          <RiverAnalysisModelling />
         )}
       </div>
 

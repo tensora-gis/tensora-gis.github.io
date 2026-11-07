@@ -102,6 +102,16 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       )}
 
+      {activeTab === 'river-analysis' && (
+        <div className="hidden xl:flex items-center gap-2 text-xs text-[#737373] font-mono">
+          <span className="text-cyan-400">2D Shallow-Water Finite-Volume (CFD)</span>
+          <span className="text-[#333]">/</span>
+          <span>HydroRIVERS + NASA SWOT</span>
+          <span className="text-[#333]">/</span>
+          <span className="text-[#10b981]">Copernicus GLO-30 DEM</span>
+        </div>
+      )}
+
       {/* Zone 3: Primary Action & Tools */}
       <div className="flex items-center gap-2">
         {/* Signed-in account chip */}
