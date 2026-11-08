@@ -78,6 +78,7 @@ import {
   SwotCalibrationResult,
 } from '../river/calibration/swotCalibration';
 import { applyTerrainAndCarveBathymetry } from '../river/geometry/geometryBuilder';
+import { sampleLidarTerrainForMesh } from '../river/geometry/lidarService';
 import { translateMesh, rotateMesh, centerMeshAt } from '../river/geometry/meshGenerator';
 import {
   createStructureFromMapPolyline,
@@ -87,6 +88,7 @@ import {
   reindexStructuresOnMesh,
 } from '../river/structures/cadStructureBuilder';
 import { ParaView3DVisualizer } from '../river/components/ParaView3DVisualizer';
+import { LidarTerrainStudio } from '../river/components/LidarTerrainStudio';
 
 export const RiverAnalysisModelling: React.FC = () => {
   // Default to actual real-world river: Rhine River (Basel, Switzerland/Germany)
@@ -142,6 +144,7 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [basemapType, setBasemapType] = useState<'satellite' | 'streets'>('satellite');
   const [selectedCell, setSelectedCell] = useState<{ cell: RiverGridCell; idx: number } | null>(null);
   const [isSamplingDEM, setIsSamplingDEM] = useState(false);
+  const [isLidarStudioOpen, setIsLidarStudioOpen] = useState(false);
   const [isProbeMode, setIsProbeMode] = useState(false);
   const [probeStatus, setProbeStatus] = useState<string | null>(null);
 
@@ -824,7 +827,8 @@ export const RiverAnalysisModelling: React.FC = () => {
   };
 
   // Handle Reach Change & Smooth Map Flight
-  const handleSelectReach = (newReach: RiverReachDefinition) => {
+  const handleSelectReach = async (newReach: RiverReachDefinition) => {
+    isReinitializingSolverRef.current = true;
     setReach(newReach);
     const newMesh = generateRiverGridMesh(newReach);
     setMesh(newMesh);
@@ -869,7 +873,7 @@ export const RiverAnalysisModelling: React.FC = () => {
     }
     setStructures(initialStructures);
 
-    const newHydro = createInitialHydroState(newMesh, newBoundaries);
+    const newHydro = createInitialHydroState(newMesh, newBoundaries, initialStructures);
     const newTurb = createInitialTurbulenceState(newMesh);
     const newSed = createInitialSedimentState(newMesh);
     setHydro(newHydro);
@@ -888,6 +892,31 @@ export const RiverAnalysisModelling: React.FC = () => {
     sedRef.current = newSed;
     structuresRef.current = initialStructures;
 
+    if (solverRef.current) {
+      try {
+        await solverRef.current.init(
+          newMesh,
+          newBoundaries,
+          initialStructures,
+          turbParamsRef.current,
+          sedParamsRef.current
+        );
+        const state = solverRef.current.getState();
+        hydroRef.current = state.hydro;
+        turbRef.current = state.turb;
+        sedRef.current = state.sed;
+        setHydro({ ...state.hydro });
+        setTurb({ ...state.turb });
+        setSed({ ...state.sed });
+      } catch (err) {
+        console.warn('Reach solver re-init warning:', err);
+      } finally {
+        isReinitializingSolverRef.current = false;
+      }
+    } else {
+      isReinitializingSolverRef.current = false;
+    }
+
     // Smoothly fly map to the new reach coordinates (capping maxZoom to 16 so satellite tiles never blank out)
     if (mapInstanceRef.current && newReach.bounds) {
       const [minLat, minLng, maxLat, maxLng] = newReach.bounds;
@@ -901,23 +930,56 @@ export const RiverAnalysisModelling: React.FC = () => {
     }
   };
 
-  // Apply Copernicus DEM Bathymetry
-  const handleApplyCopernicusDem = async () => {
-    setIsSamplingDEM(true);
+  // Apply LiDAR & Hydro-Enforced Bathymetry onto Computational Mesh
+  const handleApplyLidarMesh = async (updatedMesh: RiverGridMesh, notice: string) => {
+    isReinitializingSolverRef.current = true;
     try {
-      const carvedMesh = await applyTerrainAndCarveBathymetry(mesh, {
-        carveDepthM: Math.max(1.5, Math.min(8.0, reach.meanWidthM * 0.03)),
-      });
-      setMesh({ ...carvedMesh });
-      const refreshedHydro = createInitialHydroState(carvedMesh, boundaries);
-      setHydro(refreshedHydro);
-      setCadNotification('Copernicus GLO-30 DEM sampled & bathymetry carved successfully!');
+      meshRef.current = updatedMesh;
+      setMesh({ ...updatedMesh });
+
+      // Re-index CAD structures on new terrain elevations
+      const updatedStructures = reindexStructuresOnMesh(structuresRef.current, updatedMesh);
+      structuresRef.current = updatedStructures;
+      setStructures(updatedStructures);
+
+      // Re-calculate reach boundary depths
+      const downstreamSlice = updatedMesh.cells.slice((updatedMesh.nx - 1) * updatedMesh.ny);
+      const downstreamInvert = downstreamSlice.length > 0 ? Math.min(...downstreamSlice.map((c) => c.bedElevation)) : 100.0;
+      const estDepth = Math.max(0.5, Math.min(6.0, reach.meanWidthM * 0.025));
+      const updatedBoundaries: RiverBoundaryConditions = {
+        ...boundaries,
+        downstreamStageM: parseFloat((downstreamInvert + estDepth).toFixed(2)),
+      };
+      boundariesRef.current = updatedBoundaries;
+      setBoundaries(updatedBoundaries);
+
+      // Synchronize initial hydro, turbulence, and sediment state
+      const refreshedHydro = createInitialHydroState(updatedMesh, updatedBoundaries, updatedStructures);
+      const refreshedTurb = createInitialTurbulenceState(updatedMesh);
+      const refreshedSed = createInitialSedimentState(updatedMesh);
+      hydroRef.current = refreshedHydro;
+      turbRef.current = refreshedTurb;
+      sedRef.current = refreshedSed;
+      setHydro({ ...refreshedHydro });
+      setTurb({ ...refreshedTurb });
+      setSed({ ...refreshedSed });
+
+      if (solverRef.current) {
+        await solverRef.current.init(
+          updatedMesh,
+          updatedBoundaries,
+          updatedStructures,
+          turbParamsRef.current,
+          sedParamsRef.current
+        );
+      }
+
+      setCadNotification(notice);
       setTimeout(() => setCadNotification(null), 4000);
     } catch (err: any) {
-      setCadNotification(`DEM sampling error: ${err.message}`);
-      setTimeout(() => setCadNotification(null), 4000);
+      console.warn('Failed to reinitialize solver after LiDAR application:', err);
     } finally {
-      setIsSamplingDEM(false);
+      isReinitializingSolverRef.current = false;
     }
   };
 
@@ -1783,12 +1845,20 @@ export const RiverAnalysisModelling: React.FC = () => {
             </button>
 
             <button
-              onClick={handleApplyCopernicusDem}
-              disabled={isSamplingDEM}
-              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded text-[11px] transition"
-              title="Sample Copernicus GLO-30 DEM and carve river channel bathymetry"
+              onClick={() => setIsLidarStudioOpen(true)}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition ${
+                mesh.lidarMetadata
+                  ? 'bg-cyan-950/70 border-cyan-500/80 text-cyan-200 ring-1 ring-cyan-500/40'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+              }`}
+              title="Sample high-resolution LiDAR / Copernicus 30m or import drone survey point clouds"
             >
-              {isSamplingDEM ? 'Carving DEM...' : 'Carve DEM'}
+              <span>🛰️ LiDAR / DEM</span>
+              {mesh.lidarMetadata && (
+                <span className="ml-1 text-[9px] bg-cyan-500 text-slate-950 font-bold px-1 rounded-full">
+                  ✓
+                </span>
+              )}
             </button>
 
             {/* Thematic Field Mode Selector */}
@@ -2321,6 +2391,14 @@ export const RiverAnalysisModelling: React.FC = () => {
         boundaries={boundaries}
         isSimulating={isSimulating}
         onToggleSimulation={() => setIsSimulating(!isSimulating)}
+      />
+
+      {/* High-Resolution LiDAR & Field Survey Terrain Studio Modal */}
+      <LidarTerrainStudio
+        isOpen={isLidarStudioOpen}
+        onClose={() => setIsLidarStudioOpen(false)}
+        mesh={mesh}
+        onApplyLidarMesh={handleApplyLidarMesh}
       />
 
       {/* Completely Modifiable Mesh Generation & CFD Discretization Studio Modal */}

@@ -264,10 +264,12 @@ void main() {
       fluxSumHv += fluxHv * faceLen;
     }
 
-    // Audusse bed slope source term
-    float deltaZ = max(zL, zR) - zL;
-    sBx += -0.5 * G * (2.0 * hL - deltaZ) * deltaZ * nxVal * faceLen;
-    sBy += -0.5 * G * (2.0 * hL - deltaZ) * deltaZ * nyVal * faceLen;
+    // Audusse bed slope source term (well-balanced C-property preserving)
+    float zStar = max(zL, zR);
+    float hStarFace = max(0.0, hL + zL - zStar);
+    float sourceP = 0.5 * G * (hStarFace * hStarFace - hL * hL);
+    sBx += sourceP * nxVal * faceLen;
+    sBy += sourceP * nyVal * faceLen;
   }
 
   // Advance cell
@@ -350,7 +352,7 @@ export class WebGl2RiverSolver implements IRiverSolver {
     this.turbParams = turbParams;
     this.sedParams = sedParams;
 
-    this.hydro = createInitialHydroState(mesh, boundaries);
+    this.hydro = createInitialHydroState(mesh, boundaries, structures);
     this.turb = createInitialTurbulenceState(mesh);
     this.sed = createInitialSedimentState(mesh);
 

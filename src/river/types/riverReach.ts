@@ -115,6 +115,18 @@ export interface RiverGridCell {
   faceLengths: number[]; // Length of each face in meters
   faceNormals: [number, number][]; // Unit normal vectors [nx, ny] for each face
   isBoundary?: 'upstream' | 'downstream' | 'left_bank' | 'right_bank';
+  lidarElevation?: number; // Raw uncarved LiDAR ground elevation (m MSL)
+}
+
+export interface RiverLidarMetadata {
+  source: string;
+  coveragePct: number;
+  pointCount?: number;
+  meanResolutionM: number;
+  verticalDatum: string;
+  appliedAtIso?: string;
+  minElevationM?: number;
+  maxElevationM?: number;
 }
 
 /**
@@ -133,6 +145,7 @@ export interface RiverGridMesh {
   centerline: RiverCenterlinePoint[];
   bounds: [number, number, number, number];
   surveyedBathymetryApplied?: boolean;
+  lidarMetadata?: RiverLidarMetadata;
 }
 
 /**

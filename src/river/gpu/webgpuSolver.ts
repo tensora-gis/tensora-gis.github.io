@@ -290,9 +290,11 @@ fn shallowWaterStep(@builtin(global_invocation_id) global_id: vec3<u32>) {
     }
 
     // Audusse bed slope source term (well-balanced C-property preserving)
-    let deltaZ = max(zL, zR) - zL;
-    sBx += -0.5 * params.g * (2.0 * hL - deltaZ) * deltaZ * nx * len;
-    sBy += -0.5 * params.g * (2.0 * hL - deltaZ) * deltaZ * ny * len;
+    let zStar = max(zL, zR);
+    let hStarFace = max(0.0, hL + zL - zStar);
+    let sourceP = 0.5 * params.g * (hStarFace * hStarFace - hL * hL);
+    sBx += sourceP * nx * len;
+    sBy += sourceP * ny * len;
   }
 
   // Advance cell state
@@ -393,7 +395,7 @@ export class WebGpuRiverSolver implements IRiverSolver {
     this.sedParams = sedParams;
     this.numCells = mesh.cells.length;
 
-    this.hydro = createInitialHydroState(mesh, boundaries);
+    this.hydro = createInitialHydroState(mesh, boundaries, structures);
     this.turb = createInitialTurbulenceState(mesh);
     this.sed = createInitialSedimentState(mesh);
 

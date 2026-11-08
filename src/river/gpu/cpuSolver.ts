@@ -451,7 +451,11 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
           const qIn = boundaries.upstreamDischargeM3s;
           if (qIn > 0) {
             const hUp = Math.max(0.01, boundaries.initialWaterDepthM || 1.0);
-            const estWidth = Math.max(5.0, mesh.meanWidthM || 20.0);
+            let upWidth = 0;
+            for (let j = 0; j < mesh.ny; j++) {
+              if (mesh.cells[j]) upWidth += mesh.cells[j].faceLengths[3];
+            }
+            const estWidth = upWidth > 0 ? upWidth : Math.max(5.0, mesh.meanWidthM || 20.0);
             const meanInflowVel = qIn / (estWidth * hUp);
             // Parabolic profile across channel width (zero at banks, 1.5x at center)
             const eta = (cell.j + 0.5) / Math.max(1, mesh.ny);
@@ -479,10 +483,14 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
             vR = vL;
             zR = zL;
           } else {
-            // Normal depth: zero gradient extrapolation
+            // Normal depth / transmissive boundary:
+            // Non-reflective outflow based on bed friction slope
+            const s0 = Math.max(0.0001, boundaries.downstreamSlope || 0.001);
+            const vNormal = (1.0 / Math.max(0.01, cell.manningN)) * Math.pow(Math.max(hL, 0.01), 2.0 / 3.0) * Math.sqrt(s0);
             hR = hL;
-            uR = uL;
-            vR = vL;
+            const outVel = Math.max(Math.hypot(uL, vL), vNormal);
+            uR = outVel * nx;
+            vR = outVel * ny;
             zR = zL;
           }
         } else {
@@ -531,8 +539,8 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
       fluxSumHv += fluxHv * length;
     }
 
-    // Topographic bed slope source term (Audusse well-balanced)
-    // S_b = -g * h * grad(z_bed)
+    // Topographic bed slope source term (Audusse well-balanced C-property preserving)
+    // S_b = 0.5 * g * (hStarFace^2 - hL^2) * normal * length
     let sBx = 0;
     let sBy = 0;
     for (let f = 0; f < numFaces; f++) {
@@ -541,9 +549,10 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
       const [nx, ny] = cell.faceNormals[f];
       const zNbr = nbr >= 0 ? mesh.cells[nbr].bedElevation : zL;
       const zStar = Math.max(zL, zNbr);
-      const deltaZ = zStar - zL;
-      sBx += -0.5 * G * (2.0 * hL - deltaZ) * deltaZ * nx * length;
-      sBy += -0.5 * G * (2.0 * hL - deltaZ) * deltaZ * ny * length;
+      const hStarFace = Math.max(0.0, hL + zL - zStar);
+      const sourceP = 0.5 * G * (hStarFace * hStarFace - hL * hL);
+      sBx += sourceP * nx * length;
+      sBy += sourceP * ny * length;
     }
 
     // Advance cell state

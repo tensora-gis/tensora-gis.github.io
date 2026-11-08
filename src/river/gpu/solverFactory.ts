@@ -66,7 +66,7 @@ export class CpuRiverSolverAdapter implements IRiverSolver {
     turbParams: TurbulenceParameters,
     sedParams: SedimentParameters
   ): Promise<void> {
-    const hydro = createInitialHydroState(mesh, boundaries);
+    const hydro = createInitialHydroState(mesh, boundaries, structures);
     const turb = createInitialTurbulenceState(mesh);
     const sed = createInitialSedimentState(mesh);
 

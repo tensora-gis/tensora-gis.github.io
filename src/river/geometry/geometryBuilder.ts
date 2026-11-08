@@ -209,8 +209,10 @@ export async function snapCenterlinePointsToValley(
   return snappedCenterline;
 }
 
+import { sampleLidarTerrainForMesh } from './lidarService';
+
 /**
- * Apply DEM elevations and bathymetric carving onto a RiverGridMesh
+ * Apply real LiDAR/DEM elevations and hydro-enforced bathymetric carving onto a RiverGridMesh
  */
 export async function applyTerrainAndCarveBathymetry(
   mesh: RiverGridMesh,
@@ -218,37 +220,9 @@ export async function applyTerrainAndCarveBathymetry(
     carveDepthM?: number;
     channelManningN?: number;
     floodplainManningN?: number;
+    channelWidthRatio?: number;
+    customSourceLabel?: string;
   } = {}
 ): Promise<RiverGridMesh> {
-  const carveDepth = options.carveDepthM || 2.0;
-  const channelN = options.channelManningN || 0.035;
-  const floodplainN = options.floodplainManningN || 0.065;
-
-  // Sample DEM at cell centers
-  const points = mesh.cells.map((c) => ({ lat: c.centerLat, lng: c.centerLng }));
-  const demResult = await fetchBulkElevations(points);
-  const demElevs = demResult.elevations;
-
-  const ny = mesh.ny;
-
-  mesh.cells.forEach((cell, idx) => {
-    const demElev = demElevs[idx];
-    if (demElev !== null && isFinite(demElev)) {
-      // In the middle 60% of lateral cells, carve channel bathymetry
-      const lateralRatio = Math.abs((cell.j - (ny - 1) / 2) / ((ny - 1) / 2));
-      if (lateralRatio < 0.6) {
-        // Main channel
-        const carveFrac = 1.0 - lateralRatio / 0.6;
-        cell.bedElevation = demElev - carveDepth * carveFrac;
-        cell.manningN = channelN;
-      } else {
-        // Floodplain / bank
-        cell.bedElevation = demElev;
-        cell.manningN = floodplainN;
-      }
-    }
-  });
-
-  mesh.surveyedBathymetryApplied = true;
-  return mesh;
+  return sampleLidarTerrainForMesh(mesh, options);
 }
