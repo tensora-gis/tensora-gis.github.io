@@ -13,7 +13,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx scripts/engine-selftest.ts --offline && tsx scripts/river-cfd-selftest.ts && tsx scripts/knowledge-graph-selftest.ts && tsx scripts/turbulence-selftest.ts && tsx scripts/sediment-selftest.ts && tsx scripts/openfoam-3d-selftest.ts && tsx scripts/autocad-cfd-paraview-selftest.ts",
+    "test": "tsx scripts/engine-selftest.ts --offline && tsx scripts/river-cfd-selftest.ts && tsx scripts/knowledge-graph-selftest.ts && tsx scripts/turbulence-selftest.ts && tsx scripts/sediment-selftest.ts && tsx scripts/openfoam-3d-selftest.ts && tsx scripts/autocad-cfd-paraview-selftest.ts && tsx scripts/gpu-solver-selftest.ts",
     "test:river": "tsx scripts/river-cfd-selftest.ts && tsx scripts/knowledge-graph-selftest.ts && tsx scripts/turbulence-selftest.ts && tsx scripts/sediment-selftest.ts && tsx scripts/openfoam-3d-selftest.ts && tsx scripts/autocad-cfd-paraview-selftest.ts && tsx scripts/gpu-solver-selftest.ts",
     "test:engine": "tsx scripts/engine-selftest.ts",
     "test:api": "tsx scripts/api-selftest.ts",

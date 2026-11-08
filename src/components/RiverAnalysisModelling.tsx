@@ -49,9 +49,9 @@ import { RiverDataService } from '../river/data/riverDataService';
 import { generateRiverGridMesh } from '../river/geometry/meshGenerator';
 import {
   createInitialHydroState,
-  stepCpuSolver,
   computeStableTimeStep,
 } from '../river/gpu/cpuSolver';
+import { createRiverSolver, IRiverSolver } from '../river/gpu/solverFactory';
 import { createInitialTurbulenceState } from '../river/turbulence/turbulenceModels';
 import { createInitialSedimentState } from '../river/sediment/sedimentTransport';
 import {
@@ -158,6 +158,16 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [isSimulating, setIsSimulating] = useState(false);
   const [isParaView3DOpen, setIsParaView3DOpen] = useState(false);
   const [simSpeed] = useState(1);
+
+  // Active In-Browser GPU Hardware Acceleration State
+  const [preferredBackend, setPreferredBackend] = useState<'webgpu' | 'webgl2' | 'cpu'>('webgpu');
+  const [activeGpuName, setActiveGpuName] = useState<string>('Integrated GPU (Detecting...)');
+  const [activeBackendType, setActiveBackendType] = useState<'webgpu' | 'webgl2' | 'cpu'>('cpu');
+  const [liveFps, setLiveFps] = useState<number>(60);
+  const [liveThroughput, setLiveThroughput] = useState<number>(0);
+  const [computeShadersActive, setComputeShadersActive] = useState<boolean>(true);
+  const [isBackendDropdownOpen, setIsBackendDropdownOpen] = useState(false);
+  const solverRef = useRef<IRiverSolver | null>(null);
 
   // Modals
   const [isCrossSectionEditorOpen, setIsCrossSectionEditorOpen] = useState(false);
@@ -654,36 +664,92 @@ export const RiverAnalysisModelling: React.FC = () => {
     }
   };
 
-  // Real-Time Simulation Loop
+  // Initialize Hardware-Accelerated River Solver on user's integrated/discrete GPU
+  useEffect(() => {
+    let isMounted = true;
+    const initHardwareSolver = async () => {
+      try {
+        if (solverRef.current) {
+          try {
+            solverRef.current.dispose();
+          } catch {}
+          solverRef.current = null;
+        }
+
+        const solver = await createRiverSolver(preferredBackend);
+        await solver.init(mesh, boundaries, structures, turbParams, sedParams);
+        if (isMounted) {
+          solverRef.current = solver;
+          const state = solver.getState();
+          hydroRef.current = state.hydro;
+          turbRef.current = state.turb;
+          sedRef.current = state.sed;
+          setActiveGpuName(solver.getGpuDeviceName());
+          setActiveBackendType(solver.getBackendType());
+          setComputeShadersActive(solver.getBackendType() !== 'cpu');
+        }
+      } catch (err) {
+        console.warn('Hardware solver initialization failed, using CPU adapter fallback:', err);
+        const cpuSolver = await createRiverSolver('cpu');
+        await cpuSolver.init(mesh, boundaries, structures, turbParams, sedParams);
+        if (isMounted) {
+          solverRef.current = cpuSolver;
+          const state = cpuSolver.getState();
+          hydroRef.current = state.hydro;
+          turbRef.current = state.turb;
+          sedRef.current = state.sed;
+          setActiveGpuName(cpuSolver.getGpuDeviceName());
+          setActiveBackendType('cpu');
+          setComputeShadersActive(false);
+        }
+      }
+    };
+    initHardwareSolver();
+    return () => {
+      isMounted = false;
+    };
+  }, [mesh, boundaries, structures, turbParams, sedParams, preferredBackend]);
+
+  // High-Performance Decoupled Real-Time Simulation Loop (60 FPS on Integrated GPU)
   useEffect(() => {
     let animId: number;
+    let frameCount = 0;
+    let stepCountTotal = 0;
+    let lastTime = performance.now();
 
     const loop = () => {
       if (isSimulatingRef.current) {
-        const stepsToRun = Math.max(1, simSpeedRef.current);
-
-        for (let s = 0; s < stepsToRun; s++) {
+        const solver = solverRef.current;
+        if (solver) {
+          const stepsToRun = Math.max(1, simSpeedRef.current);
           const currentMesh = meshRef.current;
           const currentHydro = hydroRef.current;
           const dtCfl = computeStableTimeStep(currentMesh, currentHydro, 0.45, 0.3);
 
-          const ctx = {
-            mesh: currentMesh,
-            hydro: currentHydro,
-            turb: turbRef.current,
-            sed: sedRef.current,
-            boundaries: boundariesRef.current,
-            structures: structuresRef.current,
-            turbParams: turbParamsRef.current,
-            sedParams: sedParamsRef.current,
-            stepCount: currentHydro.stepCount,
-          };
+          for (let s = 0; s < stepsToRun; s++) {
+            solver.step(dtCfl);
+          }
 
-          stepCpuSolver(ctx, dtCfl);
+          const state = solver.getState();
+          hydroRef.current = state.hydro;
+          turbRef.current = state.turb;
+          sedRef.current = state.sed;
+
+          frameCount++;
+          stepCountTotal += stepsToRun;
+
+          const now = performance.now();
+          if (now - lastTime >= 250) {
+            const dtSec = (now - lastTime) / 1000.0;
+            const currentFps = Math.round(frameCount / dtSec);
+            const currentThroughput = Math.round(stepCountTotal / dtSec);
+            setLiveFps(Math.min(60, Math.max(1, currentFps)));
+            setLiveThroughput(currentThroughput);
+            frameCount = 0;
+            stepCountTotal = 0;
+            lastTime = now;
+          }
         }
-
-        // Trigger React re-render of canvas
-        setHydro({ ...hydroRef.current });
       }
 
       animId = requestAnimationFrame(loop);
@@ -692,6 +758,28 @@ export const RiverAnalysisModelling: React.FC = () => {
     animId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animId);
   }, []);
+
+  const handleToggleSimulating = () => {
+    const nextSim = !isSimulating;
+    setIsSimulating(nextSim);
+    isSimulatingRef.current = nextSim;
+    if (!nextSim && solverRef.current) {
+      const solver = solverRef.current;
+      if (typeof solver.readback === 'function') {
+        solver.readback().then(() => {
+          const state = solver.getState();
+          setHydro({ ...state.hydro });
+          setTurb({ ...state.turb });
+          setSed({ ...state.sed });
+        });
+      } else {
+        const state = solver.getState();
+        setHydro({ ...state.hydro });
+        setTurb({ ...state.turb });
+        setSed({ ...state.sed });
+      }
+    }
+  };
 
   // Handle Reach Change & Smooth Map Flight
   const handleSelectReach = (newReach: RiverReachDefinition) => {
@@ -949,7 +1037,7 @@ export const RiverAnalysisModelling: React.FC = () => {
           <div className="flex items-center gap-1.5 flex-wrap">
             {/* Real-time Play / Pause 2D CFD */}
             <button
-              onClick={() => setIsSimulating(!isSimulating)}
+              onClick={handleToggleSimulating}
               className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition shadow ${
                 isSimulating
                   ? 'bg-amber-600 hover:bg-amber-500 text-white'
@@ -994,15 +1082,110 @@ export const RiverAnalysisModelling: React.FC = () => {
               <span>ParaView 3D</span>
             </button>
 
-            {/* Compact Export & Engine Indicator */}
-            <div className="flex items-center bg-slate-800 rounded-lg border border-slate-700 p-0.5 shadow-sm">
-              <div
-                className="flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold text-blue-300 bg-blue-950/60 rounded border border-blue-800/40"
-                title="Active 2D/3D CFD Physics Engine: OpenFOAM FVM Solver Core"
+            {/* Active Integrated GPU Hardware Accelerator Status Indicator */}
+            <div className="relative flex items-center bg-slate-800 rounded-lg border border-slate-700 p-0.5 shadow-sm">
+              <button
+                onClick={() => setIsBackendDropdownOpen(!isBackendDropdownOpen)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-bold rounded border transition ${
+                  activeBackendType === 'webgpu'
+                    ? 'text-cyan-300 bg-cyan-950/70 border-cyan-500/40 hover:bg-cyan-900/60'
+                    : activeBackendType === 'webgl2'
+                    ? 'text-blue-300 bg-blue-950/70 border-blue-500/40 hover:bg-blue-900/60'
+                    : 'text-amber-300 bg-amber-950/60 border-amber-600/40 hover:bg-amber-900/50'
+                }`}
+                title={`Active Hardware: ${activeGpuName} (${activeBackendType.toUpperCase()}) | Compute Shaders: ${computeShadersActive ? 'ACTIVE' : 'OFF'} | Click to switch GPU backend`}
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span>OpenFOAM FVM</span>
-              </div>
+                <span className={`w-2 h-2 rounded-full ${
+                  computeShadersActive ? 'bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-amber-400'
+                }`}></span>
+                <span className="flex items-center gap-1">
+                  <span>⚡</span>
+                  <span className="truncate max-w-[140px] sm:max-w-[200px]">{activeGpuName}</span>
+                </span>
+                <span className="text-[10px] uppercase font-mono px-1 py-0.2 bg-black/40 rounded border border-white/10 text-slate-300">
+                  {activeBackendType}
+                </span>
+                {isSimulating && (
+                  <span className="text-[10px] font-mono text-emerald-400 ml-0.5 font-normal">
+                    {liveFps} FPS · {liveThroughput}/s
+                  </span>
+                )}
+                <span className="text-[9px] text-slate-400 ml-0.5">▼</span>
+              </button>
+
+              {/* Hardware Selection Dropdown Modal */}
+              {isBackendDropdownOpen && (
+                <div className="absolute top-full left-0 mt-1.5 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-2.5 z-[1000] text-xs flex flex-col gap-2">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-800">
+                    <span className="font-bold text-slate-200 flex items-center gap-1">
+                      <span>💻</span> Hardware Acceleration
+                    </span>
+                    <button
+                      onClick={() => setIsBackendDropdownOpen(false)}
+                      className="text-slate-400 hover:text-white text-xs px-1"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="text-[11px] text-slate-400">
+                    <div><span className="text-slate-500">Detected GPU:</span> <span className="font-semibold text-slate-200">{activeGpuName}</span></div>
+                    <div><span className="text-slate-500">Active Shaders:</span> <span className="font-semibold text-emerald-400">{computeShadersActive ? 'WGSL / GLSL GPGPU Active' : 'CPU Reference'}</span></div>
+                    {isSimulating && (
+                      <div><span className="text-slate-500">Throughput:</span> <span className="font-semibold text-cyan-300">{liveFps} FPS ({liveThroughput} steps/sec)</span></div>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col gap-1 pt-1">
+                    <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Select Engine Backend:</span>
+                    <button
+                      onClick={() => { setPreferredBackend('webgpu'); setIsBackendDropdownOpen(false); }}
+                      className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-left transition ${
+                        preferredBackend === 'webgpu'
+                          ? 'bg-cyan-950/80 border-cyan-500 text-cyan-200 font-bold'
+                          : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="flex flex-col">
+                        <span>⚡ WebGPU Compute (Recommended)</span>
+                        <span className="text-[10px] text-slate-400 font-normal">Integrated GPU hardware compute shaders</span>
+                      </div>
+                      {preferredBackend === 'webgpu' && <span className="text-cyan-400">✓</span>}
+                    </button>
+
+                    <button
+                      onClick={() => { setPreferredBackend('webgl2'); setIsBackendDropdownOpen(false); }}
+                      className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-left transition ${
+                        preferredBackend === 'webgl2'
+                          ? 'bg-blue-950/80 border-blue-500 text-blue-200 font-bold'
+                          : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="flex flex-col">
+                        <span>⚡ WebGL2 GPGPU Float Textures</span>
+                        <span className="text-[10px] text-slate-400 font-normal">Broad integrated GPU shader compatibility</span>
+                      </div>
+                      {preferredBackend === 'webgl2' && <span className="text-blue-400">✓</span>}
+                    </button>
+
+                    <button
+                      onClick={() => { setPreferredBackend('cpu'); setIsBackendDropdownOpen(false); }}
+                      className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-left transition ${
+                        preferredBackend === 'cpu'
+                          ? 'bg-amber-950/80 border-amber-500 text-amber-200 font-bold'
+                          : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="flex flex-col">
+                        <span>💻 CPU Reference Solver</span>
+                        <span className="text-[10px] text-slate-400 font-normal">Host CPU Finite-Volume verification reference</span>
+                      </div>
+                      {preferredBackend === 'cpu' && <span className="text-amber-400">✓</span>}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <span className="text-slate-600 px-1">|</span>
               <button
                 onClick={handleExportExcelDirect}
@@ -1226,9 +1409,13 @@ export const RiverAnalysisModelling: React.FC = () => {
           hydro={hydro}
           turb={turb}
           sed={sed}
+          hydroRef={hydroRef}
+          turbRef={turbRef}
+          sedRef={sedRef}
           structures={structures}
           thematicDisplay={thematicDisplay}
           showVelocityVectors={showVectors}
+          isSimulating={isSimulating}
           onSelectCell={(cell, idx) => setSelectedCell({ cell, idx })}
         />
 

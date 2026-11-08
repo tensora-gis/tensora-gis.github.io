@@ -128,6 +128,10 @@ export class RiverCfdEngine {
       onProgress(100, elapsed);
     }
 
+    if (this.solver && typeof this.solver.readback === 'function') {
+      await this.solver.readback();
+    }
+
     return this.generateSummary();
   }
 
@@ -271,6 +275,14 @@ export class RiverCfdEngine {
       },
       gaugeHydrographs: historiesObj,
     };
+  }
+
+  public getBackendType(): 'webgpu' | 'webgl2' | 'cpu' {
+    return this.solver ? this.solver.getBackendType() : this.backendType;
+  }
+
+  public getGpuDeviceName(): string {
+    return this.solver ? this.solver.getGpuDeviceName() : 'Host CPU Reference (FVM)';
   }
 
   public dispose(): void {

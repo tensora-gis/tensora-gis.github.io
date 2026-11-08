@@ -39,6 +39,10 @@ interface RiverResultsOverlayProps {
   thematicDisplay: RiverThematicField;
   onSelectCell?: (cell: RiverGridCell, cellIdx: number) => void;
   showVelocityVectors?: boolean;
+  isSimulating?: boolean;
+  hydroRef?: React.RefObject<HydrodynamicsState | null>;
+  turbRef?: React.RefObject<TurbulenceState | null>;
+  sedRef?: React.RefObject<SedimentState | null>;
 }
 
 import {
@@ -58,9 +62,14 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
   thematicDisplay,
   onSelectCell,
   showVelocityVectors = true,
+  isSimulating = false,
+  hydroRef,
+  turbRef,
+  sedRef,
 }) => {
   const overlayRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const nodeCacheRef = useRef<{ key: string; pts: { px: number; py: number }[][] } | null>(null);
 
   // Store latest props in a ref to avoid recreating the Leaflet layer on every tick
   const propsRef = useRef({
@@ -72,6 +81,10 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     thematicDisplay,
     showVelocityVectors,
     onSelectCell,
+    isSimulating,
+    hydroRef,
+    turbRef,
+    sedRef,
   });
 
   propsRef.current = {
@@ -83,6 +96,10 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     thematicDisplay,
     showVelocityVectors,
     onSelectCell,
+    isSimulating,
+    hydroRef,
+    turbRef,
+    sedRef,
   };
 
   // Main rendering routine executed on every redraw
@@ -92,13 +109,21 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
 
     const {
       mesh: curMesh,
-      hydro: curHydro,
-      turb: curTurb,
-      sed: curSed,
+      hydro: stateHydro,
+      turb: stateTurb,
+      sed: stateSed,
       structures: curStructures,
       thematicDisplay: curThematic,
       showVelocityVectors: curShowVectors,
+      isSimulating: simulatingActive,
+      hydroRef: liveHydroRef,
+      turbRef: liveTurbRef,
+      sedRef: liveSedRef,
     } = propsRef.current;
+
+    const curHydro = (simulatingActive && liveHydroRef?.current) ? liveHydroRef.current : stateHydro;
+    const curTurb = (simulatingActive && liveTurbRef?.current) ? liveTurbRef.current : stateTurb;
+    const curSed = (simulatingActive && liveSedRef?.current) ? liveSedRef.current : stateSed;
 
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const size = map.getSize();
@@ -211,37 +236,50 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     }
 
     // 2. Reconstruct nodal positions and nodal scalar values on (nx+1) x (ny+1) mesh
-    const nodePts: { px: number; py: number }[][] = [];
+    const zoom = map.getZoom();
+    const center = map.getCenter();
+    const cacheKey = `${curMesh.nx}_${curMesh.ny}_${zoom}_${center.lat.toFixed(5)}_${center.lng.toFixed(5)}_${size.x}_${size.y}`;
+
+    let nodePts: { px: number; py: number }[][];
+    if (nodeCacheRef.current && nodeCacheRef.current.key === cacheKey) {
+      nodePts = nodeCacheRef.current.pts;
+    } else {
+      nodePts = [];
+      for (let i = 0; i <= nx; i++) {
+        nodePts[i] = [];
+        for (let j = 0; j <= ny; j++) {
+          let lat = 0;
+          let lng = 0;
+
+          if (i < nx && j < ny && curMesh.cells[i * ny + j]?.corners?.[0]) {
+            [lat, lng] = curMesh.cells[i * ny + j].corners[0];
+          } else if (i === nx && j < ny && curMesh.cells[(nx - 1) * ny + j]?.corners?.[1]) {
+            [lat, lng] = curMesh.cells[(nx - 1) * ny + j].corners[1];
+          } else if (i === nx && j === ny && curMesh.cells[(nx - 1) * ny + ny - 1]?.corners?.[2]) {
+            [lat, lng] = curMesh.cells[(nx - 1) * ny + ny - 1].corners[2];
+          } else if (i < nx && j === ny && curMesh.cells[i * ny + ny - 1]?.corners?.[3]) {
+            [lat, lng] = curMesh.cells[i * ny + ny - 1].corners[3];
+          } else {
+            const fallbackCell = curMesh.cells[Math.min(i, nx - 1) * ny + Math.min(j, ny - 1)];
+            if (fallbackCell) {
+              lat = fallbackCell.centerLat;
+              lng = fallbackCell.centerLng;
+            }
+          }
+
+          const pt = map.latLngToContainerPoint([lat, lng]);
+          nodePts[i][j] = { px: pt.x, py: pt.y };
+        }
+      }
+      nodeCacheRef.current = { key: cacheKey, pts: nodePts };
+    }
+
     const nodeScalars: number[][] = [];
 
     for (let i = 0; i <= nx; i++) {
-      nodePts[i] = [];
       nodeScalars[i] = [];
 
       for (let j = 0; j <= ny; j++) {
-        // Locate nodal lat/lng from cell corners
-        let lat = 0;
-        let lng = 0;
-
-        if (i < nx && j < ny && curMesh.cells[i * ny + j]?.corners?.[0]) {
-          [lat, lng] = curMesh.cells[i * ny + j].corners[0];
-        } else if (i === nx && j < ny && curMesh.cells[(nx - 1) * ny + j]?.corners?.[1]) {
-          [lat, lng] = curMesh.cells[(nx - 1) * ny + j].corners[1];
-        } else if (i === nx && j === ny && curMesh.cells[(nx - 1) * ny + ny - 1]?.corners?.[2]) {
-          [lat, lng] = curMesh.cells[(nx - 1) * ny + ny - 1].corners[2];
-        } else if (i < nx && j === ny && curMesh.cells[i * ny + ny - 1]?.corners?.[3]) {
-          [lat, lng] = curMesh.cells[i * ny + ny - 1].corners[3];
-        } else {
-          const fallbackCell = curMesh.cells[Math.min(i, nx - 1) * ny + Math.min(j, ny - 1)];
-          if (fallbackCell) {
-            lat = fallbackCell.centerLat;
-            lng = fallbackCell.centerLng;
-          }
-        }
-
-        const pt = map.latLngToContainerPoint([lat, lng]);
-        nodePts[i][j] = { px: pt.x, py: pt.y };
-
         // Average adjacent cell values (4 quadrants)
         const adjacentIndices: number[] = [];
         if (i > 0 && j > 0) adjacentIndices.push((i - 1) * ny + (j - 1));
@@ -277,39 +315,34 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     }
 
     // 3. Ultra-Smooth Continuous Sub-Grid Bilinear CFD Contour Plotting
-    // Subdivides each quadrilateral into an M x M micro-mesh with exact bilinear sampling
-    const subM = 4; // 4x4 = 16 sub-quads per cell for smooth continuous gradient
+    // Subdivides each quadrilateral into 2x2 micro-mesh (4 sub-quads) for 60 FPS real-time rendering
+    const subM = 2;
 
     for (let i = 0; i < nx; i++) {
       for (let j = 0; j < ny; j++) {
         const cIdx = i * ny + j;
         if (solidCellSet.has(cIdx)) continue; // Handled by solid CAD renderer
 
-        const cell = curMesh.cells[cIdx];
         const isWet = curHydro.isWet[cIdx] === 1;
-
-        if (!isWet) {
-          // Dry bed terrain background
-          if (cell.corners.length >= 4) {
-            ctx.beginPath();
-            const p0 = map.latLngToContainerPoint([cell.corners[0][0], cell.corners[0][1]]);
-            ctx.moveTo(p0.x, p0.y);
-            for (let k = 1; k < cell.corners.length; k++) {
-              const pk = map.latLngToContainerPoint([cell.corners[k][0], cell.corners[k][1]]);
-              ctx.lineTo(pk.x, pk.y);
-            }
-            ctx.closePath();
-            ctx.fillStyle = 'rgba(71, 85, 105, 0.25)';
-            ctx.fill();
-          }
-          continue;
-        }
 
         // Quad 4 corners
         const p00 = nodePts[i][j];
         const p10 = nodePts[i + 1][j];
         const p11 = nodePts[i + 1][j + 1];
         const p01 = nodePts[i][j + 1];
+
+        if (!isWet) {
+          // Dry bed terrain background
+          ctx.beginPath();
+          ctx.moveTo(p00.px, p00.py);
+          ctx.lineTo(p10.px, p10.py);
+          ctx.lineTo(p11.px, p11.py);
+          ctx.lineTo(p01.px, p01.py);
+          ctx.closePath();
+          ctx.fillStyle = 'rgba(71, 85, 105, 0.25)';
+          ctx.fill();
+          continue;
+        }
 
         const s00 = nodeScalars[i][j];
         const s10 = nodeScalars[i + 1][j];
@@ -360,11 +393,6 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
 
             ctx.fillStyle = color;
             ctx.fill();
-
-            // Fuse subpixel seams with identical stroke
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 0.5;
-            ctx.stroke();
           }
         }
       }
@@ -588,7 +616,14 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
 
           if (vel < 0.04) continue;
 
-          const centerPt = map.latLngToContainerPoint([cell.centerLat, cell.centerLng]);
+          const p00 = nodePts[i][j];
+          const p10 = nodePts[i + 1][j];
+          const p11 = nodePts[i + 1][j + 1];
+          const p01 = nodePts[i][j + 1];
+          const centerPt = {
+            x: 0.25 * (p00.px + p10.px + p11.px + p01.px),
+            y: 0.25 * (p00.py + p10.py + p11.py + p01.py),
+          };
           const scale = Math.min(24, Math.max(7, (vel / Math.max(1.0, maxVal)) * 26));
 
           const arrowX = centerPt.x + (u / vel) * scale;
@@ -786,6 +821,20 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     thematicDisplay,
     showVelocityVectors,
   ]);
+
+  // High-performance decoupled 60 FPS render loop when simulation is running
+  useEffect(() => {
+    if (!isSimulating) return;
+    let animId: number;
+    const tick = () => {
+      if (overlayRef.current && overlayRef.current._update) {
+        overlayRef.current._update();
+      }
+      animId = requestAnimationFrame(tick);
+    };
+    animId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(animId);
+  }, [isSimulating]);
 
   return null;
 };

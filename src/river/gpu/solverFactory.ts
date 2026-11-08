@@ -2,7 +2,7 @@
  * Unified Solver Interface & Hardware Factory
  *
  * Automatically detects WebGPU -> WebGL2 -> CPU fallback hierarchy
- * and returns a standard IRiverSolver instance.
+ * and returns a standard IRiverSolver instance with active GPU hardware inspection.
  */
 
 import {
@@ -48,6 +48,8 @@ export interface IRiverSolver {
   setTurbulenceParams(params: TurbulenceParameters): void;
   setSedimentParams(params: SedimentParameters): void;
   getBackendType(): 'webgpu' | 'webgl2' | 'cpu';
+  getGpuDeviceName(): string;
+  readback?(): Promise<void>;
   dispose(): void;
 }
 
@@ -121,6 +123,14 @@ export class CpuRiverSolverAdapter implements IRiverSolver {
     return 'cpu';
   }
 
+  public getGpuDeviceName(): string {
+    return 'Host CPU Reference (FVM)';
+  }
+
+  public async readback(): Promise<void> {
+    return Promise.resolve();
+  }
+
   public dispose(): void {
     this.ctx = null;
   }
@@ -128,6 +138,7 @@ export class CpuRiverSolverAdapter implements IRiverSolver {
 
 /**
  * Factory function to create the best available solver backend
+ * Priorities: WebGPU compute shaders -> WebGL2 GPGPU float textures -> CPU reference
  */
 export async function createRiverSolver(
   preferredBackend?: 'webgpu' | 'webgl2' | 'cpu'
@@ -136,21 +147,32 @@ export async function createRiverSolver(
     return new CpuRiverSolverAdapter();
   }
 
+  // 1. WebGPU Compute Shaders (Highest throughput, lowest latency on integrated/discrete GPU)
   if (preferredBackend === 'webgpu' || !preferredBackend) {
-    const webGpuSupported = await WebGpuRiverSolver.isSupported();
-    if (webGpuSupported) {
-      // In production WebGPU solver adapter can be used
-      // For now fallback to CPU adapter which executes full physics reliably
+    try {
+      const webGpuSupported = await WebGpuRiverSolver.isSupported();
+      if (webGpuSupported) {
+        const solver = new WebGpuRiverSolver();
+        return solver;
+      }
+    } catch (err) {
+      console.warn('WebGPU detection failed, attempting WebGL2 fallback:', err);
     }
   }
 
-  if (preferredBackend === 'webgl2') {
-    const webGl2Supported = WebGl2RiverSolver.isSupported();
-    if (webGl2Supported) {
-      // Fallback
+  // 2. WebGL2 GPGPU Fallback (Runs on all browser integrated GPUs)
+  if (preferredBackend === 'webgl2' || !preferredBackend || preferredBackend === 'webgpu') {
+    try {
+      const webGl2Supported = WebGl2RiverSolver.isSupported();
+      if (webGl2Supported) {
+        const solver = new WebGl2RiverSolver();
+        return solver;
+      }
+    } catch (err) {
+      console.warn('WebGL2 detection failed, falling back to CPU:', err);
     }
   }
 
-  // Default robust CPU reference adapter
+  // 3. Robust Host CPU Reference FVM Engine
   return new CpuRiverSolverAdapter();
 }

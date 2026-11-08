@@ -53,7 +53,7 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
   calibrationResult,
 }) => {
   const [durationSec, setDurationSec] = useState<number>(60);
-  const [backendPref, setBackendPref] = useState<'cpu' | 'webgpu' | 'webgl2'>('cpu');
+  const [backendPref, setBackendPref] = useState<'cpu' | 'webgpu' | 'webgl2'>('webgpu');
   const [isRunning, setIsRunning] = useState(false);
   const [progressPct, setProgressPct] = useState(0);
   const [simTimeSec, setSimTimeSec] = useState(0);
@@ -188,9 +188,9 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
               disabled={isRunning}
               className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100 focus:outline-none focus:border-cyan-500"
             >
-              <option value="cpu">CPU (Audusse HLL Finite-Volume)</option>
-              <option value="webgpu">WebGPU (Hardware Compute Pipeline)</option>
-              <option value="webgl2">WebGL2 GPGPU Shader Fallback</option>
+              <option value="webgpu">WebGPU (Integrated GPU WGSL Shaders)</option>
+              <option value="webgl2">WebGL2 (Integrated GPU GPGPU Fallback)</option>
+              <option value="cpu">Host CPU Reference (Finite-Volume)</option>
             </select>
           </div>
         </div>
