@@ -1,24 +1,21 @@
-# Global River Knowledge Graph — 8.5M Reach Census & Provenance Report
+# Global River Database & Reach Coverage Report
 
-**Generated**: 2026-11-08T17:34:00.850Z
-**Target**: Tensora GIS Client-Side Digital Twin
-**Version**: Knowledge Graph v4.0 (Draft v4.0 Specification)
+**Target**: Tensora GIS Client-Side Digital Twin  
+**Status**: 30 Curated Global Benchmark Reaches + Global Copernicus 30m Procedural Synthesis  
 
 ---
 
-## 1. Executive Summary: The Global River Census
+## 1. Executive Summary: River Catalog & Data Provenance
 
-Tensora GIS integrates an indexed, pre-loaded Global River Knowledge Graph designed to simulate **any river or tributary on Earth (~8.5 million reaches)** with instant 2D shallow-water hydrodynamics, depth-averaged RANS turbulence ($k-\varepsilon$, $k-\omega$ SST), and coupled sediment transport (Exner bed evolution).
+Tensora GIS integrates **30 curated benchmark river reaches** across North America, South America, Europe, Asia, Africa, and Oceania, coupled with an on-demand procedural terrain reach synthesizer backed by live Copernicus 30m DEM queries:
 
-| Dataset | Entity Count | Role in Knowledge Graph | Spatial Resolution | License |
+| Dataset / Source | Scope in Tensora GIS | Role in Engine | Spatial Resolution | License |
 |:---|:---|:---|:---|:---|
-| **HydroRIVERS / HydroSHEDS** | **~8,500,000 reaches** | Primary topological skeleton (catchment $\ge 10\text{ km}^2$, $Q \ge 0.1\text{ m}^3/\text{s}$) | Vector reaches | CC-BY-4.0 |
-| **SWORD v16** | **~248,000 reaches** | High-resolution reach overlay (rivers $>30\text{ m}$ width) | $\sim 10\text{ km}$ segments | Open (NASA/CNES) |
-| **SWOT-River-Volume** | **~240,000 reaches** | Active channel bathymetry & prior cross-section geometry | Reach-averaged | Open (Zenodo) |
-| **GRADES-hydroDL** | **~2,940,000 reaches** | Daily discharge time series (1979–2019) + 10-yr/100-yr flood flows | Daily | CC BY-NC 4.0 |
-| **GRDC-Caravan** | **~6,000 gauges** | Curated reference discharge observations & WMO calibration | Station | CC-BY-4.0 |
-| **GRWL** | **Global ($>30\text{ m}$)** | Satellite-derived water body width from Landsat | Sub-pixel | CC BY 4.0 |
-| **Copernicus GLO-30 DEM** | **Global (100% land)** | Digital Elevation Model for floodplain topography & carving | $30\text{ m}$ | Free / Open |
+| **Curated Benchmark Reaches** | **30 Major World Rivers** | Core validation and demonstration catalog (Mississippi, Rhine, Amazon, Danube, Nile, Yangtze, etc.) | Geodetic Centerlines | Open / MIT |
+| **Copernicus GLO-30 DEM** | **Global (100% landmass)** | On-demand elevation sampling for procedural reach thalweg extraction and floodplain carving | $30\text{ m}$ | Free / Open |
+| **HydroRIVERS / HydroSHEDS** | **Methodology / Topological Reference** | Empirical Strahler scaling and catchment drainage area relationships | Reference vector | CC-BY-4.0 |
+| **NASA SWOT KaRIn Altimetry** | **Reference Reaches** | Water surface elevation and slope comparison data for hydrodynamic model calibration | Reach-averaged | Open (NASA/CNES) |
+| **GRWL (Global River Width from Landsat)** | **Reference Reaches** | Satellite-observed active channel width for benchmark reaches | Sub-pixel | CC BY 4.0 |
 
 ---
 
@@ -35,13 +32,12 @@ Every river reach and simulation in Tensora GIS carries a strict confidence tier
 
 ---
 
-## 3. Spatial Sharding Architecture
+## 3. Client-Side Data Architecture
 
-To serve ~8.5 million reaches without requiring gigabytes of downloads or backend servers:
-- **1° × 1° Spatial Tiles**: Reaches are partitioned into ~14,200 land shards (`<5 MB` compressed per shard).
-- **Client-Side Lazy Loading**: Shards are requested on-demand as the user pans or zooms in Leaflet.
-- **IndexedDB Tier**: Downloaded and simulated reaches are persisted locally with TTL expiration.
-- **Procedural Topological Synthesis**: For any point clicked on Earth outside pre-cached reaches, the deterministic procedural synthesizer generates the local reach and upstream tributary confluences using Strahler scaling and DEM slope.
+To deliver real-time simulations in the browser without requiring gigabytes of downloads or remote compute clusters:
+- **Curated Global Benchmarks**: 30 major river reaches pre-indexed in client memory with geodetic centerlines and empirical hydraulic geometry.
+- **IndexedDB Local Storage**: User-modified meshes, CAD structures, imported LiDAR point clouds, and simulation states are cached locally.
+- **Procedural Topological Synthesis**: For any location clicked on Earth outside the benchmark reaches, the engine queries Copernicus 30m DEM elevation data to procedurally generate a local river reach along the ground-truth terrain gradient.
 
 ---
 
