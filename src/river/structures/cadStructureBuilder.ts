@@ -571,9 +571,12 @@ export function findCellsInsidePolygon(
         closestIdx = c;
       }
     }
-    affected.add(closestIdx);
-    bedElevSum = mesh.cells[closestIdx].bedElevation;
-    stationSum = (mesh.cells[closestIdx].i / Math.max(1, mesh.nx)) * mesh.reachLengthM;
+    const maxAllowedD = Math.max(60.0, Math.sqrt(mesh.cells[closestIdx]?.areaM2 || 100.0) * 2.0);
+    if (minD <= maxAllowedD) {
+      affected.add(closestIdx);
+      bedElevSum = mesh.cells[closestIdx].bedElevation;
+      stationSum = (mesh.cells[closestIdx].i / Math.max(1, mesh.nx)) * mesh.reachLengthM;
+    }
   }
 
   const cellIndices = Array.from(affected);
@@ -581,8 +584,8 @@ export function findCellsInsidePolygon(
 
   return {
     cellIndices,
-    stationM: stationSum / count,
-    avgBedElevM: bedElevSum / count,
+    stationM: count > 0 ? stationSum / count : 0,
+    avgBedElevM: count > 0 ? bedElevSum / count : 100.0,
   };
 }
 
@@ -618,8 +621,8 @@ export function findCellsInsideCircle(
     }
   }
 
-  // Fallback: at least include nearest cell
-  if (affected.size === 0) {
+  // Fallback: at least include nearest cell if within reasonable proximity
+  if (affected.size === 0 && mesh.cells.length > 0) {
     let nearestIdx = 0;
     let minD = Infinity;
     for (let c = 0; c < mesh.cells.length; c++) {
@@ -634,9 +637,12 @@ export function findCellsInsideCircle(
         nearestIdx = c;
       }
     }
-    affected.add(nearestIdx);
-    bedElevSum = mesh.cells[nearestIdx].bedElevation;
-    stationSum = (mesh.cells[nearestIdx].i / Math.max(1, mesh.nx)) * mesh.reachLengthM;
+    const maxAllowedD = radiusM + Math.max(60.0, Math.sqrt(mesh.cells[nearestIdx]?.areaM2 || 100.0) * 2.0);
+    if (minD <= maxAllowedD) {
+      affected.add(nearestIdx);
+      bedElevSum = mesh.cells[nearestIdx].bedElevation;
+      stationSum = (mesh.cells[nearestIdx].i / Math.max(1, mesh.nx)) * mesh.reachLengthM;
+    }
   }
 
   const cellIndices = Array.from(affected);
@@ -644,8 +650,8 @@ export function findCellsInsideCircle(
 
   return {
     cellIndices,
-    stationM: stationSum / count,
-    avgBedElevM: bedElevSum / count,
+    stationM: count > 0 ? stationSum / count : 0,
+    avgBedElevM: count > 0 ? bedElevSum / count : 100.0,
   };
 }
 
@@ -1356,3 +1362,46 @@ export function createStructureFromMapPoints(
 ): RiverHydraulicStructure {
   return createStructureFromMapPolyline([pt1, pt2], type, mesh);
 }
+
+/**
+ * Re-indexes a single hydraulic structure's cellIndices on a modified/translated/rotated mesh
+ */
+export function reindexStructureOnMesh(
+  structure: RiverHydraulicStructure,
+  mesh: RiverGridMesh
+): RiverHydraulicStructure {
+  if (structure.type === 'circle') {
+    const circle = structure as any;
+    const center = circle.center || structure.coordinates?.[0];
+    if (center) {
+      const res = findCellsInsideCircle(center, circle.radiusM || 6.0, mesh);
+      return {
+        ...structure,
+        cellIndices: res.cellIndices,
+        stationM: res.stationM > 0 ? res.stationM : structure.stationM,
+      };
+    }
+  }
+
+  if (structure.coordinates && structure.coordinates.length > 0) {
+    const res = findCellsInsidePolygon(structure.coordinates, mesh);
+    return {
+      ...structure,
+      cellIndices: res.cellIndices,
+      stationM: res.stationM > 0 ? res.stationM : structure.stationM,
+    };
+  }
+
+  return structure;
+}
+
+/**
+ * Re-indexes all hydraulic structures across a moved, translated, or rotated computational mesh
+ */
+export function reindexStructuresOnMesh(
+  structures: RiverHydraulicStructure[],
+  mesh: RiverGridMesh
+): RiverHydraulicStructure[] {
+  return structures.map((s) => reindexStructureOnMesh(s, mesh));
+}
+

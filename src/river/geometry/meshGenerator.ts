@@ -573,18 +573,26 @@ export function translateMesh(
     lng: pt.lng + dLng,
   }));
 
-  const updatedBounds: [number, number, number, number] = [
-    mesh.bounds[0] + dLat,
-    mesh.bounds[1] + dLng,
-    mesh.bounds[2] + dLat,
-    mesh.bounds[3] + dLng,
-  ];
+  // Strictly recompute bounding box from all shifted cell corners
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (const c of updatedCells) {
+    for (const [lat, lng] of c.corners) {
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+    }
+  }
+
+  const bounds: [number, number, number, number] = isFinite(minLat)
+    ? [minLat, minLng, maxLat, maxLng]
+    : [mesh.bounds[0] + dLat, mesh.bounds[1] + dLng, mesh.bounds[2] + dLat, mesh.bounds[3] + dLng];
 
   return {
     ...mesh,
     cells: updatedCells,
     centerline: updatedCenterline,
-    bounds: updatedBounds,
+    bounds,
   };
 }
 
@@ -596,7 +604,7 @@ export function rotateMesh(
   angleDeg: number,
   pivot?: [number, number] // [pivotLat, pivotLng]
 ): RiverGridMesh {
-  if (angleDeg === 0) return mesh;
+  if (angleDeg === 0 || mesh.cells.length === 0) return mesh;
 
   const rad = (angleDeg * Math.PI) / 180.0;
   const cosT = Math.cos(rad);
@@ -605,6 +613,27 @@ export function rotateMesh(
   const pivotLat = pivot ? pivot[0] : (mesh.bounds[0] + mesh.bounds[2]) * 0.5;
   const pivotLng = pivot ? pivot[1] : (mesh.bounds[1] + mesh.bounds[3]) * 0.5;
   const cosLat = Math.cos((pivotLat * Math.PI) / 180.0);
+
+  const meshCenterLat = (mesh.bounds[0] + mesh.bounds[2]) * 0.5;
+  const meshCenterLng = (mesh.bounds[1] + mesh.bounds[3]) * 0.5;
+
+  let minCellX = Infinity, maxCellX = -Infinity;
+  let minCellY = Infinity, maxCellY = -Infinity;
+  for (const c of mesh.cells) {
+    if (c.centerX < minCellX) minCellX = c.centerX;
+    if (c.centerX > maxCellX) maxCellX = c.centerX;
+    if (c.centerY < minCellY) minCellY = c.centerY;
+    if (c.centerY > maxCellY) maxCellY = c.centerY;
+  }
+  const metricCenterXM = (minCellX + maxCellX) * 0.5;
+  const metricCenterYM = (minCellY + maxCellY) * 0.5;
+
+  const dPivotLat = pivotLat - meshCenterLat;
+  const dPivotLng = pivotLng - meshCenterLng;
+  const dPivotYM = dPivotLat * METERS_PER_DEG_LAT;
+  const dPivotXM = dPivotLng * METERS_PER_DEG_LAT * cosLat;
+  const pivotXM = metricCenterXM + dPivotXM;
+  const pivotYM = metricCenterYM + dPivotYM;
 
   const rotateCoord = (lat: number, lng: number): [number, number] => {
     const yM = (lat - pivotLat) * METERS_PER_DEG_LAT;
@@ -626,8 +655,16 @@ export function rotateMesh(
       nx * sinT + ny * cosT,
     ]);
 
+    // Rigidly rotate metric centerX, centerY around pivotXM, pivotYM
+    const relX = cell.centerX - pivotXM;
+    const relY = cell.centerY - pivotYM;
+    const newCenterX = pivotXM + (relX * cosT - relY * sinT);
+    const newCenterY = pivotYM + (relX * sinT + relY * cosT);
+
     return {
       ...cell,
+      centerX: newCenterX,
+      centerY: newCenterY,
       centerLat: cLat,
       centerLng: cLng,
       corners: updatedCorners,
@@ -641,7 +678,7 @@ export function rotateMesh(
   });
 
   // Recompute bounding box
-  let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
   for (const c of updatedCells) {
     for (const [lat, lng] of c.corners) {
       if (lat < minLat) minLat = lat;
@@ -651,12 +688,32 @@ export function rotateMesh(
     }
   }
 
+  const bounds: [number, number, number, number] = isFinite(minLat)
+    ? [minLat, minLng, maxLat, maxLng]
+    : [mesh.bounds[0], mesh.bounds[1], mesh.bounds[2], mesh.bounds[3]];
+
   return {
     ...mesh,
     cells: updatedCells,
     centerline: updatedCenterline,
-    bounds: [minLat, minLng, maxLat, maxLng],
+    bounds,
   };
+}
+
+/**
+ * Center the entire computational mesh at a given target latitude and longitude
+ */
+export function centerMeshAt(
+  mesh: RiverGridMesh,
+  targetLat: number,
+  targetLng: number
+): RiverGridMesh {
+  const currentCenterLat = (mesh.bounds[0] + mesh.bounds[2]) * 0.5;
+  const currentCenterLng = (mesh.bounds[1] + mesh.bounds[3]) * 0.5;
+  const cosLat = Math.cos((0.5 * (currentCenterLat + targetLat) * Math.PI) / 180.0);
+  const dxM = (targetLng - currentCenterLng) * METERS_PER_DEG_LAT * cosLat;
+  const dyM = (targetLat - currentCenterLat) * METERS_PER_DEG_LAT;
+  return translateMesh(mesh, dxM, dyM);
 }
 
 /**

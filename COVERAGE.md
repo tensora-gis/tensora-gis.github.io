@@ -1,6 +1,6 @@
 # Global River Knowledge Graph — 8.5M Reach Census & Provenance Report
 
-**Generated**: 2026-11-08T11:34:09.529Z
+**Generated**: 2026-11-08T14:04:51.477Z
 **Target**: Tensora GIS Client-Side Digital Twin
 **Version**: Knowledge Graph v4.0 (Draft v4.0 Specification)
 

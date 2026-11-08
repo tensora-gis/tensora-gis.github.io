@@ -47,6 +47,7 @@ interface RiverResultsOverlayProps {
   hydroRef?: React.RefObject<HydrodynamicsState | null>;
   turbRef?: React.RefObject<TurbulenceState | null>;
   sedRef?: React.RefObject<SedimentState | null>;
+  isMoveMeshMode?: boolean;
 }
 
 import {
@@ -71,6 +72,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
   hydroRef,
   turbRef,
   sedRef,
+  isMoveMeshMode = false,
 }) => {
   const overlayRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -92,6 +94,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     hydroRef,
     turbRef,
     sedRef,
+    isMoveMeshMode,
   });
 
   propsRef.current = {
@@ -108,6 +111,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     hydroRef,
     turbRef,
     sedRef,
+    isMoveMeshMode,
   };
 
   // Main rendering routine executed on every redraw
@@ -128,6 +132,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
       hydroRef: liveHydroRef,
       turbRef: liveTurbRef,
       sedRef: liveSedRef,
+      isMoveMeshMode: curIsMoveMode,
     } = propsRef.current;
 
     const curHydro = (simulatingActive && liveHydroRef?.current) ? liveHydroRef.current : stateHydro;
@@ -272,12 +277,19 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     // 2. Reconstruct nodal positions and nodal scalar values on (nx+1) x (ny+1) mesh
     const zoom = map.getZoom();
     const center = map.getCenter();
-    const cacheKey = `${curMesh.nx}_${curMesh.ny}_${zoom}_${center.lat.toFixed(5)}_${center.lng.toFixed(5)}_${size.x}_${size.y}`;
+    const boundsKey = curMesh.bounds ? curMesh.bounds.map((b) => b.toFixed(6)).join(',') : '';
+    const c0 = curMesh.cells[0]?.corners?.[0];
+    const c0Key = c0 ? `${c0[0].toFixed(6)}_${c0[1].toFixed(6)}` : '';
+    const lastCell = curMesh.cells[curMesh.cells.length - 1];
+    const cN = lastCell?.corners?.[2] || lastCell?.corners?.[0];
+    const cNKey = cN ? `${cN[0].toFixed(6)}_${cN[1].toFixed(6)}` : '';
+    const cacheKey = `${curMesh.nx}_${curMesh.ny}_${boundsKey}_${c0Key}_${cNKey}_${zoom}_${center.lat.toFixed(5)}_${center.lng.toFixed(5)}_${size.x}_${size.y}`;
 
     let nodePts: { px: number; py: number }[][];
     if (nodeCacheRef.current && nodeCacheRef.current.key === cacheKey) {
       nodePts = nodeCacheRef.current.pts;
     } else {
+      particlesRef.current = []; // Re-seed streamline traces on mesh movement/zoom change
       nodePts = [];
       for (let i = 0; i <= nx; i++) {
         nodePts[i] = [];
@@ -430,6 +442,78 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
           }
         }
       }
+    }
+
+    // 3b. Interactive Mesh Alignment Wireframe & Guidance Grid (When moving mesh)
+    if (curIsMoveMode) {
+      ctx.save();
+      // Quad cell interior edges
+      ctx.strokeStyle = 'rgba(6, 182, 212, 0.45)';
+      ctx.lineWidth = 1.0;
+      ctx.beginPath();
+      for (let j = 0; j <= ny; j++) {
+        if (!nodePts[0]?.[j]) continue;
+        ctx.moveTo(nodePts[0][j].px, nodePts[0][j].py);
+        for (let i = 1; i <= nx; i++) {
+          if (nodePts[i]?.[j]) ctx.lineTo(nodePts[i][j].px, nodePts[i][j].py);
+        }
+      }
+      for (let i = 0; i <= nx; i++) {
+        if (!nodePts[i]?.[0]) continue;
+        ctx.moveTo(nodePts[i][0].px, nodePts[i][0].py);
+        for (let j = 1; j <= ny; j++) {
+          if (nodePts[i]?.[j]) ctx.lineTo(nodePts[i][j].px, nodePts[i][j].py);
+        }
+      }
+      ctx.stroke();
+
+      // Outer bounding boundary in vibrant cyan
+      ctx.strokeStyle = '#06b6d4';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(nodePts[0][0].px, nodePts[0][0].py);
+      for (let i = 1; i <= nx; i++) ctx.lineTo(nodePts[i][0].px, nodePts[i][0].py);
+      for (let j = 1; j <= ny; j++) ctx.lineTo(nodePts[nx][j].px, nodePts[nx][j].py);
+      for (let i = nx - 1; i >= 0; i--) ctx.lineTo(nodePts[i][ny].px, nodePts[i][ny].py);
+      for (let j = ny - 1; j >= 0; j--) ctx.lineTo(nodePts[0][j].px, nodePts[0][j].py);
+      ctx.closePath();
+      ctx.stroke();
+
+      // Centerline / Thalweg in luminous amber with dashed pattern
+      if (curMesh.centerline && curMesh.centerline.length > 0) {
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2.4;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        const p0 = map.latLngToContainerPoint([curMesh.centerline[0].lat, curMesh.centerline[0].lng]);
+        ctx.moveTo(p0.x, p0.y);
+        for (let k = 1; k < curMesh.centerline.length; k++) {
+          const pk = map.latLngToContainerPoint([curMesh.centerline[k].lat, curMesh.centerline[k].lng]);
+          ctx.lineTo(pk.x, pk.y);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Centroid Target Reticle
+      const midLat = 0.5 * (curMesh.bounds[0] + curMesh.bounds[2]);
+      const midLng = 0.5 * (curMesh.bounds[1] + curMesh.bounds[3]);
+      const centerPt = map.latLngToContainerPoint([midLat, midLng]);
+      ctx.strokeStyle = '#22d3ee';
+      ctx.fillStyle = 'rgba(6, 182, 212, 0.20)';
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.arc(centerPt.x, centerPt.y, 22, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(centerPt.x - 28, centerPt.y);
+      ctx.lineTo(centerPt.x + 28, centerPt.y);
+      ctx.moveTo(centerPt.x, centerPt.y - 28);
+      ctx.lineTo(centerPt.x, centerPt.y + 28);
+      ctx.stroke();
+
+      ctx.restore();
     }
 
     // 4. Subtle Ansys Fluent / ParaView Isocontour Lines
@@ -1004,12 +1088,12 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     overlayRef.current = overlay;
     overlay.addTo(map);
 
-    // Click handler on canvas to inspect cell
+    // Click handler on canvas to inspect cell (disabled during mesh movement)
     const canvas = canvasRef.current;
     const handleCanvasClick = (e: MouseEvent) => {
       const curCanvas = canvasRef.current;
-      const { onSelectCell: curOnSelect, mesh: curMesh } = propsRef.current;
-      if (!curCanvas || !curOnSelect) return;
+      const { onSelectCell: curOnSelect, mesh: curMesh, isMoveMeshMode: curIsMoveMode } = propsRef.current;
+      if (!curCanvas || !curOnSelect || curIsMoveMode) return;
       const rect = curCanvas.getBoundingClientRect();
       const clickX = e.clientX - rect.left;
       const clickY = e.clientY - rect.top;
@@ -1061,6 +1145,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     thematicDisplay,
     showVelocityVectors,
     showStreamlines,
+    isMoveMeshMode,
   ]);
 
   // High-performance decoupled 60 FPS render loop when simulation is running or streamlines active

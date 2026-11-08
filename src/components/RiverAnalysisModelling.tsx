@@ -78,12 +78,13 @@ import {
   SwotCalibrationResult,
 } from '../river/calibration/swotCalibration';
 import { applyTerrainAndCarveBathymetry } from '../river/geometry/geometryBuilder';
-import { translateMesh, rotateMesh } from '../river/geometry/meshGenerator';
+import { translateMesh, rotateMesh, centerMeshAt } from '../river/geometry/meshGenerator';
 import {
   createStructureFromMapPolyline,
   createRotatedRectanglePoints,
   createCirclePoints,
   findCellsInsidePolygon,
+  reindexStructuresOnMesh,
 } from '../river/structures/cadStructureBuilder';
 import { ParaView3DVisualizer } from '../river/components/ParaView3DVisualizer';
 
@@ -162,6 +163,9 @@ export const RiverAnalysisModelling: React.FC = () => {
   // Mesh Movement & Alignment Mode
   const [isMoveMeshMode, setIsMoveMeshMode] = useState(false);
   const [meshShiftM, setMeshShiftM] = useState({ x: 0, y: 0, rot: 0 });
+  const [moveStepM, setMoveStepM] = useState<number>(50);
+  const [rotStepDeg, setRotStepDeg] = useState<number>(5);
+  const [clickToCenter, setClickToCenter] = useState<boolean>(false);
 
   // Auto-Detected River Prompt (when clicking map)
   const [detectedRiver, setDetectedRiver] = useState<{ river: any; distanceKm: number } | null>(null);
@@ -192,12 +196,27 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [isExportingExcel, setIsExportingExcel] = useState(false);
 
   // Leaflet Map Container & Tile Layer References
+  const [mapInstance, setMapInstance] = useState<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const tileLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const cadPreviewLayerRef = useRef<L.LayerGroup | null>(null);
+  const moveMeshLayerRef = useRef<L.LayerGroup | null>(null);
+  const centerMarkerRef = useRef<L.Marker | null>(null);
+  const rotMarkerRef = useRef<L.Marker | null>(null);
+  const guideLineRef = useRef<L.Polyline | null>(null);
+  const isDraggingGizmoRef = useRef<'center' | 'rot' | null>(null);
+  const isReinitializingSolverRef = useRef<boolean>(false);
 
   // References for Real-time Animation Loop & Event Handlers
+  const isMoveMeshModeRef = useRef(isMoveMeshMode);
+  isMoveMeshModeRef.current = isMoveMeshMode;
+  const moveStepMRef = useRef(moveStepM);
+  moveStepMRef.current = moveStepM;
+  const rotStepDegRef = useRef(rotStepDeg);
+  rotStepDegRef.current = rotStepDeg;
+  const clickToCenterRef = useRef(clickToCenter);
+  clickToCenterRef.current = clickToCenter;
   const hydroRef = useRef(hydro);
   hydroRef.current = hydro;
   const turbRef = useRef(turb);
@@ -289,10 +308,14 @@ export const RiverAnalysisModelling: React.FC = () => {
     const cadLayer = L.layerGroup().addTo(map);
     cadPreviewLayerRef.current = cadLayer;
 
+    const moveMeshLayer = L.layerGroup().addTo(map);
+    moveMeshLayerRef.current = moveMeshLayer;
+
     // Apply default satellite imagery
     updateBasemapTiles(tileGroup, 'satellite');
 
     mapInstanceRef.current = map;
+    setMapInstance(map);
 
     // Map mousemove handler: Real-time AutoCAD dimension & angle tracking
     map.on('mousemove', (e: L.LeafletMouseEvent) => {
@@ -318,6 +341,21 @@ export const RiverAnalysisModelling: React.FC = () => {
 
     // Map click handler: CAD structure drawing or Auto River Detection
     map.on('click', async (e: L.LeafletMouseEvent) => {
+      if (isDraggingGizmoRef.current) return;
+
+      if (isMoveMeshModeRef.current) {
+        if (clickToCenterRef.current) {
+          const curMesh = meshRef.current;
+          const centerLat = 0.5 * (curMesh.bounds[0] + curMesh.bounds[2]);
+          const centerLng = 0.5 * (curMesh.bounds[1] + curMesh.bounds[3]);
+          const cosLat = Math.cos((0.5 * (centerLat + e.latlng.lat) * Math.PI) / 180.0);
+          const dxM = (e.latlng.lng - centerLng) * 111320.0 * cosLat;
+          const dyM = (e.latlng.lat - centerLat) * 111320.0;
+          handleTranslateMeshRef.current(dxM, dyM, true);
+        }
+        return;
+      }
+
       if (cadDrawModeRef.current) {
         const clickPt = { lat: e.latlng.lat, lng: e.latlng.lng };
         const mode = cadDrawModeRef.current;
@@ -496,6 +534,7 @@ export const RiverAnalysisModelling: React.FC = () => {
     return () => {
       map.remove();
       mapInstanceRef.current = null;
+      setMapInstance(null);
     };
   }, []);
 
@@ -696,6 +735,9 @@ export const RiverAnalysisModelling: React.FC = () => {
           hydroRef.current = state.hydro;
           turbRef.current = state.turb;
           sedRef.current = state.sed;
+          setHydro({ ...state.hydro });
+          setTurb({ ...state.turb });
+          setSed({ ...state.sed });
           setActiveGpuName(solver.getGpuDeviceName());
           setActiveBackendType(solver.getBackendType());
           setComputeShadersActive(solver.getBackendType() !== 'cpu');
@@ -710,6 +752,9 @@ export const RiverAnalysisModelling: React.FC = () => {
           hydroRef.current = state.hydro;
           turbRef.current = state.turb;
           sedRef.current = state.sed;
+          setHydro({ ...state.hydro });
+          setTurb({ ...state.turb });
+          setSed({ ...state.sed });
           setActiveGpuName(cpuSolver.getGpuDeviceName());
           setActiveBackendType('cpu');
           setComputeShadersActive(false);
@@ -730,7 +775,7 @@ export const RiverAnalysisModelling: React.FC = () => {
     let lastTime = performance.now();
 
     const loop = () => {
-      if (isSimulatingRef.current) {
+      if (isSimulatingRef.current && !isReinitializingSolverRef.current) {
         const solver = solverRef.current;
         if (solver) {
           const stepsToRun = Math.max(1, simSpeedRef.current);
@@ -851,6 +896,7 @@ export const RiverAnalysisModelling: React.FC = () => {
     setSwotObs(RiverDataService.getSwotData(newReach.id));
     setCalibrationResult(null);
     setDetectedRiver(null);
+    setMeshShiftM({ x: 0, y: 0, rot: 0 });
 
     // Update solver refs synchronously to avoid animation loop race condition
     meshRef.current = newMesh;
@@ -998,32 +1044,532 @@ export const RiverAnalysisModelling: React.FC = () => {
   };
 
   // Mesh Movement & Alignment Actions
-  const handleTranslateMesh = (dxM: number, dyM: number) => {
+  const handleTranslateMesh = async (dxM: number, dyM: number, syncSolver: boolean = true) => {
+    if (dxM === 0 && dyM === 0) return;
     const updated = translateMesh(meshRef.current, dxM, dyM);
-    setMesh(updated);
     meshRef.current = updated;
+    setMesh(updated);
     setMeshShiftM((prev) => ({ ...prev, x: prev.x + dxM, y: prev.y + dyM }));
-    setCadNotification(`Mesh shifted: dx = ${dxM > 0 ? '+' : ''}${dxM}m, dy = ${dyM > 0 ? '+' : ''}${dyM}m`);
-    setTimeout(() => setCadNotification(null), 3000);
+
+    if (syncSolver) {
+      isReinitializingSolverRef.current = true;
+      const updatedStructures = reindexStructuresOnMesh(structuresRef.current, updated);
+      structuresRef.current = updatedStructures;
+      setStructures(updatedStructures);
+
+      if (solverRef.current) {
+        try {
+          await solverRef.current.init(
+            updated,
+            boundariesRef.current,
+            updatedStructures,
+            turbParamsRef.current,
+            sedParamsRef.current
+          );
+          const state = solverRef.current.getState();
+          hydroRef.current = state.hydro;
+          turbRef.current = state.turb;
+          sedRef.current = state.sed;
+          setHydro({ ...state.hydro });
+          setTurb({ ...state.turb });
+          setSed({ ...state.sed });
+        } catch (err) {
+          console.warn('Failed to sync solver on mesh translate:', err);
+        } finally {
+          isReinitializingSolverRef.current = false;
+        }
+      } else {
+        const newHydro = createInitialHydroState(updated, boundariesRef.current, updatedStructures);
+        const newTurb = createInitialTurbulenceState(updated);
+        const newSed = createInitialSedimentState(updated);
+        hydroRef.current = newHydro;
+        turbRef.current = newTurb;
+        sedRef.current = newSed;
+        setHydro(newHydro);
+        setTurb(newTurb);
+        setSed(newSed);
+        isReinitializingSolverRef.current = false;
+      }
+      setCadNotification(`Mesh shifted: dx = ${dxM >= 0 ? '+' : ''}${dxM.toFixed(0)}m, dy = ${dyM >= 0 ? '+' : ''}${dyM.toFixed(0)}m`);
+      setTimeout(() => setCadNotification(null), 2500);
+    }
   };
 
-  const handleRotateMesh = (dAngleDeg: number) => {
-    const updated = rotateMesh(meshRef.current, dAngleDeg);
-    setMesh(updated);
+  const handleRotateMesh = async (dAngleDeg: number, syncSolver: boolean = true) => {
+    if (dAngleDeg === 0) return;
+    const centerLat = 0.5 * (meshRef.current.bounds[0] + meshRef.current.bounds[2]);
+    const centerLng = 0.5 * (meshRef.current.bounds[1] + meshRef.current.bounds[3]);
+    const updated = rotateMesh(meshRef.current, dAngleDeg, [centerLat, centerLng]);
     meshRef.current = updated;
+    setMesh(updated);
     setMeshShiftM((prev) => ({ ...prev, rot: prev.rot + dAngleDeg }));
-    setCadNotification(`Mesh rotated: ${dAngleDeg > 0 ? '+' : ''}${dAngleDeg}°`);
-    setTimeout(() => setCadNotification(null), 3000);
+
+    if (syncSolver) {
+      isReinitializingSolverRef.current = true;
+      const updatedStructures = reindexStructuresOnMesh(structuresRef.current, updated);
+      structuresRef.current = updatedStructures;
+      setStructures(updatedStructures);
+
+      if (solverRef.current) {
+        try {
+          await solverRef.current.init(
+            updated,
+            boundariesRef.current,
+            updatedStructures,
+            turbParamsRef.current,
+            sedParamsRef.current
+          );
+          const state = solverRef.current.getState();
+          hydroRef.current = state.hydro;
+          turbRef.current = state.turb;
+          sedRef.current = state.sed;
+          setHydro({ ...state.hydro });
+          setTurb({ ...state.turb });
+          setSed({ ...state.sed });
+        } catch (err) {
+          console.warn('Failed to sync solver on mesh rotate:', err);
+        } finally {
+          isReinitializingSolverRef.current = false;
+        }
+      } else {
+        const newHydro = createInitialHydroState(updated, boundariesRef.current, updatedStructures);
+        const newTurb = createInitialTurbulenceState(updated);
+        const newSed = createInitialSedimentState(updated);
+        hydroRef.current = newHydro;
+        turbRef.current = newTurb;
+        sedRef.current = newSed;
+        setHydro(newHydro);
+        setTurb(newTurb);
+        setSed(newSed);
+        isReinitializingSolverRef.current = false;
+      }
+      setCadNotification(`Mesh rotated: ${dAngleDeg >= 0 ? '+' : ''}${dAngleDeg.toFixed(1)}°`);
+      setTimeout(() => setCadNotification(null), 2500);
+    }
   };
 
-  const handleResetMesh = () => {
-    const defaultMesh = RiverDataService.buildMesh(reach);
-    setMesh(defaultMesh);
+  const handleResetMesh = async () => {
+    isReinitializingSolverRef.current = true;
+    const defaultMesh = generateRiverGridMesh(reach, {
+      ...meshOptions,
+      originOffsetXM: 0,
+      originOffsetYM: 0,
+      rotationAngleDeg: 0,
+      localRefinementStructures: structuresRef.current,
+    });
     meshRef.current = defaultMesh;
+    setMesh(defaultMesh);
     setMeshShiftM({ x: 0, y: 0, rot: 0 });
+
+    const updatedStructures = reindexStructuresOnMesh(structuresRef.current, defaultMesh);
+    structuresRef.current = updatedStructures;
+    setStructures(updatedStructures);
+
+    if (solverRef.current) {
+      try {
+        await solverRef.current.init(
+          defaultMesh,
+          boundariesRef.current,
+          updatedStructures,
+          turbParamsRef.current,
+          sedParamsRef.current
+        );
+        const state = solverRef.current.getState();
+        hydroRef.current = state.hydro;
+        turbRef.current = state.turb;
+        sedRef.current = state.sed;
+        setHydro({ ...state.hydro });
+        setTurb({ ...state.turb });
+        setSed({ ...state.sed });
+      } catch (err) {
+        console.warn('Failed to reset solver on mesh reset:', err);
+      } finally {
+        isReinitializingSolverRef.current = false;
+      }
+    } else {
+      const newHydro = createInitialHydroState(defaultMesh, boundariesRef.current, updatedStructures);
+      const newTurb = createInitialTurbulenceState(defaultMesh);
+      const newSed = createInitialSedimentState(defaultMesh);
+      hydroRef.current = newHydro;
+      turbRef.current = newTurb;
+      sedRef.current = newSed;
+      setHydro(newHydro);
+      setTurb(newTurb);
+      setSed(newSed);
+      isReinitializingSolverRef.current = false;
+    }
+
     setCadNotification('Mesh alignment reset to river thalweg centerline.');
     setTimeout(() => setCadNotification(null), 3000);
   };
+
+  const handleCenterOnViewport = () => {
+    const map = mapInstance || mapInstanceRef.current;
+    if (!map) return;
+    const center = map.getCenter();
+    const curMesh = meshRef.current;
+    const meshCenterLat = 0.5 * (curMesh.bounds[0] + curMesh.bounds[2]);
+    const meshCenterLng = 0.5 * (curMesh.bounds[1] + curMesh.bounds[3]);
+    const cosLat = Math.cos((0.5 * (meshCenterLat + center.lat) * Math.PI) / 180.0);
+    const dxM = (center.lng - meshCenterLng) * 111320.0 * cosLat;
+    const dyM = (center.lat - meshCenterLat) * 111320.0;
+    handleTranslateMesh(dxM, dyM, true);
+  };
+
+  const handleTranslateMeshRef = useRef(handleTranslateMesh);
+  handleTranslateMeshRef.current = handleTranslateMesh;
+  const handleRotateMeshRef = useRef(handleRotateMesh);
+  handleRotateMeshRef.current = handleRotateMesh;
+
+  // 1. Mount / unmount Move Mesh gizmo layer on map
+  useEffect(() => {
+    const map = mapInstance || mapInstanceRef.current;
+    const layer = moveMeshLayerRef.current;
+    if (!map || !layer) return;
+
+    if (!isMoveMeshMode) {
+      layer.clearLayers();
+      centerMarkerRef.current = null;
+      rotMarkerRef.current = null;
+      guideLineRef.current = null;
+      isDraggingGizmoRef.current = null;
+      return;
+    }
+
+    layer.clearLayers();
+
+    const curMesh = meshRef.current;
+    const centerLat = 0.5 * (curMesh.bounds[0] + curMesh.bounds[2]);
+    const centerLng = 0.5 * (curMesh.bounds[1] + curMesh.bounds[3]);
+    const downstreamPt = curMesh.centerline[curMesh.centerline.length - 1] || { lat: centerLat, lng: centerLng };
+
+    // Center Translation Gizmo (with 4 on-map direct nudge arrow buttons + central drag handle)
+    const centerIcon = L.divIcon({
+      className: 'move-mesh-center-gizmo',
+      html: `
+        <div style="position: relative; width: 120px; height: 120px; pointer-events: none; user-select: none;">
+          <!-- North Arrow Button -->
+          <button data-dir="north" type="button" style="position: absolute; top: 0; left: 42px; width: 36px; height: 26px; border-radius: 8px; background: rgba(15, 23, 42, 0.95); border: 1.5px solid #06b6d4; color: #22d3ee; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 13px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Nudge North (↑)">
+            ▲
+          </button>
+          
+          <!-- South Arrow Button -->
+          <button data-dir="south" type="button" style="position: absolute; bottom: 0; left: 42px; width: 36px; height: 26px; border-radius: 8px; background: rgba(15, 23, 42, 0.95); border: 1.5px solid #06b6d4; color: #22d3ee; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 13px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Nudge South (↓)">
+            ▼
+          </button>
+          
+          <!-- West Arrow Button -->
+          <button data-dir="west" type="button" style="position: absolute; top: 42px; left: 0; width: 26px; height: 36px; border-radius: 8px; background: rgba(15, 23, 42, 0.95); border: 1.5px solid #06b6d4; color: #22d3ee; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 13px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Nudge West (←)">
+            ◄
+          </button>
+          
+          <!-- East Arrow Button -->
+          <button data-dir="east" type="button" style="position: absolute; top: 42px; right: 0; width: 26px; height: 36px; border-radius: 8px; background: rgba(15, 23, 42, 0.95); border: 1.5px solid #06b6d4; color: #22d3ee; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 13px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Nudge East (→)">
+            ►
+          </button>
+
+          <!-- Center Draggable Handle -->
+          <div data-drag="center" style="position: absolute; top: 38px; left: 38px; width: 44px; height: 44px; border-radius: 50%; background: rgba(15, 23, 42, 0.95); border: 2.5px solid #06b6d4; box-shadow: 0 0 16px rgba(6, 182, 212, 0.9); display: flex; align-items: center; justify-content: center; color: #67e8f9; font-size: 20px; font-weight: bold; cursor: grab; pointer-events: auto;" title="Click and drag to move entire computational mesh">
+            ✥
+          </div>
+
+          <!-- Label below -->
+          <div style="position: absolute; top: 124px; left: 50%; transform: translateX(-50%); padding: 2px 8px; background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(6, 182, 212, 0.6); border-radius: 6px; color: #a5f3fc; font-size: 10px; font-weight: 600; white-space: nowrap; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.8);">
+            Drag ✥ or Click Arrows
+          </div>
+        </div>
+      `,
+      iconSize: [120, 120],
+      iconAnchor: [60, 60],
+    });
+
+    const centerMarker = L.marker([centerLat, centerLng], {
+      draggable: true,
+      icon: centerIcon,
+      zIndexOffset: 1000,
+    }).addTo(layer);
+    centerMarkerRef.current = centerMarker;
+
+    setTimeout(() => {
+      const el = centerMarker.getElement();
+      if (!el) return;
+      const northBtn = el.querySelector('[data-dir="north"]');
+      const southBtn = el.querySelector('[data-dir="south"]');
+      const westBtn = el.querySelector('[data-dir="west"]');
+      const eastBtn = el.querySelector('[data-dir="east"]');
+
+      [northBtn, southBtn, westBtn, eastBtn].forEach((btn) => {
+        if (!btn) return;
+        L.DomEvent.disableClickPropagation(btn as HTMLElement);
+        L.DomEvent.disableScrollPropagation(btn as HTMLElement);
+        L.DomEvent.on(btn as HTMLElement, 'mousedown', (e) => {
+          L.DomEvent.stopPropagation(e);
+        });
+      });
+
+      if (northBtn) {
+        L.DomEvent.on(northBtn as HTMLElement, 'click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          L.DomEvent.preventDefault(e);
+          handleTranslateMeshRef.current(0, moveStepMRef.current, true);
+        });
+      }
+      if (southBtn) {
+        L.DomEvent.on(southBtn as HTMLElement, 'click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          L.DomEvent.preventDefault(e);
+          handleTranslateMeshRef.current(0, -moveStepMRef.current, true);
+        });
+      }
+      if (westBtn) {
+        L.DomEvent.on(westBtn as HTMLElement, 'click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          L.DomEvent.preventDefault(e);
+          handleTranslateMeshRef.current(-moveStepMRef.current, 0, true);
+        });
+      }
+      if (eastBtn) {
+        L.DomEvent.on(eastBtn as HTMLElement, 'click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          L.DomEvent.preventDefault(e);
+          handleTranslateMeshRef.current(moveStepMRef.current, 0, true);
+        });
+      }
+    }, 0);
+
+    let lastDragPos = { lat: centerLat, lng: centerLng };
+
+    centerMarker.on('dragstart', (e: any) => {
+      isDraggingGizmoRef.current = 'center';
+      lastDragPos = e.target.getLatLng();
+    });
+
+    centerMarker.on('drag', (e: any) => {
+      const curPos = e.target.getLatLng();
+      const cLat = 0.5 * (meshRef.current.bounds[0] + meshRef.current.bounds[2]);
+      const cosLat = Math.cos((cLat * Math.PI) / 180.0);
+      const dxM = (curPos.lng - lastDragPos.lng) * 111320.0 * cosLat;
+      const dyM = (curPos.lat - lastDragPos.lat) * 111320.0;
+      if (Math.abs(dxM) >= 0.5 || Math.abs(dyM) >= 0.5) {
+        lastDragPos = curPos;
+        handleTranslateMeshRef.current(dxM, dyM, false);
+      }
+    });
+
+    centerMarker.on('dragend', (e: any) => {
+      const curPos = e.target.getLatLng();
+      const cLat = 0.5 * (meshRef.current.bounds[0] + meshRef.current.bounds[2]);
+      const cosLat = Math.cos((cLat * Math.PI) / 180.0);
+      const dxM = (curPos.lng - lastDragPos.lng) * 111320.0 * cosLat;
+      const dyM = (curPos.lat - lastDragPos.lat) * 111320.0;
+      handleTranslateMeshRef.current(dxM, dyM, true);
+      isDraggingGizmoRef.current = null;
+      const curMeshNow = meshRef.current;
+      const fLat = 0.5 * (curMeshNow.bounds[0] + curMeshNow.bounds[2]);
+      const fLng = 0.5 * (curMeshNow.bounds[1] + curMeshNow.bounds[3]);
+      const fDown = curMeshNow.centerline[curMeshNow.centerline.length - 1] || { lat: fLat, lng: fLng };
+      centerMarker.setLatLng([fLat, fLng]);
+      if (rotMarkerRef.current) rotMarkerRef.current.setLatLng([fDown.lat, fDown.lng]);
+      if (guideLineRef.current) guideLineRef.current.setLatLngs([[fLat, fLng], [fDown.lat, fDown.lng]]);
+    });
+
+    // Rotation Gizmo
+    const rotIcon = L.divIcon({
+      className: 'move-mesh-rot-gizmo',
+      html: `
+        <div style="position: relative; width: 110px; height: 50px; pointer-events: none; user-select: none;">
+          <!-- CCW Button -->
+          <button data-dir="ccw" type="button" style="position: absolute; top: 7px; left: 0; width: 30px; height: 32px; border-radius: 8px; background: rgba(69, 26, 3, 0.95); border: 1.5px solid #f59e0b; color: #fde68a; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 14px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Rotate CCW (-${rotStepDegRef.current}°)">
+            ↺
+          </button>
+
+          <!-- Center Rotation Drag Handle -->
+          <div data-drag="rot" style="position: absolute; top: 5px; left: 37px; width: 36px; height: 36px; border-radius: 50%; background: rgba(69, 26, 3, 0.95); border: 2.5px solid #f59e0b; box-shadow: 0 0 14px rgba(245, 158, 11, 0.9); display: flex; align-items: center; justify-content: center; color: #fde68a; font-size: 18px; font-weight: bold; cursor: grab; pointer-events: auto;" title="Click and drag to rotate mesh around center">
+            ↻
+          </div>
+
+          <!-- CW Button -->
+          <button data-dir="cw" type="button" style="position: absolute; top: 7px; right: 0; width: 30px; height: 32px; border-radius: 8px; background: rgba(69, 26, 3, 0.95); border: 1.5px solid #f59e0b; color: #fde68a; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 14px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Rotate CW (+${rotStepDegRef.current}°)">
+            ↻
+          </button>
+
+          <!-- Label below -->
+          <div style="position: absolute; top: 48px; left: 50%; transform: translateX(-50%); padding: 2px 6px; background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(245, 158, 11, 0.6); border-radius: 6px; color: #fde68a; font-size: 10px; font-weight: 600; white-space: nowrap; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.8);">
+            Drag or Click to Rotate
+          </div>
+        </div>
+      `,
+      iconSize: [110, 50],
+      iconAnchor: [55, 23],
+    });
+
+    const rotMarker = L.marker([downstreamPt.lat, downstreamPt.lng], {
+      draggable: true,
+      icon: rotIcon,
+      zIndexOffset: 1000,
+    }).addTo(layer);
+    rotMarkerRef.current = rotMarker;
+
+    setTimeout(() => {
+      const el = rotMarker.getElement();
+      if (!el) return;
+      const ccwBtn = el.querySelector('[data-dir="ccw"]');
+      const cwBtn = el.querySelector('[data-dir="cw"]');
+      [ccwBtn, cwBtn].forEach((btn) => {
+        if (!btn) return;
+        L.DomEvent.disableClickPropagation(btn as HTMLElement);
+        L.DomEvent.disableScrollPropagation(btn as HTMLElement);
+        L.DomEvent.on(btn as HTMLElement, 'mousedown', (e) => {
+          L.DomEvent.stopPropagation(e);
+        });
+      });
+      if (ccwBtn) {
+        L.DomEvent.on(ccwBtn as HTMLElement, 'click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          L.DomEvent.preventDefault(e);
+          handleRotateMeshRef.current(-rotStepDegRef.current, true);
+        });
+      }
+      if (cwBtn) {
+        L.DomEvent.on(cwBtn as HTMLElement, 'click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          L.DomEvent.preventDefault(e);
+          handleRotateMeshRef.current(rotStepDegRef.current, true);
+        });
+      }
+    }, 0);
+
+    let lastRotPos = { lat: downstreamPt.lat, lng: downstreamPt.lng };
+
+    rotMarker.on('dragstart', (e: any) => {
+      isDraggingGizmoRef.current = 'rot';
+      lastRotPos = e.target.getLatLng();
+    });
+
+    rotMarker.on('drag', (e: any) => {
+      const curPos = e.target.getLatLng();
+      const curMeshNow = meshRef.current;
+      const cLat = 0.5 * (curMeshNow.bounds[0] + curMeshNow.bounds[2]);
+      const cLng = 0.5 * (curMeshNow.bounds[1] + curMeshNow.bounds[3]);
+      const cosL = Math.cos((cLat * Math.PI) / 180.0);
+
+      const aPrev = Math.atan2((lastRotPos.lat - cLat) * 111320.0, (lastRotPos.lng - cLng) * 111320.0 * cosL);
+      const aCur = Math.atan2((curPos.lat - cLat) * 111320.0, (curPos.lng - cLng) * 111320.0 * cosL);
+      let dDeg = ((aCur - aPrev) * 180.0) / Math.PI;
+      if (dDeg > 180) dDeg -= 360;
+      if (dDeg < -180) dDeg += 360;
+
+      if (Math.abs(dDeg) >= 0.25) {
+        lastRotPos = curPos;
+        handleRotateMeshRef.current(dDeg, false);
+      }
+    });
+
+    rotMarker.on('dragend', (e: any) => {
+      const curPos = e.target.getLatLng();
+      const curMeshNow = meshRef.current;
+      const cLat = 0.5 * (curMeshNow.bounds[0] + curMeshNow.bounds[2]);
+      const cLng = 0.5 * (curMeshNow.bounds[1] + curMeshNow.bounds[3]);
+      const cosL = Math.cos((cLat * Math.PI) / 180.0);
+
+      const aPrev = Math.atan2((lastRotPos.lat - cLat) * 111320.0, (lastRotPos.lng - cLng) * 111320.0 * cosL);
+      const aCur = Math.atan2((curPos.lat - cLat) * 111320.0, (curPos.lng - cLng) * 111320.0 * cosL);
+      let dDeg = ((aCur - aPrev) * 180.0) / Math.PI;
+      if (dDeg > 180) dDeg -= 360;
+      if (dDeg < -180) dDeg += 360;
+
+      handleRotateMeshRef.current(dDeg, true);
+      isDraggingGizmoRef.current = null;
+      const finalDownstream = curMeshNow.centerline[curMeshNow.centerline.length - 1];
+      rotMarker.setLatLng([finalDownstream.lat, finalDownstream.lng]);
+    });
+
+    // Connecting dashed line between center gizmo and rotation handle
+    const guideLine = L.polyline(
+      [
+        [centerLat, centerLng],
+        [downstreamPt.lat, downstreamPt.lng],
+      ],
+      {
+        color: '#f59e0b',
+        weight: 2.2,
+        dashArray: '5, 5',
+        opacity: 0.85,
+      }
+    ).addTo(layer);
+    guideLineRef.current = guideLine;
+
+    return () => {
+      layer.clearLayers();
+      centerMarkerRef.current = null;
+      rotMarkerRef.current = null;
+      guideLineRef.current = null;
+      isDraggingGizmoRef.current = null;
+    };
+  }, [isMoveMeshMode, mapInstance]);
+
+  // 2. Synchronize gizmo marker positions whenever mesh changes without recreating DOM elements
+  useEffect(() => {
+    if (!isMoveMeshMode || !centerMarkerRef.current || !rotMarkerRef.current || !guideLineRef.current) {
+      return;
+    }
+
+    const curMesh = meshRef.current;
+    const centerLat = 0.5 * (curMesh.bounds[0] + curMesh.bounds[2]);
+    const centerLng = 0.5 * (curMesh.bounds[1] + curMesh.bounds[3]);
+    const downstreamPt = curMesh.centerline[curMesh.centerline.length - 1] || { lat: centerLat, lng: centerLng };
+
+    if (isDraggingGizmoRef.current === 'center') {
+      rotMarkerRef.current.setLatLng([downstreamPt.lat, downstreamPt.lng]);
+      guideLineRef.current.setLatLngs([centerMarkerRef.current.getLatLng(), [downstreamPt.lat, downstreamPt.lng]]);
+    } else if (isDraggingGizmoRef.current === 'rot') {
+      guideLineRef.current.setLatLngs([centerMarkerRef.current.getLatLng(), rotMarkerRef.current.getLatLng()]);
+    } else {
+      centerMarkerRef.current.setLatLng([centerLat, centerLng]);
+      rotMarkerRef.current.setLatLng([downstreamPt.lat, downstreamPt.lng]);
+      guideLineRef.current.setLatLngs([[centerLat, centerLng], [downstreamPt.lat, downstreamPt.lng]]);
+    }
+  }, [mesh, isMoveMeshMode]);
+
+  // Keyboard Navigation Listener for Moving and Rotating Mesh with Arrow Keys
+  useEffect(() => {
+    if (!isMoveMeshMode) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
+        return;
+      }
+
+      const step = moveStepMRef.current;
+      const rot = rotStepDegRef.current;
+
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        handleTranslateMesh(0, step, true);
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        handleTranslateMesh(0, -step, true);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handleTranslateMesh(-step, 0, true);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleTranslateMesh(step, 0, true);
+      } else if (e.key === '[' || e.key === 'r') {
+        e.preventDefault();
+        handleRotateMesh(-rot, true);
+      } else if (e.key === ']' || e.key === 'R') {
+        e.preventDefault();
+        handleRotateMesh(rot, true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setIsMoveMeshMode(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMoveMeshMode]);
 
   // Complete Multi-Point Polyline / Polygon CAD Structure
   const handleCompleteCadPolyline = () => {
@@ -1346,7 +1892,14 @@ export const RiverAnalysisModelling: React.FC = () => {
 
             {/* Move & Align Mesh Button */}
             <button
-              onClick={() => setIsMoveMeshMode(!isMoveMeshMode)}
+              onClick={() => {
+                const next = !isMoveMeshMode;
+                setIsMoveMeshMode(next);
+                if (next) {
+                  setDetectedRiver(null);
+                  setCadDrawMode(null);
+                }
+              }}
               className={`px-2 py-0.5 rounded text-[11px] font-medium border transition ml-0.5 ${
                 isMoveMeshMode
                   ? 'bg-cyan-600 border-cyan-400 text-white shadow ring-2 ring-cyan-400/50'
@@ -1468,7 +2021,7 @@ export const RiverAnalysisModelling: React.FC = () => {
 
         {/* 2D CFD Canvas Results Overlay */}
         <RiverResultsOverlay
-          map={mapInstanceRef.current}
+          map={mapInstance || mapInstanceRef.current}
           mesh={mesh}
           hydro={hydro}
           turb={turb}
@@ -1481,6 +2034,7 @@ export const RiverAnalysisModelling: React.FC = () => {
           showVelocityVectors={showVectors}
           showStreamlines={showStreamlines}
           isSimulating={isSimulating}
+          isMoveMeshMode={isMoveMeshMode}
           onSelectCell={(cell, idx) => setSelectedCell({ cell, idx })}
         />
 
@@ -1645,81 +2199,186 @@ export const RiverAnalysisModelling: React.FC = () => {
 
         {/* Move & Align Mesh Floating Controls */}
         {isMoveMeshMode && (
-          <div className="absolute top-4 left-4 z-[500] bg-slate-900/95 backdrop-blur-md border border-cyan-500/80 rounded-2xl p-4 shadow-2xl text-xs space-y-3 max-w-xs animate-fade-in text-slate-100">
+          <div
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="absolute top-4 left-4 z-[1000] bg-slate-900/95 backdrop-blur-md border border-cyan-500/80 rounded-2xl p-4 shadow-2xl text-xs space-y-3 w-80 max-w-sm animate-fade-in text-slate-100"
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <span className="font-bold text-cyan-300 flex items-center gap-1.5">
+              <span className="font-bold text-cyan-300 flex items-center gap-1.5 text-sm">
                 <span>🕹️</span>
                 <span>Mesh Alignment Controls</span>
               </span>
               <button
                 onClick={() => setIsMoveMeshMode(false)}
-                className="text-slate-400 hover:text-white transition"
+                className="text-slate-400 hover:text-white transition p-1 rounded-lg hover:bg-slate-800"
+                title="Close Move Mesh Controls (Esc)"
               >
                 ✕
               </button>
             </div>
 
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Translate or rotate the 2D finite-volume mesh over the reach corridor and civil structure sites.
-            </p>
-
-            {/* Translation Nudge Controls */}
-            <div className="space-y-1.5">
-              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                Translate Mesh (Meters)
+            {/* Live Metrics Header */}
+            <div className="bg-slate-950/70 rounded-xl p-2.5 border border-slate-800 text-[11px] space-y-1">
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Grid Dimension:</span>
+                <span className="font-mono text-cyan-300 font-semibold">{mesh.nx} × {mesh.ny} ({mesh.cells.length} cells)</span>
               </div>
-              <div className="grid grid-cols-2 gap-1.5">
-                <button
-                  onClick={() => handleTranslateMesh(0, 50)}
-                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
-                  title="Shift 50m North"
-                >
-                  ▲ North (+50m)
-                </button>
-                <button
-                  onClick={() => handleTranslateMesh(0, -50)}
-                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
-                  title="Shift 50m South"
-                >
-                  ▼ South (-50m)
-                </button>
-                <button
-                  onClick={() => handleTranslateMesh(-50, 0)}
-                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
-                  title="Shift 50m West"
-                >
-                  ◄ West (-50m)
-                </button>
-                <button
-                  onClick={() => handleTranslateMesh(50, 0)}
-                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
-                  title="Shift 50m East"
-                >
-                  ► East (+50m)
-                </button>
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Accumulated Shift:</span>
+                <span className="font-mono text-amber-300 font-semibold">
+                  dx: {meshShiftM.x >= 0 ? '+' : ''}{meshShiftM.x.toFixed(0)}m, dy: {meshShiftM.y >= 0 ? '+' : ''}{meshShiftM.y.toFixed(0)}m
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Grid Rotation:</span>
+                <span className="font-mono text-emerald-300 font-semibold">
+                  {meshShiftM.rot >= 0 ? '+' : ''}{meshShiftM.rot.toFixed(1)}°
+                </span>
               </div>
             </div>
 
-            {/* Rotation Controls */}
-            <div className="space-y-1.5">
-              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                Rotate Grid Angle
+            {/* Translation Step Size Selector */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                <span>Nudge Distance:</span>
+                <span className="text-cyan-400 font-mono font-bold">{moveStepM}m</span>
               </div>
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-5 gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                {[10, 25, 50, 100, 250].map((step) => (
+                  <button
+                    key={step}
+                    onClick={() => setMoveStepM(step)}
+                    className={`py-0.5 rounded text-[10px] font-mono font-medium transition ${
+                      moveStepM === step
+                        ? 'bg-cyan-600 text-white font-bold shadow'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {step}m
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* D-Pad Directional Nudge Grid */}
+            <div className="space-y-1">
+              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                Translate Mesh Position
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 text-center">
                 <button
-                  onClick={() => handleRotateMesh(-5)}
-                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
-                  title="Rotate 5° Counter-Clockwise"
+                  onClick={() => handleRotateMesh(-rotStepDeg, true)}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex flex-col items-center justify-center gap-0.5"
+                  title={`Rotate Counter-Clockwise (-${rotStepDeg}°)`}
                 >
-                  ↺ Rotate (-5°)
+                  <span className="text-sm">↺</span>
+                  <span className="text-[9px]">-{rotStepDeg}°</span>
                 </button>
                 <button
-                  onClick={() => handleRotateMesh(5)}
-                  className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1"
-                  title="Rotate 5° Clockwise"
+                  onClick={() => handleTranslateMesh(0, moveStepM, true)}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex flex-col items-center justify-center gap-0.5"
+                  title={`Shift ${moveStepM}m North (↑)`}
                 >
-                  ↻ Rotate (+5°)
+                  <span className="text-sm">▲</span>
+                  <span className="text-[9px]">North</span>
                 </button>
+                <button
+                  onClick={() => handleRotateMesh(rotStepDeg, true)}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex flex-col items-center justify-center gap-0.5"
+                  title={`Rotate Clockwise (+${rotStepDeg}°)`}
+                >
+                  <span className="text-sm">↻</span>
+                  <span className="text-[9px]">+{rotStepDeg}°</span>
+                </button>
+
+                <button
+                  onClick={() => handleTranslateMesh(-moveStepM, 0, true)}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex flex-col items-center justify-center gap-0.5"
+                  title={`Shift ${moveStepM}m West (←)`}
+                >
+                  <span className="text-sm">◄</span>
+                  <span className="text-[9px]">West</span>
+                </button>
+                <button
+                  onClick={handleCenterOnViewport}
+                  className="p-2 bg-cyan-950/80 hover:bg-cyan-900/80 text-cyan-200 rounded-lg font-mono text-[11px] border border-cyan-700/60 transition flex flex-col items-center justify-center gap-0.5"
+                  title="Snap mesh center to current map view center"
+                >
+                  <span className="text-sm">🎯</span>
+                  <span className="text-[9px]">Center</span>
+                </button>
+                <button
+                  onClick={() => handleTranslateMesh(moveStepM, 0, true)}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex flex-col items-center justify-center gap-0.5"
+                  title={`Shift ${moveStepM}m East (→)`}
+                >
+                  <span className="text-sm">►</span>
+                  <span className="text-[9px]">East</span>
+                </button>
+
+                <div className="col-span-3">
+                  <button
+                    onClick={() => handleTranslateMesh(0, -moveStepM, true)}
+                    className="w-full p-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1.5"
+                    title={`Shift ${moveStepM}m South (↓)`}
+                  >
+                    <span>▼</span>
+                    <span>South (-{moveStepM}m)</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Rotation Step Angle Selector */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                <span>Rotation Step:</span>
+                <span className="text-amber-400 font-mono font-bold">{rotStepDeg}°</span>
+              </div>
+              <div className="grid grid-cols-4 gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
+                {[1, 5, 15, 45].map((angle) => (
+                  <button
+                    key={angle}
+                    onClick={() => setRotStepDeg(angle)}
+                    className={`py-0.5 rounded text-[10px] font-mono font-medium transition ${
+                      rotStepDeg === angle
+                        ? 'bg-amber-600 text-white font-bold shadow'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {angle}°
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Direct Map Interactive Features Toggle */}
+            <div className="space-y-1.5 border-t border-slate-800 pt-2">
+              <button
+                onClick={() => setClickToCenter(!clickToCenter)}
+                className={`w-full py-1.5 px-2.5 rounded-lg text-[11px] font-medium border transition flex items-center justify-between ${
+                  clickToCenter
+                    ? 'bg-cyan-950 border-cyan-400 text-cyan-200 shadow'
+                    : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-300'
+                }`}
+                title="Click any position on the map to jump mesh center there"
+              >
+                <span className="flex items-center gap-1.5">
+                  <span>📍</span>
+                  <span>Click Map to Relocate Center</span>
+                </span>
+                <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
+                  clickToCenter ? 'bg-cyan-500 text-slate-950' : 'bg-slate-700 text-slate-400'
+                }`}>
+                  {clickToCenter ? 'ACTIVE' : 'OFF'}
+                </span>
+              </button>
+
+              <div className="text-[10px] text-slate-400 leading-snug bg-slate-950/60 p-2 rounded-lg border border-slate-800/70">
+                <span className="text-cyan-300 font-semibold">Tip: </span>
+                Drag the <strong className="text-cyan-200">✥ center</strong> gizmo or <strong className="text-amber-200">↻ rotation</strong> handle directly on the map, or use keyboard arrows (↑ ↓ ← →) and <code className="bg-slate-800 px-1 rounded text-cyan-300">[</code> / <code className="bg-slate-800 px-1 rounded text-cyan-300">]</code> to rotate.
               </div>
             </div>
 
@@ -1728,12 +2387,13 @@ export const RiverAnalysisModelling: React.FC = () => {
               <button
                 onClick={handleResetMesh}
                 className="text-[11px] text-amber-400 hover:underline font-semibold"
+                title="Reset translation and rotation back to reach centerline thalweg"
               >
                 Reset Alignment
               </button>
               <button
                 onClick={() => setIsMoveMeshMode(false)}
-                className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-bold text-[11px] transition shadow"
+                className="px-3.5 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-bold text-[11px] transition shadow"
               >
                 Done
               </button>
@@ -1749,7 +2409,7 @@ export const RiverAnalysisModelling: React.FC = () => {
         )}
 
         {/* Auto-Detected River Floating Pill (When clicking the map) */}
-        {detectedRiver && (
+        {detectedRiver && !isMoveMeshMode && (
           <div className="absolute top-4 left-4 z-[500] bg-slate-900/95 backdrop-blur-md border border-cyan-500/80 text-slate-100 p-3 rounded-2xl shadow-2xl text-xs max-w-sm flex flex-col gap-2 animate-fade-in">
             <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
               <span className="font-bold text-cyan-400 flex items-center gap-1.5">
