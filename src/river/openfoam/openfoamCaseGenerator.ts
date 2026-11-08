@@ -431,7 +431,12 @@ RAS
  * Generates 0/U velocity boundary condition
  */
 export function generateFieldU(options: OpenFoamCaseOptions): string {
-  const { upstreamDischargeM3s, mesh } = options;
+  const mesh = options.mesh;
+  const upstreamDischargeM3s =
+    options.upstreamDischargeM3s ??
+    (options as any).boundaries?.upstreamDischargeM3s ??
+    options.reach?.upstreamDischargeEstimateM3s ??
+    25.0;
   const avgArea = Math.max(10.0, mesh.meanWidthM * 2.5);
   const uInflow = upstreamDischargeM3s / avgArea;
 
@@ -536,43 +541,406 @@ boundaryField
 }
 
 /**
- * Generates 3D ASCII STL geometry of user-drawn CAD structures (bridge piers, spur dikes, levees)
+ * Helper to emit a formatted 3D STL facet
  */
-export function generateStructuresStl(structures: RiverHydraulicStructure[]): string {
-  let stl = 'solid civil_river_structures\n';
+function emitStlFacet(
+  lines: string[],
+  nx: number,
+  ny: number,
+  nz: number,
+  v1: [number, number, number],
+  v2: [number, number, number],
+  v3: [number, number, number]
+): void {
+  lines.push(`  facet normal ${nx.toFixed(4)} ${ny.toFixed(4)} ${nz.toFixed(4)}`);
+  lines.push('    outer loop');
+  lines.push(`      vertex ${v1[0].toFixed(3)} ${v1[1].toFixed(3)} ${v1[2].toFixed(3)}`);
+  lines.push(`      vertex ${v2[0].toFixed(3)} ${v2[1].toFixed(3)} ${v2[2].toFixed(3)}`);
+  lines.push(`      vertex ${v3[0].toFixed(3)} ${v3[1].toFixed(3)} ${v3[2].toFixed(3)}`);
+  lines.push('    endloop');
+  lines.push('  endfacet');
+}
+
+/**
+ * Ear-Clipping 2D Polygon Triangulation
+ * Decomposes any simple polygon (convex or concave) into non-overlapping triangles
+ */
+export function triangulatePolygonEarClipping(pts: [number, number][]): [number, number, number][] {
+  const n = pts.length;
+  if (n < 3) return [];
+
+  // Determine winding order
+  let signedArea = 0;
+  for (let k = 0; k < n; k++) {
+    const next = (k + 1) % n;
+    signedArea += pts[k][0] * pts[next][1] - pts[next][0] * pts[k][1];
+  }
+
+  if (n === 3) {
+    return signedArea < 0 ? [[0, 2, 1]] : [[0, 1, 2]];
+  }
+
+  const isPointInTri = (
+    p: [number, number],
+    a: [number, number],
+    b: [number, number],
+    c: [number, number]
+  ): boolean => {
+    const crossA = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+    const crossB = (c[0] - b[0]) * (p[1] - b[1]) - (c[1] - b[1]) * (p[0] - b[0]);
+    const crossC = (a[0] - c[0]) * (p[1] - c[1]) - (a[1] - c[1]) * (p[0] - c[0]);
+    return (
+      (crossA >= -1e-7 && crossB >= -1e-7 && crossC >= -1e-7) ||
+      (crossA <= 1e-7 && crossB <= 1e-7 && crossC <= 1e-7)
+    );
+  };
+
+  const triangles: [number, number, number][] = [];
+  const remaining: number[] = Array.from({ length: n }, (_, i) => i);
+  if (signedArea < 0) {
+    remaining.reverse();
+  }
+  let iterations = 0;
+  const maxIterations = n * n;
+
+  while (remaining.length > 3 && iterations < maxIterations) {
+    iterations++;
+    let earFound = false;
+
+    for (let i = 0; i < remaining.length; i++) {
+      const prevIdx = (i - 1 + remaining.length) % remaining.length;
+      const nextIdx = (i + 1) % remaining.length;
+
+      const iPrev = remaining[prevIdx];
+      const iCurr = remaining[i];
+      const iNext = remaining[nextIdx];
+
+      const pPrev = pts[iPrev];
+      const pCurr = pts[iCurr];
+      const pNext = pts[iNext];
+
+      // Check if vertex is convex: cross product > 0
+      const cross =
+        (pCurr[0] - pPrev[0]) * (pNext[1] - pCurr[1]) -
+        (pCurr[1] - pPrev[1]) * (pNext[0] - pCurr[0]);
+      if (cross <= 1e-9) continue;
+
+      let hasInsidePoint = false;
+      for (let j = 0; j < remaining.length; j++) {
+        if (j === prevIdx || j === i || j === nextIdx) continue;
+        const pTest = pts[remaining[j]];
+        if (isPointInTri(pTest, pPrev, pCurr, pNext)) {
+          hasInsidePoint = true;
+          break;
+        }
+      }
+
+      if (!hasInsidePoint) {
+        triangles.push([iPrev, iCurr, iNext]);
+        remaining.splice(i, 1);
+        earFound = true;
+        break;
+      }
+    }
+
+    if (!earFound) {
+      triangles.push([remaining[0], remaining[1], remaining[2]]);
+      remaining.splice(1, 1);
+    }
+  }
+
+  if (remaining.length === 3) {
+    triangles.push([remaining[0], remaining[1], remaining[2]]);
+  }
+
+  return triangles;
+}
+
+/**
+ * Generates 3D ASCII STL geometry of user-drawn CAD structures (bridge piers, spur dikes, levees, circles, polygons, obstacles)
+ */
+export function generateStructuresStl(
+  structures: RiverHydraulicStructure[],
+  mesh?: RiverGridMesh
+): string {
+  const lines: string[] = ['solid civil_river_structures'];
+
+  const oLat = mesh?.centerline[0]?.lat ?? (structures[0]?.coordinates[0]?.lat ?? 0);
+  const oLng = mesh?.centerline[0]?.lng ?? (structures[0]?.coordinates[0]?.lng ?? 0);
+  const cosLat = Math.cos((oLat * Math.PI) / 180.0);
+
+  const toLocal = (lat: number, lng: number): [number, number] => {
+    const x = (lng - oLng) * 111320.0 * cosLat;
+    const y = (lat - oLat) * 111320.0;
+    return [x, y];
+  };
 
   for (const s of structures) {
     if (!s.enabled) continue;
-    const zBase = 100.0;
-    const zTop = 'crestElevationM' in s ? (s as any).crestElevationM : zBase + 4.0;
+
+    // Determine baseline and top elevation
+    let zBase = 100.0;
+    if (mesh && s.cellIndices && s.cellIndices.length > 0) {
+      let minBed = Infinity;
+      for (const idx of s.cellIndices) {
+        if (mesh.cells[idx]) {
+          minBed = Math.min(minBed, mesh.cells[idx].bedElevation);
+        }
+      }
+      if (minBed < Infinity) zBase = minBed;
+    }
+
+    let zTop = zBase + 3.5;
+    if ('crestElevationM' in s && typeof (s as any).crestElevationM === 'number') {
+      zTop = (s as any).crestElevationM;
+    } else if ('topElevationM' in s && typeof (s as any).topElevationM === 'number') {
+      zTop = (s as any).topElevationM;
+    } else if ('deckElevationM' in s && typeof (s as any).deckElevationM === 'number') {
+      zTop = (s as any).deckElevationM;
+    }
+    if (zTop <= zBase) zTop = zBase + 2.5;
+
+    // 1. CIRCLE / CYLINDRICAL OBSTACLE
+    if (s.type === 'circle') {
+      const circle = s as any;
+      const centerCoord = circle.center || s.coordinates?.[0] || { lat: oLat, lng: oLng };
+      const [cx, cy] = toLocal(centerCoord.lat, centerCoord.lng);
+      const radius = circle.radiusM || 8.0;
+      const numSegs = 24;
+
+      const perimeter: [number, number][] = [];
+      for (let k = 0; k < numSegs; k++) {
+        const theta = (2 * Math.PI * k) / numSegs;
+        perimeter.push([cx + radius * Math.cos(theta), cy + radius * Math.sin(theta)]);
+      }
+
+      for (let k = 0; k < numSegs; k++) {
+        const next = (k + 1) % numSegs;
+        const p1 = perimeter[k];
+        const p2 = perimeter[next];
+
+        // Top disc fan
+        emitStlFacet(
+          lines,
+          0,
+          0,
+          1,
+          [cx, cy, zTop],
+          [p1[0], p1[1], zTop],
+          [p2[0], p2[1], zTop]
+        );
+
+        // Bottom disc fan
+        emitStlFacet(
+          lines,
+          0,
+          0,
+          -1,
+          [cx, cy, zBase],
+          [p2[0], p2[1], zBase],
+          [p1[0], p1[1], zBase]
+        );
+
+        // Cylindrical side wall (2 triangles)
+        const midTheta = (2 * Math.PI * (k + 0.5)) / numSegs;
+        const nx = Math.cos(midTheta);
+        const ny = Math.sin(midTheta);
+
+        emitStlFacet(
+          lines,
+          nx,
+          ny,
+          0,
+          [p1[0], p1[1], zBase],
+          [p2[0], p2[1], zBase],
+          [p2[0], p2[1], zTop]
+        );
+        emitStlFacet(
+          lines,
+          nx,
+          ny,
+          0,
+          [p1[0], p1[1], zBase],
+          [p2[0], p2[1], zTop],
+          [p1[0], p1[1], zTop]
+        );
+      }
+      continue;
+    }
+
+    // 2. POLYGON / RECTANGLE / SOLID OBSTACLE
+    if (s.type === 'polygon' || s.type === 'rectangle' || s.type === 'obstacle') {
+      const coords = s.coordinates || [];
+      if (coords.length >= 3) {
+        let localPts: [number, number][] = coords.map((c) => toLocal(c.lat, c.lng));
+        const nPts = localPts.length;
+
+        // Ensure strictly counter-clockwise winding so outward facet normals are correct
+        let signedArea = 0;
+        for (let k = 0; k < nPts; k++) {
+          const next = (k + 1) % nPts;
+          signedArea += localPts[k][0] * localPts[next][1] - localPts[next][0] * localPts[k][1];
+        }
+        if (signedArea < 0) {
+          localPts = [...localPts].reverse();
+        }
+
+        // Robust ear-clipping triangulation for top and bottom caps (handles concave/L-shapes)
+        const capTriangles = triangulatePolygonEarClipping(localPts);
+
+        // Top cap facets
+        for (const [i0, i1, i2] of capTriangles) {
+          emitStlFacet(
+            lines,
+            0,
+            0,
+            1,
+            [localPts[i0][0], localPts[i0][1], zTop],
+            [localPts[i1][0], localPts[i1][1], zTop],
+            [localPts[i2][0], localPts[i2][1], zTop]
+          );
+        }
+
+        // Bottom cap facets
+        for (const [i0, i1, i2] of capTriangles) {
+          emitStlFacet(
+            lines,
+            0,
+            0,
+            -1,
+            [localPts[i0][0], localPts[i0][1], zBase],
+            [localPts[i2][0], localPts[i2][1], zBase],
+            [localPts[i1][0], localPts[i1][1], zBase]
+          );
+        }
+
+        // Side wall facets
+        for (let k = 0; k < nPts; k++) {
+          const next = (k + 1) % nPts;
+          const p1 = localPts[k];
+          const p2 = localPts[next];
+
+          const dx = p2[0] - p1[0];
+          const dy = p2[1] - p1[1];
+          const len = Math.max(1e-4, Math.hypot(dx, dy));
+          const nx = dy / len;
+          const ny = -dx / len;
+
+          emitStlFacet(
+            lines,
+            nx,
+            ny,
+            0,
+            [p1[0], p1[1], zBase],
+            [p2[0], p2[1], zBase],
+            [p2[0], p2[1], zTop]
+          );
+          emitStlFacet(
+            lines,
+            nx,
+            ny,
+            0,
+            [p1[0], p1[1], zBase],
+            [p2[0], p2[1], zTop],
+            [p1[0], p1[1], zTop]
+          );
+        }
+        continue;
+      }
+    }
+
+    // 3. LINE, POLYLINE, LEVEE, WEIR, SPUR DIKE, BRIDGE, CULVERT, DEFLECTOR
     const coords = s.coordinates || [];
-
     if (coords.length >= 2) {
+      const halfW = 0.5 * Math.max(
+        1.0,
+        (s as any).wallThicknessM ||
+          (s as any).topWidthM ||
+          (s as any).crestWidthM ||
+          (s as any).widthM ||
+          2.0
+      );
+
       for (let i = 0; i < coords.length - 1; i++) {
-        const x1 = (coords[i].lng - coords[0].lng) * 111320;
-        const y1 = (coords[i].lat - coords[0].lat) * 111320;
-        const x2 = (coords[i + 1].lng - coords[0].lng) * 111320;
-        const y2 = (coords[i + 1].lat - coords[0].lat) * 111320;
+        const [x1, y1] = toLocal(coords[i].lat, coords[i].lng);
+        const [x2, y2] = toLocal(coords[i + 1].lat, coords[i + 1].lng);
 
-        // Quad facet 1
-        stl += `  facet normal 0 0 1\n    outer loop\n`;
-        stl += `      vertex ${x1.toFixed(2)} ${y1.toFixed(2)} ${zBase.toFixed(2)}\n`;
-        stl += `      vertex ${x2.toFixed(2)} ${y2.toFixed(2)} ${zBase.toFixed(2)}\n`;
-        stl += `      vertex ${x2.toFixed(2)} ${y2.toFixed(2)} ${zTop.toFixed(2)}\n`;
-        stl += `    endloop\n  endfacet\n`;
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len = Math.max(1e-4, Math.hypot(dx, dy));
+        const nx = (-dy / len) * halfW;
+        const ny = (dx / len) * halfW;
 
-        // Quad facet 2
-        stl += `  facet normal 0 0 1\n    outer loop\n`;
-        stl += `      vertex ${x1.toFixed(2)} ${y1.toFixed(2)} ${zBase.toFixed(2)}\n`;
-        stl += `      vertex ${x2.toFixed(2)} ${y2.toFixed(2)} ${zTop.toFixed(2)}\n`;
-        stl += `      vertex ${x1.toFixed(2)} ${y1.toFixed(2)} ${zTop.toFixed(2)}\n`;
-        stl += `    endloop\n  endfacet\n`;
+        // 4 corners of volumetric horizontal prism
+        const c1: [number, number] = [x1 + nx, y1 + ny];
+        const c2: [number, number] = [x1 - nx, y1 - ny];
+        const c3: [number, number] = [x2 - nx, y2 - ny];
+        const c4: [number, number] = [x2 + nx, y2 + ny];
+
+        // Top face (2 triangles)
+        emitStlFacet(lines, 0, 0, 1, [c1[0], c1[1], zTop], [c2[0], c2[1], zTop], [c3[0], c3[1], zTop]);
+        emitStlFacet(lines, 0, 0, 1, [c1[0], c1[1], zTop], [c3[0], c3[1], zTop], [c4[0], c4[1], zTop]);
+
+        // Bottom face (2 triangles)
+        emitStlFacet(lines, 0, 0, -1, [c1[0], c1[1], zBase], [c4[0], c4[1], zBase], [c3[0], c3[1], zBase]);
+        emitStlFacet(lines, 0, 0, -1, [c1[0], c1[1], zBase], [c3[0], c3[1], zBase], [c2[0], c2[1], zBase]);
+
+        // Left wall (c1 -> c4)
+        emitStlFacet(lines, nx / halfW, ny / halfW, 0, [c1[0], c1[1], zBase], [c4[0], c4[1], zBase], [c4[0], c4[1], zTop]);
+        emitStlFacet(lines, nx / halfW, ny / halfW, 0, [c1[0], c1[1], zBase], [c4[0], c4[1], zTop], [c1[0], c1[1], zTop]);
+
+        // Right wall (c3 -> c2)
+        emitStlFacet(lines, -nx / halfW, -ny / halfW, 0, [c3[0], c3[1], zBase], [c2[0], c2[1], zBase], [c2[0], c2[1], zTop]);
+        emitStlFacet(lines, -nx / halfW, -ny / halfW, 0, [c3[0], c3[1], zBase], [c2[0], c2[1], zTop], [c3[0], c3[1], zTop]);
+
+        // Start cap (c2 -> c1)
+        if (i === 0) {
+          emitStlFacet(lines, -dx / len, -dy / len, 0, [c2[0], c2[1], zBase], [c1[0], c1[1], zBase], [c1[0], c1[1], zTop]);
+          emitStlFacet(lines, -dx / len, -dy / len, 0, [c2[0], c2[1], zBase], [c1[0], c1[1], zTop], [c2[0], c2[1], zTop]);
+        }
+
+        // End cap (c4 -> c3)
+        if (i === coords.length - 2) {
+          emitStlFacet(lines, dx / len, dy / len, 0, [c4[0], c4[1], zBase], [c3[0], c3[1], zBase], [c3[0], c3[1], zTop]);
+          emitStlFacet(lines, dx / len, dy / len, 0, [c4[0], c4[1], zBase], [c3[0], c3[1], zTop], [c4[0], c4[1], zTop]);
+        }
+      }
+      continue;
+    }
+
+    // 4. STANDALONE SINGLE-POINT BRIDGE PIER
+    if (s.type === 'bridge-pier' && coords.length === 1) {
+      const pier = s as any;
+      const [px, py] = toLocal(coords[0].lat, coords[0].lng);
+      const halfL = (pier.lengthM || 6.0) * 0.5;
+      const halfW = (pier.widthM || 2.0) * 0.5;
+
+      const pCorners: [number, number][] = [
+        [px - halfL, py - halfW],
+        [px + halfL, py - halfW],
+        [px + halfL, py + halfW],
+        [px - halfL, py + halfW],
+      ];
+
+      // Top & Bottom
+      emitStlFacet(lines, 0, 0, 1, [pCorners[0][0], pCorners[0][1], zTop], [pCorners[1][0], pCorners[1][1], zTop], [pCorners[2][0], pCorners[2][1], zTop]);
+      emitStlFacet(lines, 0, 0, 1, [pCorners[0][0], pCorners[0][1], zTop], [pCorners[2][0], pCorners[2][1], zTop], [pCorners[3][0], pCorners[3][1], zTop]);
+      emitStlFacet(lines, 0, 0, -1, [pCorners[0][0], pCorners[0][1], zBase], [pCorners[2][0], pCorners[2][1], zBase], [pCorners[1][0], pCorners[1][1], zBase]);
+      emitStlFacet(lines, 0, 0, -1, [pCorners[0][0], pCorners[0][1], zBase], [pCorners[3][0], pCorners[3][1], zBase], [pCorners[2][0], pCorners[2][1], zBase]);
+
+      // 4 walls
+      for (let k = 0; k < 4; k++) {
+        const next = (k + 1) % 4;
+        const cA = pCorners[k];
+        const cB = pCorners[next];
+        emitStlFacet(lines, 0, 0, 0, [cA[0], cA[1], zBase], [cB[0], cB[1], zBase], [cB[0], cB[1], zTop]);
+        emitStlFacet(lines, 0, 0, 0, [cA[0], cA[1], zBase], [cB[0], cB[1], zTop], [cA[0], cA[1], zTop]);
       }
     }
   }
 
-  stl += 'endsolid civil_river_structures\n';
-  return stl;
+  lines.push('endsolid civil_river_structures\n');
+  return lines.join('\n');
 }
 
 /**
@@ -737,7 +1105,7 @@ value           ( 0 0 -9.81 );
   );
 
   const triSurface = constant.folder('triSurface')!;
-  triSurface.file('structures.stl', generateStructuresStl(options.structures));
+  triSurface.file('structures.stl', generateStructuresStl(options.structures, options.mesh));
 
   // 3. 0/
   const zero = zip.folder('0')!;
@@ -818,12 +1186,23 @@ export function exportRiverToVtk3D(
   mesh: RiverGridMesh,
   hydro: HydrodynamicsState,
   turb: TurbulenceState,
-  numLayers: number = 8
+  numLayers: number = 8,
+  structures: RiverHydraulicStructure[] = []
 ): string {
   const nx = mesh.nx;
   const ny = mesh.ny;
   const nz = numLayers;
   const numPoints = nx * ny * nz;
+
+  // Build solid cell lookup
+  const solidSet = new Set<number>();
+  for (const s of structures) {
+    if (s.enabled) {
+      for (const idx of s.cellIndices) {
+        solidSet.add(idx);
+      }
+    }
+  }
 
   let vtk = '# vtk DataFile Version 3.0\n';
   vtk += `Tensora GIS 3D River CFD Flow Field: ${mesh.name}\n`;
@@ -834,13 +1213,13 @@ export function exportRiverToVtk3D(
 
   // Compute 3D points
   for (let k = 0; k < nz; k++) {
-    const sigma = k / (nz - 1); // 0 at bed, 1 at free surface
+    const sigma = k / Math.max(1, nz - 1); // 0 at bed, 1 at free surface
     for (let i = 0; i < nx; i++) {
       for (let j = 0; j < ny; j++) {
         const cIdx = i * ny + j;
         const cell = mesh.cells[cIdx] || mesh.cells[0];
-        const h = hydro.depth[cIdx] || 0.5;
-        const z = cell.bedElevation + sigma * h;
+        const h = hydro.depth[cIdx] || 0.0;
+        const z = cell.bedElevation + sigma * Math.max(0.05, h);
         vtk += `${cell.centerX.toFixed(2)} ${cell.centerY.toFixed(2)} ${z.toFixed(2)}\n`;
       }
     }
@@ -851,14 +1230,15 @@ export function exportRiverToVtk3D(
   // 3D Velocity Vector (Ux, Uy, Uz) with logarithmic vertical shear
   vtk += 'VECTORS velocity float\n';
   for (let k = 0; k < nz; k++) {
-    const sigma = Math.max(0.01, k / (nz - 1));
+    const sigma = Math.max(0.01, k / Math.max(1, nz - 1));
     const logFactor = 1.0 + 0.25 * Math.log(sigma); // Near-bed shear reduction
     for (let i = 0; i < nx; i++) {
       for (let j = 0; j < ny; j++) {
         const cIdx = i * ny + j;
-        const ux = (hydro.u[cIdx] || 0) * logFactor;
-        const uy = (hydro.v[cIdx] || 0) * logFactor;
-        const uz = 0.02 * Math.sin(sigma * Math.PI); // Small vertical recirculation
+        const isSolid = solidSet.has(cIdx);
+        const ux = isSolid ? 0 : (hydro.u[cIdx] || 0) * logFactor;
+        const uy = isSolid ? 0 : (hydro.v[cIdx] || 0) * logFactor;
+        const uz = isSolid ? 0 : 0.02 * Math.sin(sigma * Math.PI); // Small vertical recirculation
         vtk += `${ux.toFixed(3)} ${uy.toFixed(3)} ${uz.toFixed(3)}\n`;
       }
     }
@@ -882,6 +1262,40 @@ export function exportRiverToVtk3D(
       for (let j = 0; j < ny; j++) {
         const cIdx = i * ny + j;
         vtk += `${(hydro.depth[cIdx] || 0).toFixed(3)}\n`;
+      }
+    }
+  }
+
+  // Water Surface Elevation / Hydraulic Head
+  vtk += '\nSCALARS water_surface_elevation float 1\nLOOKUP_TABLE default\n';
+  for (let k = 0; k < nz; k++) {
+    for (let i = 0; i < nx; i++) {
+      for (let j = 0; j < ny; j++) {
+        const cIdx = i * ny + j;
+        const cell = mesh.cells[cIdx] || mesh.cells[0];
+        vtk += `${(cell.bedElevation + (hydro.depth[cIdx] || 0)).toFixed(3)}\n`;
+      }
+    }
+  }
+
+  // Solid Obstacle Mask (1.0 = CAD structure, 0.0 = free fluid)
+  vtk += '\nSCALARS solid_obstacle float 1\nLOOKUP_TABLE default\n';
+  for (let k = 0; k < nz; k++) {
+    for (let i = 0; i < nx; i++) {
+      for (let j = 0; j < ny; j++) {
+        const cIdx = i * ny + j;
+        vtk += `${solidSet.has(cIdx) ? 1.0 : 0.0}\n`;
+      }
+    }
+  }
+
+  // Eddy Viscosity nu_t
+  vtk += '\nSCALARS eddy_viscosity float 1\nLOOKUP_TABLE default\n';
+  for (let k = 0; k < nz; k++) {
+    for (let i = 0; i < nx; i++) {
+      for (let j = 0; j < ny; j++) {
+        const cIdx = i * ny + j;
+        vtk += `${(turb.nuT[cIdx] || 0.0).toFixed(6)}\n`;
       }
     }
   }

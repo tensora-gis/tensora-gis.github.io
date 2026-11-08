@@ -81,8 +81,13 @@ import {
 } from '../river/calibration/swotCalibration';
 import { applyTerrainAndCarveBathymetry } from '../river/geometry/geometryBuilder';
 import { translateMesh, rotateMesh } from '../river/geometry/meshGenerator';
-import { createStructureFromMapPolyline } from '../river/structures/cadStructureBuilder';
+import {
+  createStructureFromMapPolyline,
+  createRotatedRectanglePoints,
+  createCirclePoints,
+} from '../river/structures/cadStructureBuilder';
 import { buildOpenFoamCaseZip, exportRiverToVtk3D } from '../river/openfoam/openfoamCaseGenerator';
+import { ParaView3DVisualizer } from '../river/components/ParaView3DVisualizer';
 
 export const RiverAnalysisModelling: React.FC = () => {
   // Default to actual real-world river: Rhine River (Basel, Switzerland/Germany)
@@ -133,6 +138,16 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [cadDrawMode, setCadDrawMode] = useState<RiverStructureType | null>(null);
   const [cadDrawPoints, setCadDrawPoints] = useState<{ lat: number; lng: number }[]>([]);
   const [cadNotification, setCadNotification] = useState<string | null>(null);
+  const [cadIsSolid, setCadIsSolid] = useState(true);
+  const [cadWallThicknessM, setCadWallThicknessM] = useState(2.0);
+  const [cadCrestHeightM, setCadCrestHeightM] = useState(3.5);
+  const [cadPermeability, setCadPermeability] = useState(0.0);
+  const [cadHoverFeedback, setCadHoverFeedback] = useState<{
+    lat: number;
+    lng: number;
+    distanceM: number;
+    angleDeg: number;
+  } | null>(null);
 
   // Mesh Movement & Alignment Mode
   const [isMoveMeshMode, setIsMoveMeshMode] = useState(false);
@@ -143,6 +158,7 @@ export const RiverAnalysisModelling: React.FC = () => {
 
   // Real-Time Simulation State
   const [isSimulating, setIsSimulating] = useState(false);
+  const [isParaView3DOpen, setIsParaView3DOpen] = useState(false);
   const [simSpeed] = useState(1);
 
   // Modals
@@ -190,6 +206,46 @@ export const RiverAnalysisModelling: React.FC = () => {
   cadDrawModeRef.current = cadDrawMode;
   const cadDrawPointsRef = useRef(cadDrawPoints);
   cadDrawPointsRef.current = cadDrawPoints;
+  const cadIsSolidRef = useRef(cadIsSolid);
+  cadIsSolidRef.current = cadIsSolid;
+  const cadWallThicknessMRef = useRef(cadWallThicknessM);
+  cadWallThicknessMRef.current = cadWallThicknessM;
+  const cadCrestHeightMRef = useRef(cadCrestHeightM);
+  cadCrestHeightMRef.current = cadCrestHeightM;
+  const cadPermeabilityRef = useRef(cadPermeability);
+  cadPermeabilityRef.current = cadPermeability;
+
+  // Unified CAD Civil Hydraulic Structure Installer
+  const installCadStructure = (newStruct: RiverHydraulicStructure) => {
+    const updatedStructs = [...structuresRef.current, newStruct];
+    setStructures(updatedStructs);
+    setCadDrawPoints([]);
+    setCadDrawMode(null);
+    setCadHoverFeedback(null);
+    setCadNotification(`✅ Installed ${newStruct.name} (${newStruct.cellIndices.length} cells). Running instant 2D CFD...`);
+
+    runInstantSimulation({
+      reach,
+      mesh: meshRef.current,
+      boundaries: boundariesRef.current,
+      structures: updatedStructs,
+      turbParams: turbParamsRef.current,
+      sedParams: sedParamsRef.current,
+      mode: 'preview',
+    })
+      .then((res) => {
+        setHydro(res.hydro);
+        setTurb(res.turb);
+        setSed(res.sed);
+        setSummary(res.summary);
+        setCadNotification(`✅ Instant CFD complete for ${newStruct.name}! Wake & flux modifiers updated.`);
+        setTimeout(() => setCadNotification(null), 5000);
+      })
+      .catch((err) => {
+        console.warn('Instant simulation error:', err);
+        setTimeout(() => setCadNotification(null), 3000);
+      });
+  };
 
   // Initialize Map with 100% Free, High-Res Satellite Tiles (No API key required!)
   useEffect(() => {
@@ -203,6 +259,8 @@ export const RiverAnalysisModelling: React.FC = () => {
       center: [centerLat, centerLng],
       zoom: 15,
       zoomControl: false,
+      maxZoom: 18,
+      minZoom: 2,
     });
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -218,130 +276,158 @@ export const RiverAnalysisModelling: React.FC = () => {
 
     mapInstanceRef.current = map;
 
+    // Map mousemove handler: Real-time AutoCAD dimension & angle tracking
+    map.on('mousemove', (e: L.LeafletMouseEvent) => {
+      if (cadDrawModeRef.current && cadDrawPointsRef.current.length > 0) {
+        const lastPt = cadDrawPointsRef.current[cadDrawPointsRef.current.length - 1];
+        const cosLat = Math.cos((0.5 * (lastPt.lat + e.latlng.lat) * Math.PI) / 180.0);
+        const dx = (e.latlng.lng - lastPt.lng) * 111320.0 * cosLat;
+        const dy = (e.latlng.lat - lastPt.lat) * 111320.0;
+        const distM = Math.hypot(dx, dy);
+        let angleDeg = (Math.atan2(dy, dx) * 180.0) / Math.PI;
+        if (angleDeg < 0) angleDeg += 360.0;
+
+        setCadHoverFeedback({
+          lat: e.latlng.lat,
+          lng: e.latlng.lng,
+          distanceM: distM,
+          angleDeg: Math.round(angleDeg),
+        });
+      } else {
+        setCadHoverFeedback(null);
+      }
+    });
+
     // Map click handler: CAD structure drawing or Auto River Detection
     map.on('click', async (e: L.LeafletMouseEvent) => {
       if (cadDrawModeRef.current) {
-        // User is drawing a CAD civil hydraulic structure
         const clickPt = { lat: e.latlng.lat, lng: e.latlng.lng };
+        const mode = cadDrawModeRef.current;
+        const cadOpts = {
+          isSolid: cadIsSolidRef.current,
+          wallThicknessM: cadWallThicknessMRef.current,
+          crestElevationM: cadCrestHeightMRef.current,
+          permeability: cadPermeabilityRef.current,
+        };
 
-        // 1. Bridge Pier: single click places the pier!
-        if (cadDrawModeRef.current === 'bridge-pier') {
-          const newStruct = createStructureFromMapPolyline([clickPt], 'bridge-pier', meshRef.current);
-          const updatedStructs = [...structuresRef.current, newStruct];
-          setStructures(updatedStructs);
-          setCadDrawPoints([]);
-          setCadDrawMode(null);
-          setCadNotification(`✅ Installed ${newStruct.name}. Running instant 2D CFD...`);
-
-          runInstantSimulation({
-            reach,
-            mesh: meshRef.current,
-            boundaries: boundariesRef.current,
-            structures: updatedStructs,
-            turbParams: turbParamsRef.current,
-            sedParams: sedParamsRef.current,
-            mode: 'preview',
-          }).then((res) => {
-            setHydro(res.hydro);
-            setTurb(res.turb);
-            setSed(res.sed);
-            setSummary(res.summary);
-            setCadNotification(`✅ Bridge Pier active! Wake vortex & HEC-18 scour updated.`);
-            setTimeout(() => setCadNotification(null), 5000);
-          }).catch((err) => {
-            console.warn('Instant simulation error:', err);
-            setTimeout(() => setCadNotification(null), 3000);
-          });
+        // 1. Bridge Pier: single click places pier
+        if (mode === 'bridge-pier') {
+          const newStruct = createStructureFromMapPolyline([clickPt], 'bridge-pier', meshRef.current, cadOpts);
+          installCadStructure(newStruct);
           return;
         }
 
-        // 2. Spur Dike / Groyne: 2 clicks (bank root -> channel head)
-        if (cadDrawModeRef.current === 'spurdike') {
+        // 2. Line (AutoCAD 2-point line)
+        if (mode === 'line') {
           if (cadDrawPointsRef.current.length === 0) {
             setCadDrawPoints([clickPt]);
-            setCadNotification(`Spur Dike: Bank root placed. Click in river to set length & deflection angle.`);
+            setCadNotification('📏 Line: Start point placed. Click endpoint to complete.');
             return;
           } else {
-            const pt1 = cadDrawPointsRef.current[0];
-            const pt2 = clickPt;
-            const newStruct = createStructureFromMapPolyline([pt1, pt2], 'spurdike', meshRef.current);
-            const updatedStructs = [...structuresRef.current, newStruct];
-            setStructures(updatedStructs);
-            setCadDrawPoints([]);
-            setCadDrawMode(null);
-            setCadNotification(`✅ Installed ${newStruct.name}. Running instant 2D CFD...`);
-
-            runInstantSimulation({
-              reach,
-              mesh: meshRef.current,
-              boundaries: boundariesRef.current,
-              structures: updatedStructs,
-              turbParams: turbParamsRef.current,
-              sedParams: sedParamsRef.current,
-              mode: 'preview',
-            }).then((res) => {
-              setHydro(res.hydro);
-              setTurb(res.turb);
-              setSed(res.sed);
-              setSummary(res.summary);
-              setCadNotification(`✅ Spur Dike active! Recirculation eddy & flow deflection updated.`);
-              setTimeout(() => setCadNotification(null), 5000);
-            }).catch((err) => {
-              console.warn('Instant simulation error:', err);
-              setTimeout(() => setCadNotification(null), 3000);
-            });
+            const p1 = cadDrawPointsRef.current[0];
+            const newStruct = createStructureFromMapPolyline([p1, clickPt], 'line', meshRef.current, cadOpts);
+            installCadStructure(newStruct);
             return;
           }
         }
 
-        // 3. Multi-point polyline structures (levee, weir, bridge, culvert, gate, embankment, custom-deflector)
+        // 3. Circle (Center + Radius boundary)
+        if (mode === 'circle') {
+          if (cadDrawPointsRef.current.length === 0) {
+            setCadDrawPoints([clickPt]);
+            setCadNotification('⭕ Circle: Center placed. Click outer edge to set radius.');
+            return;
+          } else {
+            const center = cadDrawPointsRef.current[0];
+            const cosLat = Math.cos((0.5 * (center.lat + clickPt.lat) * Math.PI) / 180.0);
+            const dx = (clickPt.lng - center.lng) * 111320.0 * cosLat;
+            const dy = (clickPt.lat - center.lat) * 111320.0;
+            const radiusM = Math.max(1.0, Math.hypot(dx, dy));
+            const circlePoints = createCirclePoints(center, radiusM, 24);
+            const newStruct = createStructureFromMapPolyline(circlePoints, 'circle', meshRef.current, {
+              ...cadOpts,
+              radiusM,
+            });
+            installCadStructure(newStruct);
+            return;
+          }
+        }
+
+        // 4. Rectangle (AutoCAD 3-point rotated rectangle: Corner 1 -> Corner 2 sets length & angle -> Corner 3 sets perpendicular width)
+        if (mode === 'rectangle') {
+          if (cadDrawPointsRef.current.length === 0) {
+            setCadDrawPoints([clickPt]);
+            setCadNotification('🔲 Corner 1 placed. Click Corner 2 to define base edge & rotation angle.');
+            return;
+          } else if (cadDrawPointsRef.current.length === 1) {
+            setCadDrawPoints([cadDrawPointsRef.current[0], clickPt]);
+            setCadNotification('🔲 Base edge set! Click point 3 to set perpendicular width, or click Complete.');
+            return;
+          } else {
+            const p1 = cadDrawPointsRef.current[0];
+            const p2 = cadDrawPointsRef.current[1];
+            const p3 = clickPt;
+            const newStruct = createStructureFromMapPolyline([p1, p2, p3], 'rectangle', meshRef.current, cadOpts);
+            installCadStructure(newStruct);
+            return;
+          }
+        }
+
+        // 5. Spur Dike / Groyne: 2 clicks (bank root -> channel head)
+        if (mode === 'spurdike') {
+          if (cadDrawPointsRef.current.length === 0) {
+            setCadDrawPoints([clickPt]);
+            setCadNotification('Spur Dike: Bank root placed. Click in river to set length & deflection angle.');
+            return;
+          } else {
+            const pt1 = cadDrawPointsRef.current[0];
+            const newStruct = createStructureFromMapPolyline([pt1, clickPt], 'spurdike', meshRef.current, cadOpts);
+            installCadStructure(newStruct);
+            return;
+          }
+        }
+
+        // 6. Weir / Bridge / Culvert: 2-point cross-channel transect
+        if (mode === 'weir' || mode === 'bridge' || mode === 'culvert') {
+          if (cadDrawPointsRef.current.length === 0) {
+            setCadDrawPoints([clickPt]);
+            setCadNotification(`Transect: 1st bank anchor placed. Click opposite bank to span ${mode.toUpperCase()}.`);
+            return;
+          } else {
+            const updated = [...cadDrawPointsRef.current, clickPt];
+            const newStruct = createStructureFromMapPolyline(updated, mode, meshRef.current, cadOpts);
+            installCadStructure(newStruct);
+            return;
+          }
+        }
+
+        // 7. Multi-point structures: Polyline, Polygon, Obstacle, Levee, Embankment, Custom-Deflector
         const updatedPoints = [...cadDrawPointsRef.current, clickPt];
-        setCadDrawPoints(updatedPoints);
 
-        if (updatedPoints.length === 1) {
-          setCadNotification(
-            `CAD: Start point placed. Click next vertex across/along the river, or click 'Done' when finished.`
-          );
-        } else if (
-          updatedPoints.length === 2 &&
-          (cadDrawModeRef.current === 'weir' ||
-            cadDrawModeRef.current === 'bridge' ||
-            cadDrawModeRef.current === 'culvert')
+        // Check if clicking near the starting vertex to close polygon / obstacle
+        if (
+          (mode === 'polygon' || mode === 'obstacle') &&
+          updatedPoints.length >= 4
         ) {
-          // Standard 2-point cross-channel transect
-          const newStruct = createStructureFromMapPolyline(
-            updatedPoints,
-            cadDrawModeRef.current,
-            meshRef.current
-          );
-          const updatedStructs = [...structuresRef.current, newStruct];
-          setStructures(updatedStructs);
-          setCadDrawPoints([]);
-          setCadDrawMode(null);
-          setCadNotification(`✅ Installed ${newStruct.name}. Running instant 2D CFD...`);
+          const pStart = updatedPoints[0];
+          const cosLat = Math.cos((0.5 * (pStart.lat + clickPt.lat) * Math.PI) / 180.0);
+          const dx = (clickPt.lng - pStart.lng) * 111320.0 * cosLat;
+          const dy = (clickPt.lat - pStart.lat) * 111320.0;
+          if (Math.hypot(dx, dy) < 15.0) {
+            // Closed polygon clicked near start!
+            const closedPoints = updatedPoints.slice(0, -1);
+            const newStruct = createStructureFromMapPolyline(closedPoints, mode, meshRef.current, cadOpts);
+            installCadStructure(newStruct);
+            return;
+          }
+        }
 
-          runInstantSimulation({
-            reach,
-            mesh: meshRef.current,
-            boundaries: boundariesRef.current,
-            structures: updatedStructs,
-            turbParams: turbParamsRef.current,
-            sedParams: sedParamsRef.current,
-            mode: 'preview',
-          }).then((res) => {
-            setHydro(res.hydro);
-            setTurb(res.turb);
-            setSed(res.sed);
-            setSummary(res.summary);
-            setCadNotification(`✅ Instant 2D CFD complete for ${newStruct.name}! Wake & backwater updated.`);
-            setTimeout(() => setCadNotification(null), 5000);
-          }).catch((err) => {
-            console.warn('Instant simulation error:', err);
-            setTimeout(() => setCadNotification(null), 3000);
-          });
+        setCadDrawPoints(updatedPoints);
+        if (updatedPoints.length === 1) {
+          setCadNotification(`CAD: Start point placed. Click next vertex, or click 'Complete Structure' when done.`);
         } else {
           setCadNotification(
-            `CAD: ${updatedPoints.length} vertices placed. Click more vertices, or click 'Complete Structure'.`
+            `CAD: ${updatedPoints.length} vertices placed. Click next vertex, or click 'Complete' / 'Close Polygon'.`
           );
         }
       } else if (isProbeModeRef.current) {
@@ -378,13 +464,46 @@ export const RiverAnalysisModelling: React.FC = () => {
       }
     });
 
+    // Double-click handler: complete polyline or close polygon in CAD mode
+    map.on('dblclick', (e: L.LeafletMouseEvent) => {
+      if (cadDrawModeRef.current) {
+        L.DomEvent.stopPropagation(e.originalEvent);
+        L.DomEvent.preventDefault(e.originalEvent);
+        if (cadDrawPointsRef.current.length >= 2) {
+          handleCompleteCadPolyline();
+        }
+      }
+    });
+
     return () => {
       map.remove();
       mapInstanceRef.current = null;
     };
   }, []);
 
-  // Update CAD Preview Line on Map when drawing
+  // Keyboard CAD drawing shortcuts (Escape to cancel, Enter to complete, Ctrl+Z to undo)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!cadDrawModeRef.current) return;
+      if (e.key === 'Escape') {
+        setCadDrawMode(null);
+        setCadDrawPoints([]);
+        setCadHoverFeedback(null);
+        setCadNotification(null);
+      } else if (e.key === 'Enter') {
+        if (cadDrawPointsRef.current.length >= 2) {
+          handleCompleteCadPolyline();
+        }
+      } else if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        setCadDrawPoints((prev) => prev.slice(0, -1));
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Update CAD Preview Layer on Map with live rubber-banding, dimension feedback, and shape outlines
   useEffect(() => {
     if (!cadPreviewLayerRef.current) return;
     cadPreviewLayerRef.current.clearLayers();
@@ -402,7 +521,7 @@ export const RiverAnalysisModelling: React.FC = () => {
         }).addTo(cadPreviewLayerRef.current);
       }
 
-      // Draw dashed connecting polyline across vertices
+      // Draw dashed connecting polyline across existing vertices
       if (cadDrawPoints.length >= 2) {
         const latlngs = cadDrawPoints.map((p) => [p.lat, p.lng] as [number, number]);
         L.polyline(latlngs, {
@@ -411,8 +530,88 @@ export const RiverAnalysisModelling: React.FC = () => {
           dashArray: '6, 6',
         }).addTo(cadPreviewLayerRef.current);
       }
+
+      // Dynamic rubber-band preview from last vertex to current hover position
+      if (cadHoverFeedback) {
+        const p1 = cadDrawPoints[cadDrawPoints.length - 1];
+        const p2 = { lat: cadHoverFeedback.lat, lng: cadHoverFeedback.lng };
+
+        if (cadDrawMode === 'circle' && cadDrawPoints.length === 1) {
+          // Live circle preview with radius
+          L.circle([p1.lat, p1.lng], {
+            radius: Math.max(1.0, cadHoverFeedback.distanceM),
+            color: '#38bdf8',
+            fillColor: '#0284c7',
+            fillOpacity: 0.25,
+            weight: 2,
+            dashArray: '4, 4',
+          }).addTo(cadPreviewLayerRef.current);
+
+          L.polyline([[p1.lat, p1.lng], [p2.lat, p2.lng]], {
+            color: '#38bdf8',
+            weight: 1.5,
+            dashArray: '3, 3',
+          }).addTo(cadPreviewLayerRef.current);
+        } else if (cadDrawMode === 'rectangle') {
+          if (cadDrawPoints.length === 1) {
+            // Live base edge preview line
+            L.polyline([[p1.lat, p1.lng], [p2.lat, p2.lng]], {
+              color: '#f59e0b',
+              weight: 2.5,
+              dashArray: '5, 5',
+            }).addTo(cadPreviewLayerRef.current);
+          } else if (cadDrawPoints.length === 2) {
+            // Live 3-point rotated rectangle preview
+            const pA = cadDrawPoints[0];
+            const pB = cadDrawPoints[1];
+            const cosLat = Math.cos((0.5 * (pA.lat + pB.lat) * Math.PI) / 180.0);
+            const dx = (pB.lng - pA.lng) * 111320.0 * cosLat;
+            const dy = (pB.lat - pA.lat) * 111320.0;
+            const baseLen = Math.max(1e-4, Math.hypot(dx, dy));
+            const ux = dx / baseLen;
+            const uy = dy / baseLen;
+            const nx = -uy;
+            const ny = ux;
+            const v3x = (p2.lng - pB.lng) * 111320.0 * cosLat;
+            const v3y = (p2.lat - pB.lat) * 111320.0;
+            const widthM = v3x * nx + v3y * ny;
+
+            const offLat = (widthM * ny) / 111320.0;
+            const offLng = (widthM * nx) / (111320.0 * cosLat);
+
+            const c1 = pA;
+            const c2 = pB;
+            const c3 = { lat: pB.lat + offLat, lng: pB.lng + offLng };
+            const c4 = { lat: pA.lat + offLat, lng: pA.lng + offLng };
+
+            L.polygon([[c1.lat, c1.lng], [c2.lat, c2.lng], [c3.lat, c3.lng], [c4.lat, c4.lng]], {
+              color: '#f59e0b',
+              fillColor: '#d97706',
+              fillOpacity: 0.3,
+              weight: 2,
+              dashArray: '4, 4',
+            }).addTo(cadPreviewLayerRef.current);
+          }
+        } else {
+          // Rubber-band line
+          L.polyline([[p1.lat, p1.lng], [p2.lat, p2.lng]], {
+            color: '#fbbf24',
+            weight: 2,
+            dashArray: '4, 4',
+          }).addTo(cadPreviewLayerRef.current);
+
+          // For polygon / obstacle, also rubber-band closing line back to point 0
+          if ((cadDrawMode === 'polygon' || cadDrawMode === 'obstacle') && cadDrawPoints.length >= 2) {
+            L.polyline([[p2.lat, p2.lng], [cadDrawPoints[0].lat, cadDrawPoints[0].lng]], {
+              color: '#94a3b8',
+              weight: 1.5,
+              dashArray: '3, 3',
+            }).addTo(cadPreviewLayerRef.current);
+          }
+        }
+      }
     }
-  }, [cadDrawPoints]);
+  }, [cadDrawPoints, cadHoverFeedback, cadDrawMode]);
 
   // Update Basemap Tiles (Esri Satellite vs OpenStreetMap)
   const updateBasemapTiles = (group: L.LayerGroup, type: 'satellite' | 'streets') => {
@@ -424,8 +623,8 @@ export const RiverAnalysisModelling: React.FC = () => {
         'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         {
           attribution: 'Tiles &copy; Esri, Maxar, Earthstar Geographics',
-          maxZoom: 19,
-          maxNativeZoom: 18,
+          maxZoom: 18,
+          maxNativeZoom: 17,
           crossOrigin: 'anonymous',
         }
       ).addTo(group);
@@ -434,7 +633,8 @@ export const RiverAnalysisModelling: React.FC = () => {
       L.tileLayer(
         'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
         {
-          maxZoom: 19,
+          maxZoom: 18,
+          maxNativeZoom: 17,
           opacity: 0.8,
           crossOrigin: 'anonymous',
         }
@@ -443,7 +643,8 @@ export const RiverAnalysisModelling: React.FC = () => {
       // OpenStreetMap Standard Street / Topo Map (100% Free, NO API KEY)
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; OpenStreetMap contributors',
-        maxZoom: 19,
+        maxZoom: 18,
+        maxNativeZoom: 18,
         crossOrigin: 'anonymous',
       }).addTo(group);
     }
@@ -502,23 +703,65 @@ export const RiverAnalysisModelling: React.FC = () => {
     const newMesh = generateRiverGridMesh(newReach);
     setMesh(newMesh);
 
+    // Calculate reach-appropriate downstream stage and initial water depth to avoid boundary shock
+    const downstreamSlice = newMesh.cells.slice((newMesh.nx - 1) * newMesh.ny);
+    const downstreamInvert = downstreamSlice.length > 0 ? Math.min(...downstreamSlice.map((c) => c.bedElevation)) : 100.0;
+    const estDepth = newReach.id === 'conical-flume' ? 0.45 : Math.max(0.5, Math.min(6.0, newReach.meanWidthM * 0.025));
+    const newDownstreamStageM = parseFloat((downstreamInvert + estDepth).toFixed(2));
+    const p0 = newReach.centerline[0];
+    const pN = newReach.centerline[newReach.centerline.length - 1];
+    const elev0 = p0?.bedElevationM ?? 100.0;
+    const elevN = pN?.bedElevationM ?? 99.0;
+    const dz = Math.abs(elev0 - elevN);
+    const estSlope = Math.max(0.0001, dz / Math.max(1, newReach.reachLengthM));
+
     const newBoundaries: RiverBoundaryConditions = {
       ...boundaries,
       upstreamDischargeM3s: newReach.upstreamDischargeEstimateM3s || 1000.0,
+      downstreamStageM: newDownstreamStageM,
+      initialWaterDepthM: estDepth,
+      downstreamSlope: estSlope,
       manningRoughnessDefault: newReach.defaultManningN || 0.028,
     };
     setBoundaries(newBoundaries);
 
+    // Pre-populate benchmark obstacle if Conical Flume is selected
+    let initialStructures: RiverHydraulicStructure[] = [];
+    if (newReach.id === 'conical-flume') {
+      const midIdx = Math.floor(newMesh.cells.length / 2);
+      const midCell = newMesh.cells[midIdx];
+      const coneRadiusM = 4.0;
+      const coneCenter = { lat: midCell.centerLat, lng: midCell.centerLng };
+      const conePoints = createCirclePoints(coneCenter, coneRadiusM, 16);
+      const coneStruct = createStructureFromMapPolyline(conePoints, 'circle', newMesh, {
+        name: 'Conical Island Obstacle (d=8m)',
+        crestElevationM: midCell.bedElevation + 2.5,
+        isSolid: true,
+        radiusM: coneRadiusM,
+      });
+      initialStructures = [coneStruct];
+    }
+    setStructures(initialStructures);
+
     const newHydro = createInitialHydroState(newMesh, newBoundaries);
+    const newTurb = createInitialTurbulenceState(newMesh);
+    const newSed = createInitialSedimentState(newMesh);
     setHydro(newHydro);
-    setTurb(createInitialTurbulenceState(newMesh));
-    setSed(createInitialSedimentState(newMesh));
-    setStructures([]);
+    setTurb(newTurb);
+    setSed(newSed);
     setSwotObs(RiverDataService.getSwotData(newReach.id));
     setCalibrationResult(null);
     setDetectedRiver(null);
 
-    // Smoothly fly map to the new reach coordinates
+    // Update solver refs synchronously to avoid animation loop race condition
+    meshRef.current = newMesh;
+    boundariesRef.current = newBoundaries;
+    hydroRef.current = newHydro;
+    turbRef.current = newTurb;
+    sedRef.current = newSed;
+    structuresRef.current = initialStructures;
+
+    // Smoothly fly map to the new reach coordinates (capping maxZoom to 16 so satellite tiles never blank out)
     if (mapInstanceRef.current && newReach.bounds) {
       const [minLat, minLng, maxLat, maxLng] = newReach.bounds;
       mapInstanceRef.current.flyToBounds(
@@ -526,7 +769,7 @@ export const RiverAnalysisModelling: React.FC = () => {
           [minLat, minLng],
           [maxLat, maxLng],
         ],
-        { padding: [50, 50], duration: 1.5 }
+        { padding: [60, 60], duration: 1.2, maxZoom: 16 }
       );
     }
   };
@@ -677,46 +920,39 @@ export const RiverAnalysisModelling: React.FC = () => {
     setTimeout(() => setCadNotification(null), 3000);
   };
 
-  // Complete Multi-Point Polyline CAD Structure
+  // Complete Multi-Point Polyline / Polygon CAD Structure
   const handleCompleteCadPolyline = () => {
     if (!cadDrawMode || cadDrawPoints.length < 2) return;
     const newStruct = createStructureFromMapPolyline(
       cadDrawPoints,
       cadDrawMode,
-      meshRef.current
+      meshRef.current,
+      {
+        isSolid: cadIsSolidRef.current,
+        wallThicknessM: cadWallThicknessMRef.current,
+        crestElevationM: cadCrestHeightMRef.current,
+        permeability: cadPermeabilityRef.current,
+      }
     );
-    const updatedStructs = [...structuresRef.current, newStruct];
-    setStructures(updatedStructs);
-    setCadDrawPoints([]);
-    setCadDrawMode(null);
-    setCadNotification(`✅ Installed ${newStruct.name} across ${newStruct.cellIndices.length} cells. Running instant 2D CFD...`);
-
-    runInstantSimulation({
-      reach,
-      mesh: meshRef.current,
-      boundaries: boundariesRef.current,
-      structures: updatedStructs,
-      turbParams: turbParamsRef.current,
-      sedParams: sedParamsRef.current,
-      mode: 'preview',
-    }).then((res) => {
-      setHydro(res.hydro);
-      setTurb(res.turb);
-      setSed(res.sed);
-      setSummary(res.summary);
-      setCadNotification(`✅ Instant 2D CFD complete for ${newStruct.name}! Wake & backwater updated.`);
-      setTimeout(() => setCadNotification(null), 5000);
-    }).catch((err) => {
-      console.warn('Instant simulation error:', err);
-      setTimeout(() => setCadNotification(null), 3000);
-    });
+    installCadStructure(newStruct);
   };
 
   const handleStartCadDraw = (type: RiverStructureType) => {
     setCadDrawMode(type);
     setCadDrawPoints([]);
+    setCadHoverFeedback(null);
     if (type === 'bridge-pier') {
       setCadNotification('🏛️ Pier Mode: Click once in the river channel to place a Bridge Pier.');
+    } else if (type === 'circle') {
+      setCadNotification('⭕ Circle Mode: Click center, then click outer edge to set radius.');
+    } else if (type === 'rectangle') {
+      setCadNotification('🔲 Rectangle Mode: Click 1st corner, then click opposite corner.');
+    } else if (type === 'line') {
+      setCadNotification('📏 Line Mode: Click start point, then click endpoint.');
+    } else if (type === 'polygon' || type === 'obstacle') {
+      setCadNotification(
+        `🔷 ${type === 'obstacle' ? 'Obstacle' : 'Polygon'} Mode: Click vertices in sequence, then click 'Close Polygon'.`
+      );
     } else if (type === 'spurdike') {
       setCadNotification('📐 Spur Dike Mode: Click bank root, then click inside river to set groyne length & angle.');
     } else {
@@ -835,6 +1071,16 @@ export const RiverAnalysisModelling: React.FC = () => {
               <span>📊</span>
               <span>3D VTK</span>
             </button>
+
+            {/* Interactive ParaView 3D Visualizer Modal */}
+            <button
+              onClick={() => setIsParaView3DOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-700 to-indigo-600 hover:from-purple-600 hover:to-indigo-500 text-white rounded-lg text-xs font-bold transition shadow-lg ring-1 ring-purple-400/50"
+              title="Open ParaView-style Interactive 3D CFD Visualizer (Streamlines, Velocity Vectors, WSE, Cut Planes)"
+            >
+              <span>🌌</span>
+              <span>ParaView 3D</span>
+            </button>
           </div>
         </div>
 
@@ -846,6 +1092,12 @@ export const RiverAnalysisModelling: React.FC = () => {
               Draw Structure:
             </span>
             {[
+              { type: 'line', label: '📏 Line' },
+              { type: 'polyline', label: '〰️ Polyline' },
+              { type: 'rectangle', label: '🔲 Rect' },
+              { type: 'circle', label: '⭕ Circle' },
+              { type: 'polygon', label: '🔷 Polygon' },
+              { type: 'obstacle', label: '⬛ Obstacle' },
               { type: 'spurdike', label: '📐 Spur Dike' },
               { type: 'bridge-pier', label: '🏛️ Pier' },
               { type: 'levee', label: '🧱 Levee' },
@@ -861,7 +1113,7 @@ export const RiverAnalysisModelling: React.FC = () => {
                 onClick={() => handleStartCadDraw(btn.type as RiverStructureType)}
                 className={`px-2 py-0.5 rounded text-[11px] font-medium border transition ${
                   cadDrawMode === btn.type
-                    ? 'bg-amber-600 border-amber-400 text-white shadow'
+                    ? 'bg-amber-600 border-amber-400 text-white shadow ring-2 ring-amber-400/50'
                     : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
                 }`}
                 title={`Click map to draw ${btn.label}`}
@@ -981,7 +1233,10 @@ export const RiverAnalysisModelling: React.FC = () => {
 
       {/* Main Map Viewport */}
       <div className={`relative flex-1 w-full h-full ${cadDrawMode ? 'cursor-crosshair' : ''}`}>
-        <div ref={mapContainerRef} className="w-full h-full z-0" />
+        <div
+          ref={mapContainerRef}
+          className="w-full h-full z-0 bg-[#0f172a] bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:24px_24px]"
+        />
 
         {/* 2D CFD Canvas Results Overlay */}
         <RiverResultsOverlay
@@ -996,26 +1251,148 @@ export const RiverAnalysisModelling: React.FC = () => {
           onSelectCell={(cell, idx) => setSelectedCell({ cell, idx })}
         />
 
-        {/* Active CAD Drawing Banner */}
+        {/* Active CAD Drawing Banner & Precision Control HUD */}
         {cadDrawMode && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] bg-amber-950/95 border border-amber-500 text-amber-200 px-5 py-2.5 rounded-xl text-xs font-semibold shadow-2xl flex items-center gap-4 animate-fade-in">
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] bg-slate-900/95 backdrop-blur-md border border-amber-500 text-amber-200 px-4 py-2.5 rounded-2xl text-xs font-semibold shadow-2xl flex flex-wrap items-center gap-3 animate-fade-in max-w-4xl">
             <span className="text-base">📐</span>
-            <span>
-              {cadDrawMode === 'bridge-pier'
-                ? 'Drop Pier: Click any point in the river channel to place Bridge Pier.'
-                : cadDrawMode === 'spurdike'
-                ? cadDrawPoints.length === 0
-                  ? 'Spur Dike: Click bank root to anchor.'
-                  : 'Spur Dike: Click inside river to set groyne length.'
-                : `Drawing ${cadDrawMode.toUpperCase()} (${cadDrawPoints.length} pts placed): Click vertices along structure.`}
-            </span>
+            <div className="flex flex-col">
+              <span className="font-bold text-amber-300">
+                AutoCAD {cadDrawMode.toUpperCase()} ({cadDrawPoints.length} pts placed)
+              </span>
+              <span className="text-[11px] text-slate-300 font-normal">
+                {cadHoverFeedback ? (
+                  cadDrawMode === 'circle' ? (
+                    <>
+                      Radius:{' '}
+                      <strong className="text-cyan-300">{cadHoverFeedback.distanceM.toFixed(1)} m</strong>{' '}
+                      | Area:{' '}
+                      <strong className="text-cyan-300">
+                        {(Math.PI * Math.pow(cadHoverFeedback.distanceM, 2)).toFixed(0)} m²
+                      </strong>
+                    </>
+                  ) : (
+                    <>
+                      Distance:{' '}
+                      <strong className="text-cyan-300">{cadHoverFeedback.distanceM.toFixed(1)} m</strong>{' '}
+                      | Angle: <strong className="text-cyan-300">{cadHoverFeedback.angleDeg}°</strong>
+                    </>
+                  )
+                ) : cadDrawMode === 'bridge-pier' ? (
+                  'Click any location in the river channel to place Bridge Pier.'
+                ) : cadDrawMode === 'circle' ? (
+                  cadDrawPoints.length === 0
+                    ? 'Click center point of circle.'
+                    : 'Click perimeter point to set radius.'
+                ) : cadDrawMode === 'rectangle' ? (
+                  cadDrawPoints.length === 0
+                    ? 'Click Corner 1 of rectangle.'
+                    : cadDrawPoints.length === 1
+                    ? 'Click Corner 2 to set length & angle.'
+                    : 'Click Corner 3 to set perpendicular width.'
+                ) : cadDrawMode === 'line' ? (
+                  cadDrawPoints.length === 0 ? 'Click line start point.' : 'Click line endpoint.'
+                ) : (
+                  'Click vertices in sequence across/along river. (Dbl-click or Enter to complete)'
+                )}
+              </span>
+            </div>
 
-            {cadDrawPoints.length >= 2 && (
+            {/* Solid Masking vs Porous Toggle */}
+            <button
+              onClick={() => setCadIsSolid(!cadIsSolid)}
+              className={`px-2 py-1 rounded text-[11px] font-bold border transition ${
+                cadIsSolid
+                  ? 'bg-rose-950/80 border-rose-500 text-rose-300'
+                  : 'bg-cyan-950/80 border-cyan-500 text-cyan-300'
+              }`}
+              title="Solid masking completely blocks flow and applies reflective slip/no-slip wall boundary conditions"
+            >
+              {cadIsSolid ? '🛡️ Solid Mask (Obstacle)' : '🌊 Porous Wall / Hydraulic'}
+            </button>
+
+            {/* Thickness and Crest Height Controls */}
+            <div className="flex items-center gap-2 text-[11px] text-slate-300 bg-slate-950/60 px-2 py-1 rounded border border-slate-800">
+              <label className="flex items-center gap-1">
+                <span>Thick:</span>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  max="50"
+                  value={cadWallThicknessM}
+                  onChange={(e) => setCadWallThicknessM(Math.max(0.2, parseFloat(e.target.value) || 2))}
+                  className="w-12 bg-slate-800 text-amber-200 border border-slate-700 rounded px-1 text-center font-mono"
+                />
+                <span>m</span>
+              </label>
+
+              <label className="flex items-center gap-1">
+                <span>Crest:</span>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  max="30"
+                  value={cadCrestHeightM}
+                  onChange={(e) => setCadCrestHeightM(Math.max(0.1, parseFloat(e.target.value) || 3.5))}
+                  className="w-12 bg-slate-800 text-amber-200 border border-slate-700 rounded px-1 text-center font-mono"
+                />
+                <span>m</span>
+              </label>
+
+              {!cadIsSolid && (
+                <label className="flex items-center gap-1" title="Permeability fraction (0 = solid barrier, 0.5 = 50% open)">
+                  <span>Perm:</span>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0"
+                    max="1"
+                    value={cadPermeability}
+                    onChange={(e) =>
+                      setCadPermeability(Math.max(0.0, Math.min(1.0, parseFloat(e.target.value) || 0)))
+                    }
+                    className="w-12 bg-slate-800 text-cyan-300 border border-slate-700 rounded px-1 text-center font-mono"
+                  />
+                </label>
+              )}
+            </div>
+
+            {/* Complete / Close Button */}
+            {cadDrawMode === 'polygon' || cadDrawMode === 'obstacle' ? (
+              <button
+                onClick={handleCompleteCadPolyline}
+                disabled={cadDrawPoints.length < 3}
+                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-[11px] font-bold transition shadow"
+              >
+                ✓ Close Polygon ({cadDrawPoints.length} pts)
+              </button>
+            ) : cadDrawMode === 'rectangle' && cadDrawPoints.length >= 2 ? (
               <button
                 onClick={handleCompleteCadPolyline}
                 className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold transition shadow"
               >
-                ✓ Complete Structure ({cadDrawPoints.length} pts)
+                ✓ Complete Rectangle ({cadDrawPoints.length} pts)
+              </button>
+            ) : (
+              cadDrawPoints.length >= 2 && (
+                <button
+                  onClick={handleCompleteCadPolyline}
+                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold transition shadow"
+                >
+                  ✓ Complete ({cadDrawPoints.length} pts)
+                </button>
+              )
+            )}
+
+            {/* Undo last point */}
+            {cadDrawPoints.length > 0 && (
+              <button
+                onClick={() => setCadDrawPoints((prev) => prev.slice(0, -1))}
+                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-lg text-[11px] transition"
+                title="Undo last placed vertex"
+              >
+                ↩ Undo
               </button>
             )}
 
@@ -1023,6 +1400,7 @@ export const RiverAnalysisModelling: React.FC = () => {
               onClick={() => {
                 setCadDrawMode(null);
                 setCadDrawPoints([]);
+                setCadHoverFeedback(null);
                 setCadNotification(null);
               }}
               className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] transition font-bold"
@@ -1320,9 +1698,9 @@ export const RiverAnalysisModelling: React.FC = () => {
       <CalibrationPanel
         isOpen={isCalibrationPanelOpen}
         onClose={() => setIsCalibrationPanelOpen(false)}
-        reach={reach}
-        swotObservation={swotObs}
-        simulatedWse={Array.from(hydro.wse)}
+        mesh={mesh}
+        hydro={hydro}
+        swotObs={swotObs}
         onApplyCalibratedManningN={(newN) => {
           setBoundaries((prev) => ({ ...prev, manningRoughnessDefault: newN }));
           const updatedReach: RiverReachDefinition = {
@@ -1340,21 +1718,19 @@ export const RiverAnalysisModelling: React.FC = () => {
       <SimulationPanel
         isOpen={isSimulationPanelOpen}
         onClose={() => setIsSimulationPanelOpen(false)}
+        reach={reach}
         mesh={mesh}
-        initialHydro={hydro}
-        initialTurb={turb}
-        initialSed={sed}
         boundaries={boundaries}
         structures={structures}
         turbParams={turbParams}
         sedParams={sedParams}
-        onSimulationComplete={(finalHydro, finalTurb, finalSed, resSummary) => {
+        onSimulationFinished={(finalHydro, finalTurb, finalSed, resSummary) => {
           setHydro({ ...finalHydro });
           setTurb({ ...finalTurb });
           setSed({ ...finalSed });
           setSummary(resSummary);
           if (swotObs) {
-            const cal = evaluateSwotCalibration(swotObs, Array.from(finalHydro.wse), reach.defaultManningN);
+            const cal = evaluateSwotCalibration(mesh, finalHydro, swotObs);
             setCalibrationResult(cal);
           }
         }}
@@ -1364,12 +1740,35 @@ export const RiverAnalysisModelling: React.FC = () => {
       <ReachPersistence
         isOpen={isPersistenceOpen}
         onClose={() => setIsPersistenceOpen(false)}
-        currentReach={reach}
-        currentStructures={structures}
-        currentTurbParams={turbParams}
-        currentSedParams={sedParams}
-        onLoadReach={(loadedReach) => handleSelectReach(loadedReach)}
-        onLoadStructures={(loadedStructures) => setStructures(loadedStructures)}
+        reach={reach}
+        mesh={mesh}
+        boundaries={boundaries}
+        structures={structures}
+        gauges={[]}
+        swotObservation={swotObs || undefined}
+        turbParams={turbParams}
+        sedParams={sedParams}
+        onLoadArchive={(archive) => {
+          handleSelectReach(archive.reach);
+          if (archive.structures) setStructures(archive.structures);
+          if (archive.turbParams) setTurbParams(archive.turbParams);
+          if (archive.sedParams) setSedParams(archive.sedParams);
+        }}
+      />
+
+      {/* Interactive ParaView 3D CFD Post-Processing Visualizer */}
+      <ParaView3DVisualizer
+        isOpen={isParaView3DOpen}
+        onClose={() => setIsParaView3DOpen(false)}
+        reach={reach}
+        mesh={mesh}
+        hydro={hydro}
+        turb={turb}
+        sed={sed}
+        structures={structures}
+        boundaries={boundaries}
+        isSimulating={isSimulating}
+        onToggleSimulation={() => setIsSimulating(!isSimulating)}
       />
     </div>
   );

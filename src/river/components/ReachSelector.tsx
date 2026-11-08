@@ -110,6 +110,7 @@ export const ReachSelector: React.FC<ReachSelectorProps> = ({
               );
             })}
             <optgroup label="🧪 Validation Benchmarks">
+              <option value="conical-flume">Conical Flume Benchmark (CFD Flume)</option>
               <option value="reach-benchmark-500m">500m Canonical Flume Benchmark</option>
             </optgroup>
           </select>

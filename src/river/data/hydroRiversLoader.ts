@@ -15,7 +15,7 @@
  * 11. 500-Metre Canonical Benchmark Reach (Prismatic flume validation)
  */
 
-import { RiverReachDefinition } from '../types/riverReach';
+import { RiverReachDefinition, CrossSectionStation, CrossSectionPoint } from '../types/riverReach';
 import { createDefaultEmpiricalStation } from '../geometry/empiricalSection';
 import { GLOBAL_RIVER_DATABASE, convertEntryToReachDefinition } from './globalRiverDatabase';
 
@@ -310,8 +310,9 @@ export function createHudsonReach(): RiverReachDefinition {
   };
 }
 
+
 /**
- * 500m Canonical Engineering Benchmark Reach
+ * 500m Canonical Engineering Benchmark Reach (Prismatic flume validation)
  */
 export function createBenchmark500mReach(): RiverReachDefinition {
   const reachLengthM = 500.0;
@@ -321,29 +322,31 @@ export function createBenchmark500mReach(): RiverReachDefinition {
   const dischargeM3s = 35.0;
   const manningN = 0.030;
 
-  const latStart = 47.558;
-  const lngStart = 7.573;
+  // Located on the wide open Rhine river corridor in Basel (47.560°N, 7.590°E)
+  // Guarantees bright, high-resolution satellite imagery and crisp contrast
+  const latStart = 47.560;
+  const lngStart = 7.590;
   const dLat = 0.0045;
 
   const centerline = [
     { lat: latStart, lng: lngStart, stationM: 0, widthM: meanWidthM, bedElevationM: baseInvertM },
     {
       lat: latStart + dLat * 0.25,
-      lng: lngStart + 0.0005,
+      lng: lngStart + 0.0003,
       stationM: 125,
       widthM: meanWidthM,
       bedElevationM: baseInvertM - 125 * slope,
     },
     {
       lat: latStart + dLat * 0.5,
-      lng: lngStart + 0.0008,
+      lng: lngStart + 0.0005,
       stationM: 250,
       widthM: meanWidthM,
       bedElevationM: baseInvertM - 250 * slope,
     },
     {
       lat: latStart + dLat * 0.75,
-      lng: lngStart + 0.0004,
+      lng: lngStart + 0.0003,
       stationM: 375,
       widthM: meanWidthM,
       bedElevationM: baseInvertM - 375 * slope,
@@ -370,7 +373,113 @@ export function createBenchmark500mReach(): RiverReachDefinition {
     source: 'user-drawn',
     centerline,
     crossSections,
-    bounds: [latStart - 0.001, lngStart - 0.002, latStart + dLat + 0.001, lngStart + 0.003],
+    bounds: [latStart - 0.002, lngStart - 0.003, latStart + dLat + 0.002, lngStart + 0.003],
+    reachLengthM,
+    meanWidthM,
+    defaultManningN: manningN,
+    upstreamDischargeEstimateM3s: dischargeM3s,
+  };
+}
+
+/**
+ * Conical Flume Benchmark Reach (IAHR / USACE 500m Flume with central conical obstacle)
+ *
+ * Implements the classic Conical Flume benchmark:
+ * - 500m long, 30m wide hydraulic testing basin
+ * - Central conical bed elevation island (radius 8m, height 1.8m, peak at station 250m)
+ * - Produces standing bow wave, supercritical flow on flanks, and recirculating wake
+ */
+export function createConicalFlumeReach(): RiverReachDefinition {
+  const reachLengthM = 500.0;
+  const meanWidthM = 30.0;
+  const slope = 0.001;
+  const baseInvertM = 100.0;
+  const dischargeM3s = 35.0;
+  const manningN = 0.025;
+
+  // Located on the wide open Rhine river corridor in Basel (47.560°N, 7.590°E)
+  // Guarantees bright, high-resolution satellite imagery and crisp contrast
+  const latStart = 47.560;
+  const lngStart = 7.590;
+  const dLat = 0.0045;
+
+  const centerline = [
+    { lat: latStart, lng: lngStart, stationM: 0, widthM: meanWidthM, bedElevationM: baseInvertM },
+    {
+      lat: latStart + dLat * 0.25,
+      lng: lngStart + 0.0003,
+      stationM: 125,
+      widthM: meanWidthM,
+      bedElevationM: baseInvertM - 125 * slope,
+    },
+    {
+      lat: latStart + dLat * 0.5,
+      lng: lngStart + 0.0005,
+      stationM: 250,
+      widthM: meanWidthM,
+      bedElevationM: baseInvertM - 250 * slope + 1.8, // Conical apex rising 1.8m above bed
+    },
+    {
+      lat: latStart + dLat * 0.75,
+      lng: lngStart + 0.0003,
+      stationM: 375,
+      widthM: meanWidthM,
+      bedElevationM: baseInvertM - 375 * slope,
+    },
+    {
+      lat: latStart + dLat,
+      lng: lngStart,
+      stationM: reachLengthM,
+      widthM: meanWidthM,
+      bedElevationM: baseInvertM - reachLengthM * slope,
+    },
+  ];
+
+  // Upstream inlet station (flat flume bed)
+  const cs0 = createDefaultEmpiricalStation(0, baseInvertM, dischargeM3s, manningN);
+
+  // Mid station at 250m with conical island obstacle (radius 8m, height 1.8m)
+  const cs250Invert = baseInvertM - 250 * slope;
+  const coneApex = cs250Invert + 1.8;
+  const cs250Points: CrossSectionPoint[] = [
+    { xM: -22, zM: cs250Invert + 3.0 },
+    { xM: -15, zM: cs250Invert },
+    { xM: -8, zM: cs250Invert },
+    { xM: -4, zM: cs250Invert + 0.9 },
+    { xM: 0, zM: coneApex },
+    { xM: 4, zM: cs250Invert + 0.9 },
+    { xM: 8, zM: cs250Invert },
+    { xM: 15, zM: cs250Invert },
+    { xM: 22, zM: cs250Invert + 3.0 },
+  ];
+  const cs250: CrossSectionStation = {
+    stationM: 250,
+    template: {
+      type: 'trapezoidal',
+      bottomWidthM: 30.0,
+      bankSlopeHtoV: 1.5,
+      depthM: 3.0,
+      leftFloodplainWidthM: 5.0,
+      rightFloodplainWidthM: 5.0,
+    },
+    points: cs250Points,
+    invertElevM: cs250Invert,
+    leftBankElevM: cs250Invert + 3.0,
+    rightBankElevM: cs250Invert + 3.0,
+    manningN,
+  };
+
+  // Downstream outlet station
+  const cs500 = createDefaultEmpiricalStation(500, baseInvertM - 500 * slope, dischargeM3s, manningN);
+
+  return {
+    id: 'conical-flume',
+    name: 'Conical Flume Benchmark (CFD Flume)',
+    description: 'Controlled 500-meter laboratory flume with central conical obstacle for 2D/3D CFD validation, bow wave shock, and turbulent wake.',
+    source: 'user-drawn',
+    centerline,
+    crossSections: [cs0, cs250, cs500],
+    bounds: [latStart - 0.005, lngStart - 0.007, latStart + dLat + 0.005, lngStart + 0.007],
     reachLengthM,
     meanWidthM,
     defaultManningN: manningN,
@@ -381,4 +490,5 @@ export function createBenchmark500mReach(): RiverReachDefinition {
 export const GLOBAL_BUNDLED_REACHES: RiverReachDefinition[] = [
   ...GLOBAL_RIVER_DATABASE.map((entry) => convertEntryToReachDefinition(entry)),
   createBenchmark500mReach(),
+  createConicalFlumeReach(),
 ];

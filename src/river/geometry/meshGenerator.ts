@@ -500,7 +500,10 @@ export function shiftMeshAlongThalweg(
   targetSpacingM: number = 20.0,
   ny: number = 8
 ): RiverGridMesh {
-  const baseMesh = generateRiverGridMesh(reach, targetSpacingM, ny);
+  const baseMesh = generateRiverGridMesh(reach, {
+    targetStreamwiseSpacingM: targetSpacingM,
+    transverseCellsCount: ny,
+  });
   if (stationShiftM === 0 && lateralShiftM === 0) return baseMesh;
 
   // Approximate metric vector based on centerline tangent

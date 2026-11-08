@@ -7,7 +7,7 @@ import {
   RiverGridMesh,
   SwotRiverObservation,
 } from '../types/riverReach';
-import { GLOBAL_BUNDLED_REACHES, createBenchmark500mReach } from './hydroRiversLoader';
+import { GLOBAL_BUNDLED_REACHES, createBenchmark500mReach, createConicalFlumeReach } from './hydroRiversLoader';
 import { fetchSwotObservationForReach } from './swotRiverVolumeLoader';
 import { getDischargeEstimatesForReach, DischargeEstimateRecord } from './dischargeLoader';
 import { generateRiverGridMesh } from '../geometry/meshGenerator';
@@ -37,8 +37,11 @@ export class RiverDataService {
     const cached = await loadReachFromCache(id);
     if (cached) return cached;
 
-    // Default benchmark fallback
-    if (id === 'reach-benchmark-500m') {
+    // Benchmark fallbacks
+    if (id === 'conical-flume' || id === 'benchmark-conical-flume' || id === 'conical') {
+      return createConicalFlumeReach();
+    }
+    if (id === 'reach-benchmark-500m' || id === 'benchmark') {
       return createBenchmark500mReach();
     }
 

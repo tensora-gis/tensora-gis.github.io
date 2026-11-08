@@ -8,6 +8,16 @@
 import { SwotRiverObservation } from '../types/riverReach';
 
 export const SAMPLE_SWOT_OBSERVATIONS: Record<string, SwotRiverObservation> = {
+  'conical-flume': {
+    reachId: 'conical-flume',
+    satellitePassDate: '2024-06-12',
+    observedWseM: 101.45,
+    observedWidthM: 30.0,
+    observedSlope: 0.001,
+    observedDischargeM3s: 35.0,
+    uncertaintyWseM: 0.05,
+    notes: 'Laboratory IAHR / USACE Conical Flume Benchmark Observation',
+  },
   'reach-benchmark-500m': {
     reachId: 'reach-benchmark-500m',
     satellitePassDate: '2024-06-12',

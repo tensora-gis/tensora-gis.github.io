@@ -21,7 +21,13 @@ export type RiverStructureType =
   | 'embankment'
   | 'spurdike'
   | 'bridge-pier'
-  | 'custom-deflector';
+  | 'custom-deflector'
+  | 'line'
+  | 'polyline'
+  | 'polygon'
+  | 'rectangle'
+  | 'circle'
+  | 'obstacle';
 
 export interface RiverStructureBase {
   id: string;
@@ -123,6 +129,40 @@ export interface RiverCustomDeflectorStructure extends RiverStructureBase {
   dragCoeff: number;
 }
 
+export interface RiverPolygonStructure extends RiverStructureBase {
+  type: 'polygon' | 'rectangle' | 'obstacle';
+  crestElevationM: number;
+  topWidthM?: number;
+  wallThicknessM?: number;
+  isClosedSolid: boolean;
+  solidMasking?: boolean; // masks internal cells in CFD finite volume equations
+  rotationDeg?: number;
+  sideSlopeHtoV?: number;
+  dragCoefficientCd?: number;
+  permeability?: number;
+}
+
+export interface RiverCircleStructure extends RiverStructureBase {
+  type: 'circle';
+  center: RiverCoordinate;
+  radiusM: number;
+  topElevationM: number;
+  crestElevationM?: number;
+  permeability?: number;
+  dragCoefficientCd: number;
+  solidMasking?: boolean;
+}
+
+export interface RiverLineStructure extends RiverStructureBase {
+  type: 'line' | 'polyline';
+  crestElevationM: number;
+  wallThicknessM: number;
+  permeability: number;
+  dragCoefficientCd: number;
+  deflectionAngleDeg?: number;
+  solidMasking?: boolean;
+}
+
 export type RiverHydraulicStructure =
   | RiverLeveeStructure
   | RiverWeirStructure
@@ -132,4 +172,7 @@ export type RiverHydraulicStructure =
   | RiverEmbankmentStructure
   | RiverSpurdikeStructure
   | RiverBridgePierStructure
-  | RiverCustomDeflectorStructure;
+  | RiverCustomDeflectorStructure
+  | RiverPolygonStructure
+  | RiverCircleStructure
+  | RiverLineStructure;

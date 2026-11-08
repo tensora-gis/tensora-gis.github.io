@@ -40,7 +40,7 @@ console.log('--- RUNNING OPENFOAM 3D CFD & CAD STRUCTURES SELF-TEST ---');
 
 async function main() {
   const reach = createRhineReach();
-  const mesh = generateRiverGridMesh(reach, 25.0, 8);
+  const mesh = generateRiverGridMesh(reach, { targetStreamwiseSpacingM: 25.0, transverseCellsCount: 8 });
   console.log(`✓ Base mesh built with ${mesh.cells.length} cells (${mesh.nx} x ${mesh.ny})`);
 
   // ==========================================

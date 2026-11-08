@@ -125,7 +125,10 @@ export async function extractLocalDomain(
   };
 
   // 4. Build local finite-volume computational mesh
-  let localMesh = generateRiverGridMesh(localReach, targetCellSize, ny);
+  let localMesh = generateRiverGridMesh(localReach, {
+    targetStreamwiseSpacingM: targetCellSize,
+    transverseCellsCount: ny,
+  });
 
   // 5. Optional DEM terrain & bathymetry carving
   if (options.carveBathymetry !== false) {

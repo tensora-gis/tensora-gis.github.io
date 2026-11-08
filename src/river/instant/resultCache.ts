@@ -47,7 +47,7 @@ export function computeSimulationHash(
     `Q:${upstreamDischargeM3s.toFixed(1)}`,
     `n:${manningN.toFixed(4)}`,
     `structs:${activeStructs}`,
-    `turb:${turbParams.model}:${turbParams.eddyViscosityMax}`,
+    `turb:${turbParams.model}:${turbParams.eddyViscosityCapM2s}`,
     `sed:${sedParams.enabled ? sedParams.formula : 'off'}`,
   ].join('##');
 }

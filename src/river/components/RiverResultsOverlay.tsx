@@ -51,20 +51,6 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
 
   useEffect(() => {
     if (!map) return;
-    if (mesh.bounds) {
-      const [minLat, minLng, maxLat, maxLng] = mesh.bounds;
-      map.fitBounds(
-        [
-          [minLat, minLng],
-          [maxLat, maxLng],
-        ],
-        { padding: [50, 50], maxZoom: 18 }
-      );
-    }
-  }, [mesh.id, map]);
-
-  useEffect(() => {
-    if (!map) return;
 
     // Create custom Leaflet Canvas overlay layer
     const CanvasOverlay = L.Layer.extend({
@@ -205,27 +191,79 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
           }
         }
 
-        // Draw Hydraulic Structures Overlay
+        // Draw Hydraulic Structures Overlay (Circles, Polygons, Rectangles, Obstacles, Lines)
         for (const s of structures) {
           if (!s.enabled) continue;
-          ctx.strokeStyle = s.cadProperties?.color || '#f59e0b';
-          ctx.lineWidth = 3.5;
-          ctx.beginPath();
-          let started = false;
+          const color = s.cadProperties?.color || '#f59e0b';
 
-          for (const cellIdx of s.cellIndices) {
-            const cell = mesh.cells[cellIdx];
-            if (cell) {
-              const pt = map.latLngToContainerPoint([cell.centerLat, cell.centerLng]);
-              if (!started) {
-                ctx.moveTo(pt.x, pt.y);
-                started = true;
-              } else {
-                ctx.lineTo(pt.x, pt.y);
+          if (s.type === 'circle') {
+            const circle = s as any;
+            const centerCoord = circle.center || s.coordinates?.[0];
+            if (centerCoord) {
+              const ptCenter = map.latLngToContainerPoint([centerCoord.lat, centerCoord.lng]);
+              const ptRadius = map.latLngToContainerPoint([
+                centerCoord.lat + (circle.radiusM || 8.0) / 111320.0,
+                centerCoord.lng,
+              ]);
+              const rPx = Math.max(4, Math.hypot(ptCenter.x - ptRadius.x, ptCenter.y - ptRadius.y));
+
+              ctx.beginPath();
+              ctx.arc(ptCenter.x, ptCenter.y, rPx, 0, 2 * Math.PI);
+              ctx.fillStyle = `${color}44`;
+              ctx.fill();
+              ctx.strokeStyle = color;
+              ctx.lineWidth = 2.5;
+              ctx.stroke();
+            }
+          } else if (
+            (s.type === 'polygon' || s.type === 'rectangle' || s.type === 'obstacle') &&
+            s.coordinates &&
+            s.coordinates.length >= 3
+          ) {
+            ctx.beginPath();
+            const p0 = map.latLngToContainerPoint([s.coordinates[0].lat, s.coordinates[0].lng]);
+            ctx.moveTo(p0.x, p0.y);
+            for (let k = 1; k < s.coordinates.length; k++) {
+              const pk = map.latLngToContainerPoint([s.coordinates[k].lat, s.coordinates[k].lng]);
+              ctx.lineTo(pk.x, pk.y);
+            }
+            ctx.closePath();
+            ctx.fillStyle = `${color}55`;
+            ctx.fill();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+          } else if (s.coordinates && s.coordinates.length >= 2) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3.5;
+            ctx.beginPath();
+            const p0 = map.latLngToContainerPoint([s.coordinates[0].lat, s.coordinates[0].lng]);
+            ctx.moveTo(p0.x, p0.y);
+            for (let k = 1; k < s.coordinates.length; k++) {
+              const pk = map.latLngToContainerPoint([s.coordinates[k].lat, s.coordinates[k].lng]);
+              ctx.lineTo(pk.x, pk.y);
+            }
+            ctx.stroke();
+          } else {
+            // Fallback: draw through cell indices
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3.5;
+            ctx.beginPath();
+            let started = false;
+            for (const cellIdx of s.cellIndices) {
+              const cell = mesh.cells[cellIdx];
+              if (cell) {
+                const pt = map.latLngToContainerPoint([cell.centerLat, cell.centerLng]);
+                if (!started) {
+                  ctx.moveTo(pt.x, pt.y);
+                  started = true;
+                } else {
+                  ctx.lineTo(pt.x, pt.y);
+                }
               }
             }
+            ctx.stroke();
           }
-          ctx.stroke();
         }
       },
     });

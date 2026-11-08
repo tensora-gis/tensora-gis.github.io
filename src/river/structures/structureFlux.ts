@@ -22,6 +22,9 @@ import {
   RiverBridgePierStructure,
   RiverCustomDeflectorStructure,
   RiverStructureType,
+  RiverPolygonStructure,
+  RiverCircleStructure,
+  RiverLineStructure,
 } from './structureTypes';
 import { RiverGridCell, RiverGridMesh, RiverCoordinate } from '../types/riverReach';
 
@@ -72,9 +75,100 @@ export function evaluateStructureInteraction(
       return evaluateBridgePier(struct, hA, hB, faceLength);
     case 'custom-deflector':
       return evaluateCustomDeflector(struct, etaA, etaB, faceLength);
+    case 'line':
+    case 'polyline':
+      return evaluateLine(struct as RiverLineStructure, etaA, etaB, faceLength);
+    case 'polygon':
+    case 'rectangle':
+    case 'obstacle':
+      return evaluatePolygon(struct as RiverPolygonStructure, etaA, etaB, faceLength);
+    case 'circle':
+      return evaluateCircle(struct as RiverCircleStructure, hA, hB, faceLength);
     default:
       return { blocked: false, description: 'Standard' };
   }
+}
+
+function evaluateLine(
+  line: RiverLineStructure,
+  etaA: number,
+  etaB: number,
+  faceLength: number
+): StructureFluxCorrection {
+  const maxEta = Math.max(etaA, etaB);
+  if (maxEta <= line.crestElevationM) {
+    if (line.permeability <= 0.001) {
+      return {
+        blocked: true,
+        effectiveCrestElevationM: line.crestElevationM,
+        overrideDischargeM3s: 0,
+        description: `Impermeable wall crest ${line.crestElevationM.toFixed(2)}m`,
+      };
+    }
+    return {
+      blocked: false,
+      effectiveCrestElevationM: line.crestElevationM,
+      description: `Permeable wall (k=${line.permeability})`,
+    };
+  }
+  const headAboveCrest = maxEta - line.crestElevationM;
+  const cd = 1.65;
+  const qOver = cd * faceLength * Math.pow(Math.max(0, headAboveCrest), 1.5);
+  const dir = etaA >= etaB ? 1 : -1;
+  return {
+    blocked: false,
+    effectiveCrestElevationM: line.crestElevationM,
+    overrideDischargeM3s: dir * qOver,
+    description: `Wall overtopped by ${headAboveCrest.toFixed(2)}m`,
+  };
+}
+
+function evaluatePolygon(
+  poly: RiverPolygonStructure,
+  etaA: number,
+  etaB: number,
+  faceLength: number
+): StructureFluxCorrection {
+  const maxEta = Math.max(etaA, etaB);
+  const crest = poly.crestElevationM ?? 105.0;
+  if (maxEta <= crest) {
+    if (poly.solidMasking || poly.isClosedSolid || (poly.permeability ?? 0) <= 0.001) {
+      return {
+        blocked: true,
+        effectiveCrestElevationM: crest,
+        overrideDischargeM3s: 0,
+        description: `Solid polygon obstacle holds back water`,
+      };
+    }
+    return {
+      blocked: false,
+      effectiveCrestElevationM: crest,
+      description: `Permeable polygon structure`,
+    };
+  }
+  const headAbove = maxEta - crest;
+  const qOver = 1.6 * faceLength * Math.pow(Math.max(0, headAbove), 1.5);
+  const dir = etaA >= etaB ? 1 : -1;
+  return {
+    blocked: false,
+    effectiveCrestElevationM: crest,
+    overrideDischargeM3s: dir * qOver,
+    description: `Polygon structure overtopped by ${headAbove.toFixed(2)}m`,
+  };
+}
+
+function evaluateCircle(
+  circle: RiverCircleStructure,
+  hA: number,
+  hB: number,
+  faceLength: number
+): StructureFluxCorrection {
+  const avgH = 0.5 * (hA + hB);
+  return {
+    blocked: circle.solidMasking ?? true,
+    addedHeadlossM: circle.dragCoefficientCd * (avgH > 0.01 ? 0.05 : 0.0),
+    description: `Circle obstacle (R=${circle.radiusM.toFixed(1)}m, Cd=${circle.dragCoefficientCd})`,
+  };
 }
 
 /**
@@ -555,6 +649,51 @@ export function createCustomCadStructure(
         deflectionEfficiency: 0.85,
         dragCoeff: 1.2,
       } as RiverCustomDeflectorStructure;
+
+    case 'line':
+    case 'polyline':
+      return {
+        ...baseProps,
+        type,
+        crestElevationM: options.crestElevationM ?? Math.round((refBedElev + 3.0) * 10) / 10,
+        wallThicknessM: options.topWidthM ?? 2.0,
+        permeability: 0.0,
+        dragCoefficientCd: options.dischargeCoeff ?? 1.2,
+        deflectionAngleDeg: 0.0,
+      } as any;
+
+    case 'rectangle':
+    case 'polygon':
+    case 'obstacle':
+      return {
+        ...baseProps,
+        type,
+        crestElevationM: options.crestElevationM ?? Math.round((refBedElev + 3.0) * 10) / 10,
+        solidMasking: true,
+        permeability: 0.0,
+        dragCoefficientCd: options.dischargeCoeff ?? 1.4,
+      } as any;
+
+    case 'circle':
+      return {
+        ...baseProps,
+        type: 'circle',
+        radiusM: options.diameterOrSpanM ? options.diameterOrSpanM / 2.0 : 4.0,
+        crestElevationM: options.crestElevationM ?? Math.round((refBedElev + 3.0) * 10) / 10,
+        solidMasking: true,
+        permeability: 0.0,
+        dragCoefficientCd: options.dischargeCoeff ?? 1.0,
+      } as any;
+
+    default:
+      return {
+        ...baseProps,
+        type: 'custom-deflector',
+        heightM: 3.0,
+        wallThicknessM: 0.8,
+        deflectionEfficiency: 0.85,
+        dragCoeff: 1.2,
+      } as RiverCustomDeflectorStructure;
   }
 }
 
@@ -674,6 +813,47 @@ export function computeStructureFluxModifier(
   if (struct.type === 'custom-deflector') {
     const d = struct as RiverCustomDeflectorStructure;
     return { fluxReductionFactor: 1.0 - Math.min(0.95, d.deflectionEfficiency * 0.9) };
+  }
+
+  if (struct.type === 'circle') {
+    const c = struct as RiverCircleStructure;
+    if (c.solidMasking) {
+      return { fluxReductionFactor: 0.0 };
+    }
+    const obstructionRatio = Math.min(0.92, (2 * c.radiusM) / Math.max(2.0, faceLength));
+    return { fluxReductionFactor: 1.0 - obstructionRatio * 0.85 };
+  }
+
+  if (struct.type === 'polygon' || struct.type === 'rectangle' || struct.type === 'obstacle') {
+    const p = struct as RiverPolygonStructure;
+    const crest = p.crestElevationM ?? 105.0;
+    if (etaMax < crest) {
+      if (p.solidMasking || p.isClosedSolid) {
+        return { fluxReductionFactor: p.permeability ?? 0.0 };
+      }
+      return { fluxReductionFactor: Math.max(0.0, Math.min(1.0, p.permeability ?? 0.2)) };
+    } else {
+      const head = etaMax - crest;
+      const factor = Math.min(1.0, Math.max(0.05, head / Math.max(0.5, hL)));
+      const basePerm = p.permeability ?? 0.0;
+      return { fluxReductionFactor: Math.min(1.0, basePerm + (1.0 - basePerm) * factor) };
+    }
+  }
+
+  if (struct.type === 'line' || struct.type === 'polyline') {
+    const l = struct as RiverLineStructure;
+    if (l.solidMasking) {
+      return { fluxReductionFactor: 0.0 };
+    }
+    const crest = l.crestElevationM;
+    if (etaMax < crest) {
+      return { fluxReductionFactor: Math.max(0.0, Math.min(1.0, l.permeability ?? 0.0)) };
+    } else {
+      const head = etaMax - crest;
+      const factor = Math.min(1.0, Math.max(0.05, head / Math.max(0.5, hL)));
+      const basePerm = l.permeability ?? 0.0;
+      return { fluxReductionFactor: Math.min(1.0, basePerm + (1.0 - basePerm) * factor) };
+    }
   }
 
   let crestElev: number | undefined;

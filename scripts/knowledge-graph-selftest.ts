@@ -68,8 +68,9 @@ async function main() {
     swotVolume: {
       reachId: 'sample-danube-test',
       bottomWidthM: 295,
-      depthM: 6.2,
-      d50Mm: 12.0,
+      activeChannelDepthM: 6.2,
+      bankSlopeHtoV: 2.0,
+      uncalibratedVolumeM3: 150000,
       crossSectionShape: 'compound',
     },
   });

@@ -229,12 +229,24 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
     nextHv[c] = h * hydro.v[c];
   }
 
-  // Pre-index structures by cell
+  // Pre-index structures by cell and build solid cell mask
   const structMap = new Map<number, RiverHydraulicStructure>();
+  const solidMask = new Uint8Array(numCells);
+
   for (const s of structures) {
     if (s.enabled) {
       for (const cellIdx of s.cellIndices) {
-        structMap.set(cellIdx, s);
+        if (cellIdx >= 0 && cellIdx < numCells) {
+          structMap.set(cellIdx, s);
+          const isSolid =
+            s.type === 'obstacle' ||
+            (s as any).solidMasking === true ||
+            (s.type === 'circle' && (s as any).solidMasking !== false) ||
+            ((s.type === 'polygon' || s.type === 'rectangle' || s.type === 'line' || s.type === 'polyline') && (s as any).solidMasking);
+          if (isSolid) {
+            solidMask[cellIdx] = 1;
+          }
+        }
       }
     }
   }
@@ -257,6 +269,13 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
 
   // Compute fluxes across all faces for each cell
   for (let c = 0; c < numCells; c++) {
+    if (solidMask[c] === 1) {
+      nextH[c] = 0.0;
+      nextHu[c] = 0.0;
+      nextHv[c] = 0.0;
+      continue;
+    }
+
     const cell = mesh.cells[c];
     const hL = hydro.depth[c];
     const uL = hydro.u[c];
@@ -279,8 +298,16 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
       let vR = vL;
       let zR = zL;
 
-      if (nbr >= 0) {
-        // Internal face with neighbor
+      if (nbr >= 0 && solidMask[nbr] === 1) {
+        // Face connects to an internal solid obstacle cell: reflective wall BC
+        const vnL = uL * nx + vL * ny;
+        const vtL = -uL * ny + vL * nx;
+        uR = (-vnL) * nx - vtL * ny;
+        vR = (-vnL) * ny + vtL * nx;
+        hR = hL;
+        zR = zL;
+      } else if (nbr >= 0) {
+        // Internal face with fluid neighbor
         hR = hydro.depth[nbr];
         uR = hydro.u[nbr];
         vR = hydro.v[nbr];
@@ -409,8 +436,20 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
 
   // Update primary hydrodynamics state buffers
   for (let c = 0; c < numCells; c++) {
-    const h = nextH[c];
     const cell = mesh.cells[c];
+    if (solidMask[c] === 1) {
+      hydro.depth[c] = 0.0;
+      hydro.wse[c] = cell.bedElevation;
+      hydro.u[c] = 0.0;
+      hydro.v[c] = 0.0;
+      hydro.velocityMag[c] = 0.0;
+      hydro.froude[c] = 0.0;
+      hydro.shearStress[c] = 0.0;
+      hydro.isWet[c] = 0;
+      continue;
+    }
+
+    const h = nextH[c];
     hydro.depth[c] = h;
     hydro.wse[c] = cell.bedElevation + h;
 
