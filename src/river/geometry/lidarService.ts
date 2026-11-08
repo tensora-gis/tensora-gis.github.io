@@ -66,8 +66,34 @@ export async function sampleLidarTerrainForMesh(
   const ny = mesh.ny;
   const halfNy = (ny - 1) * 0.5;
 
+  // Fill any missing DEM values along station profiles via linear interpolation
+  const cleanElevs = [...elevs];
+  for (let idx = 0; idx < cleanElevs.length; idx++) {
+    if (cleanElevs[idx] === null || !isFinite(cleanElevs[idx]!)) {
+      // Find nearest valid elevation
+      let prevValid: number | null = null;
+      let nextValid: number | null = null;
+      for (let p = idx - 1; p >= 0; p--) {
+        if (cleanElevs[p] !== null && isFinite(cleanElevs[p]!)) {
+          prevValid = cleanElevs[p];
+          break;
+        }
+      }
+      for (let n = idx + 1; n < cleanElevs.length; n++) {
+        if (cleanElevs[n] !== null && isFinite(cleanElevs[n]!)) {
+          nextValid = cleanElevs[n];
+          break;
+        }
+      }
+      cleanElevs[idx] =
+        prevValid !== null && nextValid !== null
+          ? 0.5 * (prevValid + nextValid)
+          : prevValid ?? nextValid ?? mesh.cells[idx].bedElevation;
+    }
+  }
+
   mesh.cells.forEach((cell, idx) => {
-    const demElev = elevs[idx];
+    const demElev = cleanElevs[idx];
     if (demElev !== null && isFinite(demElev)) {
       validCount++;
       if (demElev < minElev) minElev = demElev;
@@ -91,6 +117,26 @@ export async function sampleLidarTerrainForMesh(
       }
     }
   });
+
+  // Downstream monotonic thalweg smoothing to eliminate erratic adverse humps
+  const minDownstreamSlope = 0.0001; // 0.1 m drop per km minimum
+  const nx = mesh.nx;
+  for (let j = 0; j < ny; j++) {
+    const lateralRatio = halfNy > 0 ? Math.abs((j - halfNy) / halfNy) : 0;
+    if (lateralRatio < channelRatio) {
+      for (let i = 1; i < nx; i++) {
+        const cPrev = (i - 1) * ny + j;
+        const cCur = i * ny + j;
+        if (cPrev < mesh.cells.length && cCur < mesh.cells.length) {
+          const dx = mesh.reachLengthM / Math.max(1, nx);
+          const maxAllowedElev = mesh.cells[cPrev].bedElevation - minDownstreamSlope * dx;
+          if (mesh.cells[cCur].bedElevation > maxAllowedElev) {
+            mesh.cells[cCur].bedElevation = 0.5 * (mesh.cells[cCur].bedElevation + maxAllowedElev);
+          }
+        }
+      }
+    }
+  }
 
   const coveragePct = points.length > 0 ? (validCount / points.length) * 100.0 : 0.0;
   const providerLabel = bulkResult.providers.includes('terrain-tiles')
@@ -260,15 +306,21 @@ export function interpolateLidarOntoMesh(
 
     const candidates: { distSq: number; elev: number }[] = [];
 
-    for (let dx = -2; dx <= 2; dx++) {
-      for (let dy = -2; dy <= 2; dy++) {
-        const bucket = spatialBuckets.get(`${bx + dx}_${by + dy}`);
-        if (!bucket) continue;
-        for (const p of bucket) {
-          const dSq = Math.pow(p.x - cx, 2) + Math.pow(p.y - cy, 2);
-          candidates.push({ distSq: dSq, elev: p.elev });
+    // Adaptive search radius: expand from 2 up to 8 buckets if LiDAR points are sparse
+    let searchRadiusBuckets = 2;
+    while (candidates.length < 3 && searchRadiusBuckets <= 8) {
+      candidates.length = 0;
+      for (let dx = -searchRadiusBuckets; dx <= searchRadiusBuckets; dx++) {
+        for (let dy = -searchRadiusBuckets; dy <= searchRadiusBuckets; dy++) {
+          const bucket = spatialBuckets.get(`${bx + dx}_${by + dy}`);
+          if (!bucket) continue;
+          for (const p of bucket) {
+            const dSq = Math.pow(p.x - cx, 2) + Math.pow(p.y - cy, 2);
+            candidates.push({ distSq: dSq, elev: p.elev });
+          }
         }
       }
+      searchRadiusBuckets += 2;
     }
 
     if (candidates.length === 0) continue;

@@ -92,9 +92,31 @@ export class RiverCfdEngine {
 
     this.solver.step(actualDt);
 
-    // Track boundary flux approximations
+    // Track boundary flux approximations (Reynolds Transport Theorem volume conservation)
     const qIn = this.boundaries.upstreamDischargeM3s;
     this.cumulativeInflowVolumeM3 += qIn * actualDt;
+
+    // Track downstream boundary outflow
+    let qOut = 0.0;
+    const nx = this.mesh.nx;
+    const ny = this.mesh.ny;
+    for (let j = 0; j < ny; j++) {
+      const c = (nx - 1) * ny + j;
+      if (c < this.mesh.cells.length) {
+        const cell = this.mesh.cells[c];
+        const h = state.hydro.depth[c];
+        if (h > 0.001) {
+          const u = state.hydro.u[c];
+          const v = state.hydro.v[c];
+          // Downstream face is face index 1
+          const [nxF, nyF] = cell.faceNormals[1] || [1, 0];
+          const lenF = cell.faceLengths[1] || 1.0;
+          const vnOut = Math.max(0.0, u * nxF + v * nyF);
+          qOut += h * vnOut * lenF;
+        }
+      }
+    }
+    this.cumulativeOutflowVolumeM3 += qOut * actualDt;
 
     this.recordGaugeReadings();
   }
@@ -232,12 +254,13 @@ export class RiverCfdEngine {
     const meanVel = wetCount > 0 ? sumVel / wetCount : 0;
     const meanNuT = numCells > 0 ? sumNuT / numCells : 0;
 
-    // Mass conservation error
-    const expectedVol = this.initialWaterVolumeM3 + this.cumulativeInflowVolumeM3;
-    const massError =
-      expectedVol > 0
-        ? Math.abs((currentVolM3 - expectedVol) / expectedVol) * 100.0
-        : 0;
+    // Reynolds Transport Theorem volume conservation audit
+    const expectedVol = Math.max(
+      0.0,
+      this.initialWaterVolumeM3 + this.cumulativeInflowVolumeM3 - this.cumulativeOutflowVolumeM3
+    );
+    const denom = Math.max(1.0, this.initialWaterVolumeM3 + this.cumulativeInflowVolumeM3);
+    const massError = Math.abs((currentVolM3 - expectedVol) / denom) * 100.0;
 
     const historiesObj: Record<string, GaugeTimePoint[]> = {};
     for (const [id, hist] of this.gaugeHistories.entries()) {

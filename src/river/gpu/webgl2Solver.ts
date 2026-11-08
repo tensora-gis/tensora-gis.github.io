@@ -205,21 +205,29 @@ void main() {
       float cL = sqrt(G * hStarL);
       float cR = sqrt(G * hStarR);
 
-      float sqrtHL = sqrt(max(0.0, hStarL));
-      float sqrtHR = sqrt(max(0.0, hStarR));
-      float denomRoe = sqrtHL + sqrtHR + 1.0e-6;
-      float uRoe = (sqrtHL * vnL + sqrtHR * vnR) / denomRoe;
-      float cRoe = sqrt(0.5 * G * (hStarL + hStarR));
-
-      float sL = min(vnL - cL, uRoe - cRoe);
-      float sR = max(vnR + cR, uRoe + cRoe);
-
-      float sStar = 0.0;
-      float denomStar = hStarR * (vnR - sR) - hStarL * (vnL - sL);
-      if (abs(denomStar) > 1.0e-6) {
-        sStar = (sL * hStarR * (vnR - sR) - sR * hStarL * (vnL - sL)) / denomStar;
+      float sL = 0.0;
+      float sR = 0.0;
+      if (hStarL <= H_DRY) {
+        sL = vnR - 2.0 * cR;
+        sR = vnR + cR;
+      } else if (hStarR <= H_DRY) {
+        sL = vnL - cL;
+        sR = vnL + 2.0 * cL;
       } else {
-        sStar = 0.5 * (sL + sR);
+        float sqrtHL = sqrt(max(0.0, hStarL));
+        float sqrtHR = sqrt(max(0.0, hStarR));
+        float denomRoe = sqrtHL + sqrtHR + 1.0e-6;
+        float uRoe = (sqrtHL * vnL + sqrtHR * vnR) / denomRoe;
+        float cRoe = sqrt(0.5 * G * (hStarL + hStarR));
+        sL = min(vnL - cL, uRoe - cRoe);
+        sR = max(vnR + cR, uRoe + cRoe);
+      }
+
+      float sStar = 0.5 * (sL + sR);
+      float denomStar = hStarR * (sR - vnR) - hStarL * (sL - vnL);
+      if (abs(denomStar) > 1.0e-6) {
+        float numStar = sR * hStarR * vnR - sL * hStarL * vnL + 0.5 * G * (hStarL * hStarL - hStarR * hStarR);
+        sStar = numStar / denomStar;
       }
 
       float fluxNormL_h = hStarL * vnL;
@@ -282,7 +290,7 @@ void main() {
   // Semi-implicit bed friction
   if (newH > H_DRY) {
     float velMag = sqrt(newHu * newHu + newHv * newHv) / newH;
-    float frictionDenom = 1.0 + (u_dt * G * n * n * velMag) / max(pow(newH, 1.3333333), 0.01);
+    float frictionDenom = 1.0 + (u_dt * G * n * n * velMag) / pow(max(newH, H_DRY), 1.3333333);
     newHu /= frictionDenom;
     newHv /= frictionDenom;
   } else {

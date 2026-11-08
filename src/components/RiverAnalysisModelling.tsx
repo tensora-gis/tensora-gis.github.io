@@ -44,9 +44,8 @@ import {
   findNearestGlobalRiver,
   convertEntryToReachDefinition,
 } from '../river/data/globalRiverDatabase';
-import { createStructureFromMapPoints } from '../river/structures/cadStructureBuilder';
 import { RiverDataService } from '../river/data/riverDataService';
-import { generateRiverGridMesh, RiverMeshOptions } from '../river/geometry/meshGenerator';
+import { generateRiverGridMesh, RiverMeshOptions, scaleMesh } from '../river/geometry/meshGenerator';
 import {
   createInitialHydroState,
   computeStableTimeStep,
@@ -67,7 +66,6 @@ import { SedimentPanel } from '../river/components/SedimentPanel';
 import { CalibrationPanel } from '../river/components/CalibrationPanel';
 import { SimulationPanel } from '../river/components/SimulationPanel';
 import { ReachPersistence } from '../river/components/ReachPersistence';
-import { buildRealWorldRiverReach } from '../river/data/globalRiverSearchService';
 import { runInstantSimulation } from '../river/instant/instantSimulation';
 import {
   createRiverExcelWorkbook,
@@ -77,12 +75,9 @@ import {
   evaluateSwotCalibration,
   SwotCalibrationResult,
 } from '../river/calibration/swotCalibration';
-import { applyTerrainAndCarveBathymetry } from '../river/geometry/geometryBuilder';
-import { sampleLidarTerrainForMesh } from '../river/geometry/lidarService';
-import { translateMesh, rotateMesh, centerMeshAt } from '../river/geometry/meshGenerator';
+import { translateMesh, rotateMesh } from '../river/geometry/meshGenerator';
 import {
   createStructureFromMapPolyline,
-  createRotatedRectanglePoints,
   createCirclePoints,
   findCellsInsidePolygon,
   reindexStructuresOnMesh,
@@ -140,13 +135,14 @@ export const RiverAnalysisModelling: React.FC = () => {
     lateralFloodplainWidthM: 0.0,
     localRefinementRatio: 1.0,
     localRefinementRadiusM: 20.0,
+    streamwiseStretchRatio: 1.0,
+    longitudinalTaperRatio: 1.0,
+    meanderCurvatureScale: 1.0,
+    asymmetricBankRatio: 0.0,
   }));
   const [basemapType, setBasemapType] = useState<'satellite' | 'streets'>('satellite');
   const [selectedCell, setSelectedCell] = useState<{ cell: RiverGridCell; idx: number } | null>(null);
-  const [isSamplingDEM, setIsSamplingDEM] = useState(false);
   const [isLidarStudioOpen, setIsLidarStudioOpen] = useState(false);
-  const [isProbeMode, setIsProbeMode] = useState(false);
-  const [probeStatus, setProbeStatus] = useState<string | null>(null);
 
   // CAD Interactive Hydraulic Structure Drawing Mode
   const [cadDrawMode, setCadDrawMode] = useState<RiverStructureType | null>(null);
@@ -231,8 +227,6 @@ export const RiverAnalysisModelling: React.FC = () => {
   isSimulatingRef.current = isSimulating;
   const simSpeedRef = useRef(simSpeed);
   simSpeedRef.current = simSpeed;
-  const isProbeModeRef = useRef(isProbeMode);
-  isProbeModeRef.current = isProbeMode;
   const cadDrawModeRef = useRef(cadDrawMode);
   cadDrawModeRef.current = cadDrawMode;
   const cadDrawPointsRef = useRef(cadDrawPoints);
@@ -471,33 +465,8 @@ export const RiverAnalysisModelling: React.FC = () => {
             `CAD: ${updatedPoints.length} vertices placed. Click next vertex, or click 'Complete' / 'Close Polygon'.`
           );
         }
-      } else if (isProbeModeRef.current) {
-        // Probe real river at clicked location
-        setProbeStatus(
-          `Probing river & sampling Copernicus DEM at [${e.latlng.lat.toFixed(4)}, ${e.latlng.lng.toFixed(4)}]...`
-        );
-        try {
-          const nearest = findNearestGlobalRiver(e.latlng.lat, e.latlng.lng, 250);
-          if (nearest) {
-            handleSelectReach(convertEntryToReachDefinition(nearest.river));
-          } else {
-            const probedReach = await buildRealWorldRiverReach(
-              `probed-${Date.now()}`,
-              `Probed River (${e.latlng.lat.toFixed(3)}°, ${e.latlng.lng.toFixed(3)}°)`,
-              e.latlng.lat,
-              e.latlng.lng,
-              { reachLengthM: 2500 }
-            );
-            handleSelectReach(probedReach);
-          }
-          setIsProbeMode(false);
-          setProbeStatus(null);
-        } catch (err: any) {
-          setProbeStatus(`Probe failed: ${err.message}`);
-          setTimeout(() => setProbeStatus(null), 4000);
-        }
       } else {
-        // Clicked anywhere on the world map: Auto-detect nearest river
+        // Clicked on the world map: Auto-detect nearest river
         const match = findNearestGlobalRiver(e.latlng.lat, e.latlng.lng, 3500);
         if (match) {
           setDetectedRiver(match);
@@ -1510,6 +1479,13 @@ export const RiverAnalysisModelling: React.FC = () => {
     }
   };
 
+  const handleCancelCadDraw = () => {
+    setCadDrawMode(null);
+    setCadDrawPoints([]);
+    setCadHoverFeedback(null);
+    setCadNotification(null);
+  };
+
   return (
     <div className="relative w-full h-[calc(100vh-64px)] flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans">
       {/* Top Header & Optimized Engineering Toolbar */}
@@ -1678,16 +1654,18 @@ export const RiverAnalysisModelling: React.FC = () => {
                 </div>
               )}
 
-              <span className="text-slate-600 px-1">|</span>
-              <button
-                onClick={handleExportExcelDirect}
-                disabled={isExportingExcel}
-                className="px-2 py-0.5 text-xs text-emerald-300 hover:text-white hover:bg-emerald-700/60 rounded font-medium transition"
-                title="Export 6-Sheet Engineering Excel File (.xlsx)"
-              >
-                {isExportingExcel ? 'Exporting...' : '📊 .xlsx'}
-              </button>
             </div>
+
+            {/* Direct 6-Sheet Engineering Excel Export */}
+            <button
+              onClick={handleExportExcelDirect}
+              disabled={isExportingExcel}
+              className="flex items-center gap-1 px-2.5 py-1 bg-emerald-800/80 hover:bg-emerald-700 text-emerald-100 border border-emerald-600 rounded-lg text-xs font-semibold transition shadow-sm"
+              title="Export 6-Sheet Professional Engineering Excel Model (.xlsx)"
+            >
+              <span>📊</span>
+              <span>{isExportingExcel ? 'Exporting...' : '.xlsx'}</span>
+            </button>
 
             {/* Project Save / Load Modal */}
             <button
@@ -1703,73 +1681,57 @@ export const RiverAnalysisModelling: React.FC = () => {
 
         {/* Row 2: CAD Structure Drawing & Physics Configuration */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-xs">
-          {/* CAD Hydraulic Structure Quick-Draw Toolbar */}
-          <div className="flex items-center gap-1 flex-wrap">
-            <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider mr-0.5">
+          {/* CAD Hydraulic Structure Unified Selector (Zero Duplication) */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">
               Draw:
             </span>
 
-            {/* Solid Civil Engineering Structure Quick-Draw Buttons */}
-            {[
-              { type: 'levee', label: '🧱 Levee' },
-              { type: 'weir', label: '🌊 Weir' },
-              { type: 'bridge-pier', label: '🏛️ Pier' },
-              { type: 'spurdike', label: '📐 Spur' },
-              { type: 'custom-deflector', label: '🧭 Deflector' },
-              { type: 'gate', label: '🚪 Gate' },
-              { type: 'rectangle', label: '🔲 Rect' },
-              { type: 'circle', label: '⭕ Circle' },
-              { type: 'obstacle', label: '⬛ Solid' },
-            ].map((btn) => (
-              <button
-                key={btn.type}
-                onClick={() => handleStartCadDraw(btn.type as RiverStructureType)}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium border transition ${
-                  cadDrawMode === btn.type
-                    ? 'bg-amber-600 border-amber-400 text-white shadow ring-2 ring-amber-400/50'
-                    : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
-                }`}
-                title={`Click map to draw solid civil ${btn.label}`}
-              >
-                {btn.label}
-              </button>
-            ))}
-
-            {/* Civil Structures Dropdown Selector */}
+            {/* Single Consolidated Civil Structures Dropdown */}
             <select
-              value={
-                ['spurdike', 'bridge-pier', 'levee', 'weir', 'bridge', 'culvert', 'gate', 'custom-deflector', 'embankment'].includes(
-                  cadDrawMode || ''
-                )
-                  ? cadDrawMode || ''
-                  : ''
-              }
+              value={cadDrawMode || ''}
               onChange={(e) => {
                 if (e.target.value) {
                   handleStartCadDraw(e.target.value as RiverStructureType);
                 }
               }}
-              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition cursor-pointer bg-slate-800 border-slate-700 text-slate-300 focus:outline-none focus:border-amber-400 ${
-                ['spurdike', 'bridge-pier', 'levee', 'weir', 'bridge', 'culvert', 'gate', 'custom-deflector', 'embankment'].includes(
-                  cadDrawMode || ''
-                )
+              className={`px-2.5 py-0.5 rounded text-xs font-semibold border transition cursor-pointer bg-slate-800 border-slate-700 text-slate-200 focus:outline-none focus:border-amber-400 ${
+                cadDrawMode
                   ? 'bg-amber-600 border-amber-400 text-white font-bold ring-2 ring-amber-400/50'
-                  : ''
+                  : 'hover:bg-slate-700'
               }`}
             >
               <option value="" disabled className="bg-slate-900 text-slate-400">
-                🏗️ Civil Structures ▾
+                {cadDrawMode ? `Drawing: ${cadDrawMode.toUpperCase()}` : '🏗️ Civil Structure / Obstacle ▾'}
               </option>
-              <option value="spurdike" className="bg-slate-900 text-slate-100">📐 Spur Dike / Groyne</option>
-              <option value="bridge-pier" className="bg-slate-900 text-slate-100">🏛️ Bridge Pier</option>
-              <option value="levee" className="bg-slate-900 text-slate-100">🧱 Levee / Floodwall</option>
-              <option value="weir" className="bg-slate-900 text-slate-100">🌊 Hydraulic Control Weir</option>
-              <option value="bridge" className="bg-slate-900 text-slate-100">🌉 Bridge Deck & Piers</option>
-              <option value="culvert" className="bg-slate-900 text-slate-100">🕳️ Culvert Barrel</option>
-              <option value="gate" className="bg-slate-900 text-slate-100">🚪 Sluice / Radial Gate</option>
-              <option value="custom-deflector" className="bg-slate-900 text-slate-100">🧭 Guide Bank Deflector</option>
-              <option value="embankment" className="bg-slate-900 text-slate-100">🛡️ Road Embankment</option>
+              <optgroup label="Civil Hydraulic Structures" className="bg-slate-900 text-amber-400 font-bold">
+                <option value="levee" className="bg-slate-900 text-slate-100">🧱 Levee / Floodwall</option>
+                <option value="weir" className="bg-slate-900 text-slate-100">🌊 Hydraulic Control Weir</option>
+                <option value="bridge-pier" className="bg-slate-900 text-slate-100">🏛️ Bridge Pier</option>
+                <option value="spurdike" className="bg-slate-900 text-slate-100">📐 Spur Dike / Groyne</option>
+                <option value="bridge" className="bg-slate-900 text-slate-100">🌉 Bridge Deck & Piers</option>
+                <option value="culvert" className="bg-slate-900 text-slate-100">🕳️ Culvert Barrel</option>
+                <option value="gate" className="bg-slate-900 text-slate-100">🚪 Sluice / Radial Gate</option>
+                <option value="custom-deflector" className="bg-slate-900 text-slate-100">🧭 Guide Bank Deflector</option>
+                <option value="embankment" className="bg-slate-900 text-slate-100">🛡️ Road Embankment</option>
+              </optgroup>
+              <optgroup label="Geometric Solid Obstacles" className="bg-slate-900 text-cyan-400 font-bold">
+                <option value="rectangle" className="bg-slate-900 text-slate-100">🔲 Rotated Rectangle</option>
+                <option value="circle" className="bg-slate-900 text-slate-100">⭕ Circular Cylinder / Island</option>
+                <option value="obstacle" className="bg-slate-900 text-slate-100">⬛ Arbitrary Solid Polygon</option>
+              </optgroup>
             </select>
+
+            {cadDrawMode && (
+              <button
+                type="button"
+                onClick={handleCancelCadDraw}
+                className="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-900/70 hover:bg-rose-800 text-rose-200 border border-rose-600 transition"
+                title="Cancel Drawing Mode"
+              >
+                Cancel ✕
+              </button>
+            )}
 
             {/* Manage Structures Inspector */}
             <button
@@ -1786,10 +1748,10 @@ export const RiverAnalysisModelling: React.FC = () => {
               className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 ml-0.5 shadow-sm"
               title="Open Computational Mesh Generation & CFD Discretization Studio"
             >
-              📐 Mesh Discretization ({mesh.nx}×{mesh.ny})
+              📐 Mesh Studio ({mesh.nx}×{mesh.ny})
             </button>
 
-            {/* Move & Align Mesh Button */}
+            {/* Move & Align Mesh Button (Direct Drag & Drop) */}
             <button
               onClick={() => {
                 const next = !isMoveMeshMode;
@@ -1804,7 +1766,7 @@ export const RiverAnalysisModelling: React.FC = () => {
                   ? 'bg-cyan-600 border-cyan-400 text-white shadow ring-2 ring-cyan-400/50'
                   : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-cyan-300'
               }`}
-              title="Translate, nudge or rotate the 2D finite-volume computational mesh"
+              title="Drag and drop directly on map to translate or rotate the computational mesh"
             >
               🕹️ Move Mesh
             </button>
@@ -1861,35 +1823,33 @@ export const RiverAnalysisModelling: React.FC = () => {
               )}
             </button>
 
-            {/* Thematic Field Mode Selector */}
-            <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-lg border border-slate-800">
-              {[
-                { id: 'depth', label: 'Depth' },
-                { id: 'velocity', label: '|V|' },
-                { id: 'pressure', label: 'Head H' },
-                { id: 'turbK', label: 'k' },
-                { id: 'wse', label: 'WSE' },
-                { id: 'froude', label: 'Fr' },
-                { id: 'shear', label: 'Shear' },
-                { id: 'nuT', label: 'ν_t' },
-                { id: 'sediment', label: 'Sed' },
-                { id: 'bedChange', label: 'Δz_b' },
-              ].map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setThematicDisplay(f.id as RiverThematicField)}
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-medium transition ${
-                    thematicDisplay === f.id ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
+            {/* Thematic Field Mode Dropdown + Visual Toggles */}
+            <div className="flex items-center gap-1.5 bg-slate-950/90 px-2 py-0.5 rounded-lg border border-slate-800 shadow-sm">
+              <span className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Field:</span>
+              <select
+                value={thematicDisplay}
+                onChange={(e) => setThematicDisplay(e.target.value as RiverThematicField)}
+                className="bg-slate-900 border border-slate-700 hover:border-cyan-500 text-cyan-300 text-[11px] font-medium rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-cyan-500 transition cursor-pointer"
+                title="Select hydrodynamic or sediment transport scalar field"
+              >
+                <option value="depth">Depth (h) [m]</option>
+                <option value="velocity">Velocity Magnitude |V| [m/s]</option>
+                <option value="pressure">Total Dynamic Head (H) [m]</option>
+                <option value="turbK">Turbulent Kinetic Energy (k) [m²/s²]</option>
+                <option value="wse">Water Surface Elevation (WSE) [m]</option>
+                <option value="froude">Froude Number (Fr)</option>
+                <option value="shear">Bed Shear Stress (τ_b) [N/m²]</option>
+                <option value="nuT">Eddy Viscosity (ν_t) [m²/s]</option>
+                <option value="sediment">Sediment Concentration (C) [kg/m³]</option>
+                <option value="bedChange">Bed Morphodynamics (Δz_b) [m]</option>
+              </select>
+
+              <div className="h-3.5 w-px bg-slate-800" />
 
               <button
                 onClick={() => setShowStreamlines(!showStreamlines)}
-                className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${
-                  showStreamlines ? 'bg-slate-800 border-cyan-400 text-cyan-300' : 'bg-transparent border-slate-800 text-slate-500'
+                className={`px-2 py-0.5 rounded text-[10px] font-medium border transition ${
+                  showStreamlines ? 'bg-cyan-950/70 border-cyan-500 text-cyan-300 shadow-sm' : 'bg-transparent border-slate-800 text-slate-500 hover:text-slate-400'
                 }`}
                 title="Toggle Flow-3D / Ansys Animated Streamlines"
               >
@@ -1898,8 +1858,8 @@ export const RiverAnalysisModelling: React.FC = () => {
 
               <button
                 onClick={() => setShowVectors(!showVectors)}
-                className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${
-                  showVectors ? 'bg-slate-800 border-cyan-500 text-cyan-300' : 'bg-transparent border-slate-800 text-slate-500'
+                className={`px-2 py-0.5 rounded text-[10px] font-medium border transition ${
+                  showVectors ? 'bg-cyan-950/70 border-cyan-500 text-cyan-300 shadow-sm' : 'bg-transparent border-slate-800 text-slate-500 hover:text-slate-400'
                 }`}
                 title="Toggle Velocity Direction Arrows"
               >
@@ -2178,25 +2138,6 @@ export const RiverAnalysisModelling: React.FC = () => {
           </div>
         )}
 
-        {/* Map Probe Mode Notice */}
-        {isProbeMode && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[500] bg-cyan-950/95 border border-cyan-500 text-cyan-200 px-4 py-2 rounded-xl text-xs font-semibold shadow-2xl flex items-center gap-3">
-            <span>📍 Map Probe Mode Active: Click ANYWHERE on Earth to simulate that river!</span>
-            <button
-              onClick={() => setIsProbeMode(false)}
-              className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px]"
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-
-        {probeStatus && (
-          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[500] bg-slate-900/95 border border-slate-700 text-slate-200 px-4 py-2 rounded-xl text-xs font-medium shadow-2xl animate-pulse">
-            {probeStatus}
-          </div>
-        )}
-
         {/* Floating Cell Inspector HUD */}
         {selectedCell && (
           <div className="absolute bottom-6 left-6 z-[500] bg-slate-900/95 backdrop-blur border border-slate-800 rounded-xl p-3.5 shadow-2xl text-xs max-w-xs w-full space-y-2">
@@ -2451,6 +2392,50 @@ export const RiverAnalysisModelling: React.FC = () => {
               </div>
             </div>
 
+            {/* Quick River Shape & Flume Presets */}
+            <div className="bg-slate-950/80 p-3 rounded-xl border border-slate-800">
+              <span className="text-slate-400 block text-[10px] uppercase font-semibold mb-2">
+                ⚡ Rapid Reach Shape Presets (Elongate, Compress, Taper, Flume)
+              </span>
+              <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                {[
+                  {
+                    name: '🏞️ Natural Reach',
+                    opts: { streamwiseStretchRatio: 1.0, channelWidthScaling: 1.0, longitudinalTaperRatio: 1.0, meanderCurvatureScale: 1.0, asymmetricBankRatio: 0.0 },
+                  },
+                  {
+                    name: '📏 Straight Flume',
+                    opts: { streamwiseStretchRatio: 1.0, channelWidthScaling: 1.0, longitudinalTaperRatio: 1.0, meanderCurvatureScale: 0.0, asymmetricBankRatio: 0.0 },
+                  },
+                  {
+                    name: '🌊 Convergent Gorge',
+                    opts: { streamwiseStretchRatio: 1.0, channelWidthScaling: 0.8, longitudinalTaperRatio: 0.4, meanderCurvatureScale: 0.8, asymmetricBankRatio: 0.0 },
+                  },
+                  {
+                    name: '🌾 Expanding Delta',
+                    opts: { streamwiseStretchRatio: 1.25, channelWidthScaling: 1.3, longitudinalTaperRatio: 2.2, meanderCurvatureScale: 1.0, asymmetricBankRatio: 0.0 },
+                  },
+                  {
+                    name: '🌀 S-Curve Meander',
+                    opts: { streamwiseStretchRatio: 1.0, channelWidthScaling: 1.0, longitudinalTaperRatio: 1.0, meanderCurvatureScale: 1.8, asymmetricBankRatio: 0.0 },
+                  },
+                  {
+                    name: '⚡ Compressed Chute',
+                    opts: { streamwiseStretchRatio: 0.5, channelWidthScaling: 0.7, longitudinalTaperRatio: 0.7, meanderCurvatureScale: 0.3, asymmetricBankRatio: 0.0 },
+                  },
+                ].map((preset, pIdx) => (
+                  <button
+                    key={pIdx}
+                    type="button"
+                    onClick={() => handleRegenerateMesh(preset.opts)}
+                    className="px-2 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-cyan-500/80 rounded-lg text-[11px] font-medium text-slate-200 transition text-center shadow-sm"
+                  >
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Parameters Form */}
             <div className="space-y-4 text-xs">
               {/* Row 1: nx and ny */}
@@ -2500,6 +2485,152 @@ export const RiverAnalysisModelling: React.FC = () => {
                   <div className="flex justify-between text-[10px] text-slate-500 mt-0.5">
                     <span>4 (Fast)</span>
                     <span>40 (Detailed Boundary Layer)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 2: Arbitrary Mesh Shaping & Deformation (Elongation / Compression / Taper / Meanders) */}
+              <div className="bg-slate-950/80 p-3.5 rounded-xl border border-cyan-900/50 shadow-inner space-y-3.5">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <span className="text-cyan-400 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <span>📐</span> Arbitrary Mesh Shaping & Longitudinal Deformation
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cur = meshOptions.streamwiseStretchRatio ?? 1.0;
+                        handleRegenerateMesh({ streamwiseStretchRatio: Math.max(0.2, Number((cur * 0.8).toFixed(2))) });
+                      }}
+                      className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-semibold rounded border border-slate-700"
+                      title="Compress mesh along river thalweg centerline by 20%"
+                    >
+                      -20% Compress
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRegenerateMesh({ streamwiseStretchRatio: 1.0, longitudinalTaperRatio: 1.0, meanderCurvatureScale: 1.0, asymmetricBankRatio: 0.0 })}
+                      className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold rounded border border-slate-700"
+                      title="Reset shape to 1.0x neutral"
+                    >
+                      1.0x Reset
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const cur = meshOptions.streamwiseStretchRatio ?? 1.0;
+                        handleRegenerateMesh({ streamwiseStretchRatio: Math.min(3.0, Number((cur * 1.2).toFixed(2))) });
+                      }}
+                      className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-emerald-300 text-[10px] font-semibold rounded border border-slate-700"
+                      title="Elongate mesh along river thalweg centerline by 20%"
+                    >
+                      +20% Elongate
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Streamwise Elongation / Compression */}
+                  <div>
+                    <div className="flex justify-between text-slate-300 font-semibold mb-1">
+                      <span>Streamwise Stretch / Compress</span>
+                      <span className="text-cyan-400 font-mono">
+                        {(meshOptions.streamwiseStretchRatio ?? 1.0).toFixed(2)}x
+                        {(meshOptions.streamwiseStretchRatio ?? 1.0) < 0.95 ? ' (Compressed)' : (meshOptions.streamwiseStretchRatio ?? 1.0) > 1.05 ? ' (Elongated)' : ' (Neutral)'}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="3.0"
+                      step="0.05"
+                      value={meshOptions.streamwiseStretchRatio ?? 1.0}
+                      onChange={(e) =>
+                        handleRegenerateMesh({ streamwiseStretchRatio: parseFloat(e.target.value) })
+                      }
+                      className="w-full accent-cyan-500 cursor-pointer"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">
+                      Elongates (&gt;1.0x) or compresses (&lt;1.0x) total reach length along the centerline
+                    </span>
+                  </div>
+
+                  {/* Longitudinal Channel Taper */}
+                  <div>
+                    <div className="flex justify-between text-slate-300 font-semibold mb-1">
+                      <span>Downstream Width Taper Ratio</span>
+                      <span className="text-cyan-400 font-mono">
+                        {(meshOptions.longitudinalTaperRatio ?? 1.0).toFixed(2)}x
+                        {(meshOptions.longitudinalTaperRatio ?? 1.0) < 0.95 ? ' (Converging Nozzle)' : (meshOptions.longitudinalTaperRatio ?? 1.0) > 1.05 ? ' (Expanding Delta)' : ' (Uniform)'}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.2"
+                      max="3.0"
+                      step="0.05"
+                      value={meshOptions.longitudinalTaperRatio ?? 1.0}
+                      onChange={(e) =>
+                        handleRegenerateMesh({ longitudinalTaperRatio: parseFloat(e.target.value) })
+                      }
+                      className="w-full accent-cyan-500 cursor-pointer"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">
+                      Tapers channel downstream: &lt;1.0 constricts into a gorge; &gt;1.0 widens into an estuary
+                    </span>
+                  </div>
+
+                  {/* Meander Curvature Scale */}
+                  <div>
+                    <div className="flex justify-between text-slate-300 font-semibold mb-1">
+                      <span>Meander Curvature Scale</span>
+                      <span className="text-cyan-400 font-mono">
+                        {(meshOptions.meanderCurvatureScale ?? 1.0).toFixed(2)}x
+                        {(meshOptions.meanderCurvatureScale ?? 1.0) === 0 ? ' (Straight Flume)' : (meshOptions.meanderCurvatureScale ?? 1.0) > 1.05 ? ' (Amplified Bends)' : ' (Natural)'}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.0"
+                      max="2.5"
+                      step="0.05"
+                      value={meshOptions.meanderCurvatureScale ?? 1.0}
+                      onChange={(e) =>
+                        handleRegenerateMesh({ meanderCurvatureScale: parseFloat(e.target.value) })
+                      }
+                      className="w-full accent-cyan-500 cursor-pointer"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">
+                      0.0x converts into a straight hydraulic lab flume; &gt;1.0x amplifies sinuous oxbow bends
+                    </span>
+                  </div>
+
+                  {/* Asymmetric Bank Skew */}
+                  <div>
+                    <div className="flex justify-between text-slate-300 font-semibold mb-1">
+                      <span>Asymmetric Bank Skew</span>
+                      <span className="text-cyan-400 font-mono">
+                        {(meshOptions.asymmetricBankRatio ?? 0.0) < -0.05
+                          ? `Left Bank Skew (${(meshOptions.asymmetricBankRatio ?? 0).toFixed(2)})`
+                          : (meshOptions.asymmetricBankRatio ?? 0.0) > 0.05
+                          ? `Right Bank Skew (${(meshOptions.asymmetricBankRatio ?? 0).toFixed(2)})`
+                          : 'Symmetric (0.00)'}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-1.0"
+                      max="1.0"
+                      step="0.05"
+                      value={meshOptions.asymmetricBankRatio ?? 0.0}
+                      onChange={(e) =>
+                        handleRegenerateMesh({ asymmetricBankRatio: parseFloat(e.target.value) })
+                      }
+                      className="w-full accent-cyan-500 cursor-pointer"
+                    />
+                    <span className="text-[10px] text-slate-400 mt-0.5 block">
+                      Biases grid lateral width toward left (-1.0) or right (+1.0) bank for cut-bank shear
+                    </span>
                   </div>
                 </div>
               </div>
@@ -2615,11 +2746,15 @@ export const RiverAnalysisModelling: React.FC = () => {
                     lateralFloodplainWidthM: 0.0,
                     localRefinementRatio: 1.0,
                     localRefinementRadiusM: 20.0,
+                    streamwiseStretchRatio: 1.0,
+                    longitudinalTaperRatio: 1.0,
+                    meanderCurvatureScale: 1.0,
+                    asymmetricBankRatio: 0.0,
                   })
                 }
                 className="text-xs text-amber-400 hover:underline font-semibold"
               >
-                Reset Default CFD Discretization
+                Reset Default CFD Discretization & Shape
               </button>
 
               <button

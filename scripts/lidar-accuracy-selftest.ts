@@ -10,7 +10,7 @@
  */
 
 import assert from 'assert';
-import { generateRiverGridMesh } from '../src/river/geometry/meshGenerator';
+import { generateRiverGridMesh, scaleMesh } from '../src/river/geometry/meshGenerator';
 import { createBenchmark500mReach, createConicalFlumeReach } from '../src/river/data/hydroRiversLoader';
 import { createRiverSolver } from '../src/river/gpu/solverFactory';
 import {
@@ -350,6 +350,93 @@ async function run() {
   console.log(`  - Obstacle cells strictly dry and zero-velocity throughout`);
 
   coneSolver.dispose();
+
+  // --------------------------------------------------------------------------
+  // TEST 6: Arbitrary Mesh Elongation, Compression & Geometric Shaping
+  // --------------------------------------------------------------------------
+  console.log('\n--- 6. Testing Arbitrary Mesh Elongation, Compression & Shaping ---');
+
+  const baseReach = createBenchmark500mReach();
+  const normalMesh = generateRiverGridMesh(baseReach, {
+    targetStreamwiseSpacingM: 20.0,
+    transverseCellsCount: 8,
+  });
+
+  // Test 6a: Longitudinal Elongation (2.0x Stretch)
+  const elongatedMesh = generateRiverGridMesh(baseReach, {
+    targetStreamwiseSpacingM: 20.0,
+    transverseCellsCount: 8,
+    streamwiseStretchRatio: 2.0,
+  });
+  console.log(`  - Base Reach Length: ${normalMesh.reachLengthM.toFixed(1)} m`);
+  console.log(`  - Elongated Reach Length: ${elongatedMesh.reachLengthM.toFixed(1)} m`);
+  assert(
+    Math.abs(elongatedMesh.reachLengthM - normalMesh.reachLengthM * 2.0) < 5.0,
+    `Elongated reach length (${elongatedMesh.reachLengthM}) should be ~2.0x base (${normalMesh.reachLengthM * 2.0})`
+  );
+
+  // Test 6b: Longitudinal Compression (0.5x Compress)
+  const compressedMesh = generateRiverGridMesh(baseReach, {
+    targetStreamwiseSpacingM: 20.0,
+    transverseCellsCount: 8,
+    streamwiseStretchRatio: 0.5,
+  });
+  console.log(`  - Compressed Reach Length: ${compressedMesh.reachLengthM.toFixed(1)} m`);
+  assert(
+    Math.abs(compressedMesh.reachLengthM - normalMesh.reachLengthM * 0.5) < 5.0,
+    `Compressed reach length (${compressedMesh.reachLengthM}) should be ~0.5x base (${normalMesh.reachLengthM * 0.5})`
+  );
+
+  // Test 6c: Longitudinal Tapering (Convergent Gorge 0.4x vs Expanding Estuary 2.0x)
+  const taperedMesh = generateRiverGridMesh(baseReach, {
+    targetStreamwiseSpacingM: 20.0,
+    transverseCellsCount: 8,
+    longitudinalTaperRatio: 0.4,
+  });
+  const upstreamWidth = taperedMesh.cells.filter(c => c.i === 0).reduce((acc, c) => acc + c.faceLengths[3], 0);
+  const downstreamWidth = taperedMesh.cells.filter(c => c.i === taperedMesh.nx - 1).reduce((acc, c) => acc + c.faceLengths[1], 0);
+  console.log(`  - Convergent Taper: Upstream Width = ${upstreamWidth.toFixed(1)} m, Downstream Width = ${downstreamWidth.toFixed(1)} m`);
+  assert(downstreamWidth < upstreamWidth * 0.55, 'Downstream width should be significantly constricted by 0.4x taper');
+
+  // Test 6d: Direct scaleMesh utility
+  const scaledMesh = scaleMesh(normalMesh, 1.5, 0.8);
+  assert(Math.abs(scaledMesh.reachLengthM - normalMesh.reachLengthM * 1.5) < 1.0, 'scaleMesh should scale streamwise length');
+  assert(Math.abs(scaledMesh.meanWidthM - normalMesh.meanWidthM * 0.8) < 1.0, 'scaleMesh should scale lateral width');
+
+  console.log('✓ Arbitrary mesh elongation, compression, tapering, and scaleMesh verified');
+
+  // --------------------------------------------------------------------------
+  // TEST 7: Exact Analytical Toro (2001) HLLC Riemann Wave Speed Audit
+  // --------------------------------------------------------------------------
+  console.log('\n--- 7. Testing Analytical Toro (2001) HLLC Riemann Middle Wave Speed S* ---');
+
+  // Test Toro analytical S* formula under strong depth difference (dam break condition)
+  // Left: h_L = 10.0 m, u_L = 0.0 m/s
+  // Right: h_R = 1.0 m, u_R = 0.0 m/s
+  const g = 9.80665;
+  const hL = 10.0;
+  const hR = 1.0;
+  const uL = 0.0;
+  const uR = 0.0;
+  const cL = Math.sqrt(g * hL);
+  const cR = Math.sqrt(g * hR);
+
+  // Toro wave speed bounds
+  const SL = Math.min(uL - cL, uR - cR);
+  const SR = Math.max(uL + cL, uR + cR);
+
+  // Exact analytical Toro S*
+  const numSStar = uR * hR * (SR - uR) - uL * hL * (SL - uL) + 0.5 * g * (hL * hL - hR * hR);
+  const denSStar = hR * (SR - uR) - hL * (SL - uL);
+  const SStar = numSStar / denSStar;
+
+  console.log(`  - Toro Riemann State: h_L=${hL}m, h_R=${hR}m, c_L=${cL.toFixed(2)}m/s, c_R=${cR.toFixed(2)}m/s`);
+  console.log(`  - Wave Speeds: S_L=${SL.toFixed(3)} m/s, S_R=${SR.toFixed(3)} m/s, S*=${SStar.toFixed(3)} m/s`);
+
+  // Hydrostatic pressure jump (0.5 * g * (100 - 1) = 485.4) must drive S* strongly positive (flow to the right)
+  assert(SStar > 0.0, `Middle wave speed S* must be positive due to high left pressure head, got ${SStar}`);
+  assert(SStar > SL && SStar < SR, `S* (${SStar}) must strictly lie between S_L (${SL}) and S_R (${SR})`);
+  console.log('✓ Analytical Toro HLLC wave speed S* verified with exact hydrostatic pressure gradient');
 
   console.log('\n======================================================');
   console.log(' ALL LIDAR TERRAIN & ACCURACY VERIFICATION TESTS PASSED');

@@ -195,15 +195,15 @@ function stepKEpsilon(
     const Pk = nuTOld * Math.pow(S, 2);
     turb.pK[i] = Pk;
 
-    // Bed wall functions
+    // Depth-averaged bed-generated turbulence source terms (Rastogi & Rodi 1978)
     let bedSourceK = 0;
     let bedSourceEps = 0;
     if (params.wallFunctionsEnabled) {
       const uStar = computeFrictionVelocity(hydro.velocityMag[i], h, cell.manningN);
-      const y0 = computeRoughnessLength(cell.manningN);
-      const eq = computeEquilibriumBedTurbulence(uStar, y0, params.cMu);
-      bedSourceK = (eq.kBed - kOld) * (uStar / h);
-      bedSourceEps = (eq.epsBed - epsOld) * (uStar / h);
+      const hEff = Math.max(0.05, h);
+      // P_kv = u_*^3 / h; P_epsv = 3.6 * u_*^4 / h^2
+      bedSourceK = Math.pow(uStar, 3) / hEff;
+      bedSourceEps = (3.6 * Math.pow(uStar, 4)) / (hEff * hEff);
     }
 
     // Spatial advection and diffusion of k and epsilon across faces

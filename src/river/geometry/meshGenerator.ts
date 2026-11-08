@@ -176,18 +176,30 @@ export interface RiverMeshOptions {
   originOffsetXM?: number;               // Mesh translation East (m)
   originOffsetYM?: number;               // Mesh translation North (m)
   rotationAngleDeg?: number;             // Mesh rotation (deg)
+
+  // Advanced Arbitrary Shape Generation, Elongation & Compression along River Shape:
+  streamwiseStretchRatio?: number;       // Elongate (>1.0) or Compress (<1.0) reach along centerline (0.2x to 5.0x)
+  longitudinalTaperRatio?: number;       // Linear width taper from inlet to outlet (0.2x convergent to 5.0x divergent)
+  meanderCurvatureScale?: number;        // Amplify (>1.0) or straighten (0=straight flume) river centerline sinuosity
+  asymmetricBankRatio?: number;          // Asymmetric lateral bank bias (-1.0 left heavy to +1.0 right heavy)
+  sinusoidalWaveAmplitudeM?: number;     // Superimpose sinusoidal meandering wave amplitude (meters)
+  sinusoidalWavePeriods?: number;        // Number of meandering wave cycles along reach
 }
 
 /**
- * Generate 2D RiverGridMesh from reach definition
+ * Generate 2D RiverGridMesh from reach definition with arbitrary shape deformation,
+ * longitudinal elongation/compression, tapering, and sinuosity modulation.
  */
 export function generateRiverGridMesh(
   reach: RiverReachDefinition,
   options: RiverMeshOptions = {}
 ): RiverGridMesh {
+  const stretchRatio = Math.max(0.1, Math.min(10.0, options.streamwiseStretchRatio ?? 1.0));
+  const effectiveReachLengthM = reach.reachLengthM * stretchRatio;
+
   let targetSpacingM = options.targetStreamwiseSpacingM || 20.0;
   if (options.streamwiseCellsCount && options.streamwiseCellsCount > 1) {
-    targetSpacingM = reach.reachLengthM / options.streamwiseCellsCount;
+    targetSpacingM = effectiveReachLengthM / options.streamwiseCellsCount;
   }
   const ny = Math.max(3, options.transverseCellsCount || 8);
   const widthMult = (options.channelWidthScaling ?? 1.0) * (options.domainWidthMultiplier ?? 1.0);
@@ -196,8 +208,65 @@ export function generateRiverGridMesh(
   const refRatio = Math.max(1.0, options.localRefinementRatio ?? 1.0);
   const refRadiusM = Math.max(10.0, options.localRefinementRadiusM ?? 30.0);
 
-  // 1. Resample centerline
-  const centerline = resampleCenterline(reach.centerline, targetSpacingM);
+  const taperRatio = Math.max(0.1, Math.min(10.0, options.longitudinalTaperRatio ?? 1.0));
+  const curvatureScale = options.meanderCurvatureScale ?? 1.0;
+  const bankSkew = Math.max(-1.0, Math.min(1.0, options.asymmetricBankRatio ?? 0.0));
+  const waveAmpM = options.sinusoidalWaveAmplitudeM ?? 0.0;
+  const wavePeriods = options.sinusoidalWavePeriods ?? 1.0;
+
+  // 1. Resample and shape centerline
+  let rawCenterline = reach.centerline;
+
+  // Apply streamwise elongation / compression scaling and meander curvature modulation
+  if (rawCenterline.length > 1) {
+    const originLat = rawCenterline[0].lat;
+    const originLng = rawCenterline[0].lng;
+    const pEnd = rawCenterline[rawCenterline.length - 1];
+    const [endX, endY] = geoToLocalMeters(pEnd.lat, pEnd.lng, originLat, originLng);
+    const chordLen = Math.max(1.0, Math.hypot(endX, endY));
+    const chordUx = endX / chordLen;
+    const chordUy = endY / chordLen;
+    const chordNormX = -chordUy;
+    const chordNormY = chordUx;
+
+    rawCenterline = rawCenterline.map((pt, idx) => {
+      const [mX, mY] = geoToLocalMeters(pt.lat, pt.lng, originLat, originLng);
+      const frac = idx / Math.max(1, rawCenterline.length - 1);
+
+      // Straight chord point
+      const chordX = frac * endX;
+      const chordY = frac * endY;
+
+      // Meander deviation vector
+      const devX = mX - chordX;
+      const devY = mY - chordY;
+
+      // Modulate meander curvature (0.0 = straight flume, 1.0 = natural, >1.0 = amplified loops)
+      let shapedX = chordX + devX * curvatureScale;
+      let shapedY = chordY + devY * curvatureScale;
+
+      // Superimpose harmonic sine wave if requested
+      if (waveAmpM > 0.0) {
+        const sineOffset = waveAmpM * Math.sin(2.0 * Math.PI * wavePeriods * frac);
+        shapedX += sineOffset * chordNormX;
+        shapedY += sineOffset * chordNormY;
+      }
+
+      // Apply streamwise stretch / compression
+      shapedX *= stretchRatio;
+      shapedY *= stretchRatio;
+
+      const [newLat, newLng] = localMetersToGeo(shapedX, shapedY, originLat, originLng);
+      return {
+        ...pt,
+        lat: newLat,
+        lng: newLng,
+        stationM: (pt.stationM ?? 0) * stretchRatio,
+      };
+    });
+  }
+
+  const centerline = resampleCenterline(rawCenterline, targetSpacingM);
   const nx = centerline.length - 1; // Streamwise quad cells
 
   const originLat = centerline[0].lat;
@@ -217,6 +286,10 @@ export function generateRiverGridMesh(
   for (let i = 0; i <= nx; i++) {
     const pt = centerline[i];
     const [cx, cy] = geoToLocalMeters(pt.lat, pt.lng, originLat, originLng);
+    const stationFrac = i / Math.max(1, nx);
+
+    // Dynamic longitudinal width taper (TaperRatio: 0.5 = converging gorge, 2.0 = expanding delta)
+    const localTaper = 1.0 + (taperRatio - 1.0) * stationFrac;
 
     // Centered tangent vector for smooth curvilinear mesh grid alignment
     let tx = 1.0;
@@ -249,9 +322,9 @@ export function generateRiverGridMesh(
     const normX = -ty;
     const normY = tx;
 
-    // Cross-section width at this station + lateral floodplain extension
-    const channelWidth = (pt.widthM || reach.meanWidthM || 30.0) * widthMult;
-    const totalWidth = channelWidth + 2.0 * floodplainW;
+    // Cross-section width at this station + lateral floodplain extension with tapering
+    const baseChannelWidth = (pt.widthM || reach.meanWidthM || 30.0) * widthMult * localTaper;
+    const totalWidth = baseChannelWidth + 2.0 * floodplainW * localTaper;
     const halfWidth = totalWidth / 2.0;
 
     // Check proximity to solid structures for OpenFOAM-style boundary layer refinement / grading
@@ -287,21 +360,22 @@ export function generateRiverGridMesh(
     let blendT = 0.0;
 
     if (sections && sections.length > 0) {
-      if (sections.length === 1 || pt.stationM <= sections[0].stationM) {
+      const baseStation = (pt.stationM ?? 0) / stretchRatio;
+      if (sections.length === 1 || baseStation <= sections[0].stationM) {
         csA = sections[0];
         csB = sections[0];
         blendT = 0.0;
-      } else if (pt.stationM >= sections[sections.length - 1].stationM) {
+      } else if (baseStation >= sections[sections.length - 1].stationM) {
         csA = sections[sections.length - 1];
         csB = sections[sections.length - 1];
         blendT = 1.0;
       } else {
         for (let k = 0; k < sections.length - 1; k++) {
-          if (pt.stationM >= sections[k].stationM && pt.stationM <= sections[k + 1].stationM) {
+          if (baseStation >= sections[k].stationM && baseStation <= sections[k + 1].stationM) {
             csA = sections[k];
             csB = sections[k + 1];
             const dS = Math.max(1.0, csB.stationM - csA.stationM);
-            blendT = (pt.stationM - csA.stationM) / dS;
+            blendT = (baseStation - csA.stationM) / dS;
             break;
           }
         }
@@ -331,6 +405,11 @@ export function generateRiverGridMesh(
       // Base lateral fraction from -1 (left bank) to +1 (right bank)
       let eta = -1.0 + (2.0 * j) / ny;
 
+      // Apply asymmetric bank skew (-1.0 left heavy to +1.0 right heavy)
+      if (bankSkew !== 0.0) {
+        eta = eta + bankSkew * (1.0 - eta * eta) * 0.45;
+      }
+
       // Apply boundary layer cell grading towards solid structures
       if (refineWeight > 0.0) {
         const dEta = (targetEta - eta) * refineWeight * (1.0 - Math.abs(eta) * 0.4);
@@ -356,8 +435,8 @@ export function generateRiverGridMesh(
         const dz = sampleCrossSectionElevation(csA.points, shiftedLateralM, csA.invertElevM) - csA.invertElevM;
         nodeBed = stationInvert + Math.max(0.0, dz);
       } else {
-        const channelHalfW = channelWidth * 0.5;
-        const depth = Math.max(1.0, channelWidth * 0.06);
+        const channelHalfW = baseChannelWidth * 0.5;
+        const depth = Math.max(1.0, baseChannelWidth * 0.06);
         const relX = lateralDistM - bendShiftM;
         if (Math.abs(lateralDistM) <= channelHalfW) {
           const frac = relX / Math.max(1.0, channelHalfW);
@@ -497,7 +576,7 @@ export function generateRiverGridMesh(
     name: reach.name,
     description: reach.description,
     source: reach.source,
-    reachLengthM: reach.reachLengthM,
+    reachLengthM: effectiveReachLengthM,
     meanWidthM: (reach.meanWidthM || 30.0) * widthMult + 2.0 * floodplainW,
     nx,
     ny,
@@ -749,4 +828,107 @@ export function shiftMeshAlongThalweg(
 
   return translateMesh(baseMesh, totalShiftX, totalShiftY);
 }
+
+/**
+ * Directly scales or elongates/compresses an existing computational mesh along its
+ * longitudinal (streamwise) and lateral directions, recalculating quad cell areas,
+ * face lengths, and updated geodetic bounds.
+ */
+export function scaleMesh(
+  mesh: RiverGridMesh,
+  streamwiseScale: number = 1.0,
+  lateralScale: number = 1.0
+): RiverGridMesh {
+  if (streamwiseScale === 1.0 && lateralScale === 1.0) return mesh;
+
+  const originLat = mesh.centerline[0]?.lat || (mesh.bounds[0] + mesh.bounds[2]) * 0.5;
+  const originLng = mesh.centerline[0]?.lng || (mesh.bounds[1] + mesh.bounds[3]) * 0.5;
+  const pEnd = mesh.centerline[mesh.centerline.length - 1] || mesh.centerline[0];
+  const [endX, endY] = geoToLocalMeters(pEnd.lat, pEnd.lng, originLat, originLng);
+  const reachLength = Math.max(1.0, Math.hypot(endX, endY));
+  const tX = endX / reachLength;
+  const tY = endY / reachLength;
+  const nX = -tY;
+  const nY = tX;
+
+  const updatedCells: RiverGridCell[] = mesh.cells.map((cell) => {
+    // Project cell corners into local longitudinal (s) and lateral (n) coordinates
+    const updatedCorners: [number, number][] = cell.corners.map(([cLat, cLng]) => {
+      const [mX, mY] = geoToLocalMeters(cLat, cLng, originLat, originLng);
+      const s = mX * tX + mY * tY;
+      const n = mX * nX + mY * nY;
+      const sScaled = s * streamwiseScale;
+      const nScaled = n * lateralScale;
+      const scaledX = sScaled * tX + nScaled * nX;
+      const scaledY = sScaled * tY + nScaled * nY;
+      return localMetersToGeo(scaledX, scaledY, originLat, originLng);
+    });
+
+    // Scaled centroid
+    const [cMX, cMY] = geoToLocalMeters(cell.centerLat, cell.centerLng, originLat, originLng);
+    const cs = cMX * tX + cMY * tY;
+    const cn = cMX * nX + cMY * nY;
+    const csScaled = cs * streamwiseScale;
+    const cnScaled = cn * lateralScale;
+    const scaledCX = csScaled * tX + cnScaled * nX;
+    const scaledCY = csScaled * tY + cnScaled * nY;
+    const [newCenterLat, newCenterLng] = localMetersToGeo(scaledCX, scaledCY, originLat, originLng);
+
+    // Recompute face lengths
+    const faceLengths: number[] = [];
+    for (let f = 0; f < 4; f++) {
+      const pA = updatedCorners[f];
+      const pB = updatedCorners[(f + 1) % 4];
+      const [ax, ay] = geoToLocalMeters(pA[0], pA[1], originLat, originLng);
+      const [bx, by] = geoToLocalMeters(pB[0], pB[1], originLat, originLng);
+      faceLengths.push(Math.max(1.0e-4, Math.hypot(bx - ax, by - ay)));
+    }
+
+    return {
+      ...cell,
+      centerX: scaledCX,
+      centerY: scaledCY,
+      centerLat: newCenterLat,
+      centerLng: newCenterLng,
+      corners: updatedCorners,
+      areaM2: Math.max(1.0, cell.areaM2 * streamwiseScale * lateralScale),
+      faceLengths,
+    };
+  });
+
+  const updatedCenterline: RiverCenterlinePoint[] = mesh.centerline.map((pt) => {
+    const [mX, mY] = geoToLocalMeters(pt.lat, pt.lng, originLat, originLng);
+    const s = mX * tX + mY * tY;
+    const n = mX * nX + mY * nY;
+    const scaledX = s * streamwiseScale * tX + n * lateralScale * nX;
+    const scaledY = s * streamwiseScale * tY + n * lateralScale * nY;
+    const [newLat, newLng] = localMetersToGeo(scaledX, scaledY, originLat, originLng);
+    return {
+      ...pt,
+      lat: newLat,
+      lng: newLng,
+      stationM: (pt.stationM ?? 0) * streamwiseScale,
+    };
+  });
+
+  let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+  for (const c of updatedCells) {
+    for (const [lat, lng] of c.corners) {
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+    }
+  }
+
+  return {
+    ...mesh,
+    reachLengthM: mesh.reachLengthM * streamwiseScale,
+    meanWidthM: mesh.meanWidthM * lateralScale,
+    cells: updatedCells,
+    centerline: updatedCenterline,
+    bounds: [minLat, minLng, maxLat, maxLng],
+  };
+}
+
 

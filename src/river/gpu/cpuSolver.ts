@@ -192,7 +192,11 @@ export function computeStableTimeStep(
     const waveSpeed = Math.sqrt(G * h);
     const maxSpeed = vel + waveSpeed;
 
-    const charLength = Math.sqrt(cell.areaM2);
+    const maxFaceLen =
+      cell.faceLengths && cell.faceLengths.length > 0
+        ? Math.max(...cell.faceLengths)
+        : Math.sqrt(cell.areaM2);
+    const charLength = Math.min(Math.sqrt(cell.areaM2), cell.areaM2 / Math.max(1.0, maxFaceLen));
     const dtCell = (cfl * charLength) / Math.max(maxSpeed, 0.1);
     if (dtCell < minDt) {
       minDt = dtCell;
@@ -244,26 +248,35 @@ export function computeHllcFlux(
   const vnR = uR * nx + vR * ny;
   const vtR = -uR * ny + vR * nx;
 
-  // Wave speeds sL and sR with Roe celerity
+  // Wave speeds sL and sR with exact dry-bed rarefaction celerity (Ritter) & Roe averaging
   const cL = Math.sqrt(G * hStarL);
   const cR = Math.sqrt(G * hStarR);
 
-  const sqrtHL = Math.sqrt(Math.max(0, hStarL));
-  const sqrtHR = Math.sqrt(Math.max(0, hStarR));
-  const denomRoe = sqrtHL + sqrtHR + 1e-12;
-  const uRoe = (sqrtHL * vnL + sqrtHR * vnR) / denomRoe;
-  const cRoe = Math.sqrt(0.5 * G * (hStarL + hStarR));
-
-  const sL = Math.min(vnL - cL, uRoe - cRoe);
-  const sR = Math.max(vnR + cR, uRoe + cRoe);
-
-  // Toro (2001) contact middle wave speed S* for shallow water
-  let sStar = 0.0;
-  const denomStar = hStarR * (vnR - sR) - hStarL * (vnL - sL);
-  if (Math.abs(denomStar) > 1e-6) {
-    sStar = (sL * hStarR * (vnR - sR) - sR * hStarL * (vnL - sL)) / denomStar;
+  let sL: number;
+  let sR: number;
+  if (hStarL <= H_DRY) {
+    sL = vnR - 2.0 * cR;
+    sR = vnR + cR;
+  } else if (hStarR <= H_DRY) {
+    sL = vnL - cL;
+    sR = vnL + 2.0 * cL;
   } else {
-    sStar = 0.5 * (sL + sR);
+    const sqrtHL = Math.sqrt(Math.max(0, hStarL));
+    const sqrtHR = Math.sqrt(Math.max(0, hStarR));
+    const denomRoe = sqrtHL + sqrtHR + 1e-12;
+    const uRoe = (sqrtHL * vnL + sqrtHR * vnR) / denomRoe;
+    const cRoe = Math.sqrt(0.5 * G * (hStarL + hStarR));
+    sL = Math.min(vnL - cL, uRoe - cRoe);
+    sR = Math.max(vnR + cR, uRoe + cRoe);
+  }
+
+  // Toro (2001) exact shallow water contact middle wave speed S*
+  let sStar = 0.5 * (sL + sR);
+  const denomStar = hStarR * (sR - vnR) - hStarL * (sL - vnL);
+  if (Math.abs(denomStar) > 1e-6) {
+    const numStar =
+      sR * hStarR * vnR - sL * hStarL * vnL + 0.5 * G * (hStarL * hStarL - hStarR * hStarR);
+    sStar = numStar / denomStar;
   }
 
   // Normal flux vectors [h*vn, h*vn^2 + 0.5*g*h^2, h*vn*vt]
@@ -547,7 +560,7 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
       const nbr = cell.neighbors[f];
       const length = cell.faceLengths[f];
       const [nx, ny] = cell.faceNormals[f];
-      const zNbr = nbr >= 0 ? mesh.cells[nbr].bedElevation : zL;
+      const zNbr = nbr >= 0 && solidMask[nbr] !== 1 ? mesh.cells[nbr].bedElevation : zL;
       const zStar = Math.max(zL, zNbr);
       const hStarFace = Math.max(0.0, hL + zL - zStar);
       const sourceP = 0.5 * G * (hStarFace * hStarFace - hL * hL);
@@ -568,11 +581,10 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
     // (hu)^(n+1) = (hu)^* / (1 + dt * g * n^2 * |V| / h^(4/3))
     if (newH > H_DRY) {
       const velMag = Math.hypot(newHu, newHv) / newH;
-      const hFourThirds = Math.pow(newH, 1.333333);
+      const hFourThirds = Math.pow(Math.max(newH, H_DRY), 1.333333);
       const frictionDenom =
         1.0 +
-        (dtSec * G * cell.manningN * cell.manningN * velMag) /
-          Math.max(hFourThirds, 0.01);
+        (dtSec * G * cell.manningN * cell.manningN * velMag) / hFourThirds;
 
       newHu /= frictionDenom;
       newHv /= frictionDenom;

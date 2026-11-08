@@ -222,21 +222,29 @@ fn shallowWaterStep(@builtin(global_invocation_id) global_id: vec3<u32>) {
       let cL = sqrt(params.g * hStarL);
       let cR = sqrt(params.g * hStarR);
 
-      let sqrtHL = sqrt(max(0.0, hStarL));
-      let sqrtHR = sqrt(max(0.0, hStarR));
-      let denomRoe = sqrtHL + sqrtHR + 1.0e-6;
-      let uRoe = (sqrtHL * vnL + sqrtHR * vnR) / denomRoe;
-      let cRoe = sqrt(0.5 * params.g * (hStarL + hStarR));
-
-      let sL = min(vnL - cL, uRoe - cRoe);
-      let sR = max(vnR + cR, uRoe + cRoe);
-
-      var sStar: f32 = 0.0;
-      let denomStar = hStarR * (vnR - sR) - hStarL * (vnL - sL);
-      if (abs(denomStar) > 1.0e-6) {
-        sStar = (sL * hStarR * (vnR - sR) - sR * hStarL * (vnL - sL)) / denomStar;
+      var sL: f32 = 0.0;
+      var sR: f32 = 0.0;
+      if (hStarL <= H_DRY) {
+        sL = vnR - 2.0 * cR;
+        sR = vnR + cR;
+      } else if (hStarR <= H_DRY) {
+        sL = vnL - cL;
+        sR = vnL + 2.0 * cL;
       } else {
-        sStar = 0.5 * (sL + sR);
+        let sqrtHL = sqrt(max(0.0, hStarL));
+        let sqrtHR = sqrt(max(0.0, hStarR));
+        let denomRoe = sqrtHL + sqrtHR + 1.0e-6;
+        let uRoe = (sqrtHL * vnL + sqrtHR * vnR) / denomRoe;
+        let cRoe = sqrt(0.5 * params.g * (hStarL + hStarR));
+        sL = min(vnL - cL, uRoe - cRoe);
+        sR = max(vnR + cR, uRoe + cRoe);
+      }
+
+      var sStar: f32 = 0.5 * (sL + sR);
+      let denomStar = hStarR * (sR - vnR) - hStarL * (sL - vnL);
+      if (abs(denomStar) > 1.0e-6) {
+        let numStar = sR * hStarR * vnR - sL * hStarL * vnL + 0.5 * params.g * (hStarL * hStarL - hStarR * hStarR);
+        sStar = numStar / denomStar;
       }
 
       let fluxNormL_h = hStarL * vnL;
@@ -307,8 +315,8 @@ fn shallowWaterStep(@builtin(global_invocation_id) global_id: vec3<u32>) {
   // Semi-implicit bed friction attenuation
   if (newH > H_DRY) {
     let velMag = sqrt(newHu * newHu + newHv * newHv) / newH;
-    let hFourThirds = pow(newH, 1.3333333);
-    let frictionDenom = 1.0 + (params.dtSec * params.g * n * n * velMag) / max(hFourThirds, 0.01);
+    let hFourThirds = pow(max(newH, H_DRY), 1.3333333);
+    let frictionDenom = 1.0 + (params.dtSec * params.g * n * n * velMag) / hFourThirds;
     newHu /= frictionDenom;
     newHv /= frictionDenom;
   } else {

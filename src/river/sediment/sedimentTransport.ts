@@ -225,6 +225,11 @@ export function stepSedimentTransport(
         // Alignment of flow with face outward normal
         const flowDotN = dirX * nx + dirY * ny;
 
+        // Mask impermeable bank walls (zero sediment flux through solid river banks)
+        if (nbr < 0 && cell.isBoundary !== 'upstream' && cell.isBoundary !== 'downstream') {
+          continue;
+        }
+
         let qsFace = qsC;
         if (nbr >= 0) {
           const qsNbr = sed.transportRateM2s[nbr];
@@ -247,6 +252,8 @@ export function stepSedimentTransport(
 
       sed.bedElevationChangeM[c] += dzB;
       cell.bedElevation += dzB;
+      // Preserve local water volume across morphodynamic bed evolution
+      hydro.depth[c] = Math.max(0.0, hydro.depth[c] - dzB);
 
       const dVol = dzB * cell.areaM2;
       if (dVol < 0) {
