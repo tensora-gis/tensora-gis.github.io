@@ -60,7 +60,6 @@ import {
 } from '../river/components/RiverResultsOverlay';
 import { ReachSelector } from '../river/components/ReachSelector';
 import { ConfidenceBadge } from '../river/components/ConfidenceBadge';
-import { RiverSearchBar } from '../river/components/RiverSearchBar';
 import { CrossSectionEditor } from '../river/components/CrossSectionEditor';
 import { StructurePlacer } from '../river/components/StructurePlacer';
 import { TurbulencePanel } from '../river/components/TurbulencePanel';
@@ -68,7 +67,6 @@ import { SedimentPanel } from '../river/components/SedimentPanel';
 import { CalibrationPanel } from '../river/components/CalibrationPanel';
 import { SimulationPanel } from '../river/components/SimulationPanel';
 import { ReachPersistence } from '../river/components/ReachPersistence';
-import { GlobalRiverSearchModal } from '../river/components/GlobalRiverSearchModal';
 import { buildRealWorldRiverReach } from '../river/data/globalRiverSearchService';
 import { runInstantSimulation } from '../river/instant/instantSimulation';
 import {
@@ -162,7 +160,6 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [simSpeed] = useState(1);
 
   // Modals
-  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const [isCrossSectionEditorOpen, setIsCrossSectionEditorOpen] = useState(false);
   const [isStructurePlacerOpen, setIsStructurePlacerOpen] = useState(false);
   const [isTurbulencePanelOpen, setIsTurbulencePanelOpen] = useState(false);
@@ -962,60 +959,43 @@ export const RiverAnalysisModelling: React.FC = () => {
 
   return (
     <div className="relative w-full h-[calc(100vh-64px)] flex flex-col bg-slate-950 text-slate-100 overflow-hidden font-sans">
-      {/* Top Header & Reach Control Strip */}
-      <div className="p-2.5 bg-slate-900 border-b border-slate-800 flex flex-col gap-2 z-10 shadow-lg">
+      {/* Top Header & Optimized Engineering Toolbar */}
+      <div className="px-3 py-1.5 bg-slate-900 border-b border-slate-800 flex flex-col gap-1.5 z-10 shadow-md">
+        {/* Row 1: River Dropdown (Single Source), CFD Run, 3D Post-Processing & Exports */}
         <div className="flex flex-wrap items-center justify-between gap-2">
-          {/* Reach Selector & Global River Database */}
-          <div className="flex items-center gap-2 flex-wrap flex-1">
+          {/* Active River Selection Dropdown & Flow Metadata */}
+          <div className="flex items-center gap-2 flex-wrap">
             <ReachSelector
               currentReach={reach}
               onSelectReach={handleSelectReach}
-              onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
-              onOpenStructurePlacer={() => setIsStructurePlacerOpen(true)}
-              onOpenImportModal={() => setIsPersistenceOpen(true)}
               onUpdateDischarge={(q) => setBoundaries((prev) => ({ ...prev, upstreamDischargeM3s: q }))}
             />
-            <RiverSearchBar onSelectReach={handleSelectReach} />
           </div>
 
-          {/* Quick Simulation & Export Controls */}
-          <div className="flex items-center gap-2">
-            {/* Real-time Play / Pause */}
+          {/* Simulation, ParaView 3D & Export Controls */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Real-time Play / Pause 2D CFD */}
             <button
               onClick={() => setIsSimulating(!isSimulating)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition shadow ${
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition shadow ${
                 isSimulating
                   ? 'bg-amber-600 hover:bg-amber-500 text-white'
                   : 'bg-emerald-600 hover:bg-emerald-500 text-white'
               }`}
+              title={isSimulating ? 'Pause active 2D CFD simulation' : 'Start interactive 2D finite-volume CFD'}
             >
               {isSimulating ? (
                 <>
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   <span>Pause CFD</span>
                 </>
               ) : (
                 <>
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-                    />
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
                   <span>Run 2D CFD</span>
                 </>
@@ -1025,88 +1005,79 @@ export const RiverAnalysisModelling: React.FC = () => {
             {/* Batch CFD Simulation Modal */}
             <button
               onClick={() => setIsSimulationPanelOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold transition shadow"
+              className="flex items-center gap-1 px-2.5 py-1 bg-cyan-700 hover:bg-cyan-600 text-white rounded-lg text-xs font-semibold transition shadow"
+              title="Open Batch CFD Simulation & Convergence Solver Panel"
             >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
-              <span>Batch Simulation</span>
-            </button>
-
-            {/* Direct Excel (.xlsx) Export */}
-            <button
-              onClick={handleExportExcelDirect}
-              disabled={isExportingExcel}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-semibold transition shadow"
-              title="Export 6-Sheet Engineering Excel File with Hydrodynamics, Turbulence & Sediment"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
-              <span>{isExportingExcel ? 'Exporting...' : 'Export (.xlsx)'}</span>
-            </button>
-
-            {/* OpenFOAM 3D CFD Case Export */}
-            <button
-              onClick={handleExportOpenFoam}
-              disabled={isExportingOpenFoam}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-700 hover:bg-blue-600 text-white rounded-lg text-xs font-semibold transition shadow"
-              title="Export complete 3D OpenFOAM Case (interFoam VOF + RANS k-ω SST + snappyHexMesh)"
-            >
-              <span>🌊</span>
-              <span>{isExportingOpenFoam ? 'Generating 3D...' : 'OpenFOAM 3D'}</span>
-            </button>
-
-            {/* 3D VTK Export for ParaView */}
-            <button
-              onClick={handleExportVtk3D}
-              className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-700 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold transition shadow"
-              title="Export 3D Structured Grid (.vtk) for ParaView 3D Streamlines & Volumes"
-            >
-              <span>📊</span>
-              <span>3D VTK</span>
+              <span>⚡ Batch Sim</span>
             </button>
 
             {/* Interactive ParaView 3D Visualizer Modal */}
             <button
               onClick={() => setIsParaView3DOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-700 to-indigo-600 hover:from-purple-600 hover:to-indigo-500 text-white rounded-lg text-xs font-bold transition shadow-lg ring-1 ring-purple-400/50"
+              className="flex items-center gap-1.5 px-3 py-1 bg-gradient-to-r from-purple-700 to-indigo-600 hover:from-purple-600 hover:to-indigo-500 text-white rounded-lg text-xs font-bold transition shadow-md ring-1 ring-purple-400/50"
               title="Open ParaView-style Interactive 3D CFD Visualizer (Streamlines, Velocity Vectors, WSE, Cut Planes)"
             >
               <span>🌌</span>
               <span>ParaView 3D</span>
             </button>
+
+            {/* Compact Export Group */}
+            <div className="flex items-center bg-slate-800 rounded-lg border border-slate-700 p-0.5 shadow-sm">
+              <button
+                onClick={handleExportExcelDirect}
+                disabled={isExportingExcel}
+                className="px-2 py-0.5 text-xs text-emerald-300 hover:text-white hover:bg-emerald-700/60 rounded font-medium transition"
+                title="Export 6-Sheet Engineering Excel File (.xlsx)"
+              >
+                {isExportingExcel ? 'Exporting...' : '📊 .xlsx'}
+              </button>
+              <span className="text-slate-600 px-0.5">|</span>
+              <button
+                onClick={handleExportOpenFoam}
+                disabled={isExportingOpenFoam}
+                className="px-2 py-0.5 text-xs text-blue-300 hover:text-white hover:bg-blue-700/60 rounded font-medium transition"
+                title="Export complete 3D OpenFOAM Case .zip"
+              >
+                {isExportingOpenFoam ? 'Generating...' : '🌊 OpenFOAM'}
+              </button>
+              <span className="text-slate-600 px-0.5">|</span>
+              <button
+                onClick={handleExportVtk3D}
+                className="px-2 py-0.5 text-xs text-indigo-300 hover:text-white hover:bg-indigo-700/60 rounded font-medium transition"
+                title="Export 3D Structured Grid (.vtk) for ParaView"
+              >
+                📈 VTK
+              </button>
+            </div>
+
+            {/* Project Save / Load Modal */}
+            <button
+              onClick={() => setIsPersistenceOpen(true)}
+              className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-medium transition shadow-sm"
+              title="Import or Export River Project Archive (JSON / IndexedDB)"
+            >
+              <span>💾</span>
+              <span>Project</span>
+            </button>
           </div>
         </div>
 
-        {/* Secondary Sub-Bar: CAD Drawing Toolbar & Physics Configuration */}
+        {/* Row 2: CAD Structure Drawing & Physics Configuration */}
         <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-xs">
           {/* CAD Hydraulic Structure Quick-Draw Toolbar */}
           <div className="flex items-center gap-1 flex-wrap">
-            <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider mr-1">
-              Draw Structure:
+            <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider mr-0.5">
+              Draw:
             </span>
+
+            {/* 6 Core CAD Shapes */}
             {[
               { type: 'line', label: '📏 Line' },
-              { type: 'polyline', label: '〰️ Polyline' },
+              { type: 'polyline', label: '〰️ Poly' },
               { type: 'rectangle', label: '🔲 Rect' },
               { type: 'circle', label: '⭕ Circle' },
-              { type: 'polygon', label: '🔷 Polygon' },
-              { type: 'obstacle', label: '⬛ Obstacle' },
-              { type: 'spurdike', label: '📐 Spur Dike' },
-              { type: 'bridge-pier', label: '🏛️ Pier' },
-              { type: 'levee', label: '🧱 Levee' },
-              { type: 'weir', label: '🌊 Weir' },
-              { type: 'bridge', label: '🌉 Bridge' },
-              { type: 'culvert', label: '🕳️ Culvert' },
-              { type: 'gate', label: '🚪 Gate' },
-              { type: 'custom-deflector', label: '🧭 Deflector' },
-              { type: 'embankment', label: '🛡️ Embankment' },
+              { type: 'polygon', label: '🔷 Poly' },
+              { type: 'obstacle', label: '⬛ Solid' },
             ].map((btn) => (
               <button
                 key={btn.type}
@@ -1122,17 +1093,55 @@ export const RiverAnalysisModelling: React.FC = () => {
               </button>
             ))}
 
+            {/* Civil Structures Dropdown Selector */}
+            <select
+              value={
+                ['spurdike', 'bridge-pier', 'levee', 'weir', 'bridge', 'culvert', 'gate', 'custom-deflector', 'embankment'].includes(
+                  cadDrawMode || ''
+                )
+                  ? cadDrawMode || ''
+                  : ''
+              }
+              onChange={(e) => {
+                if (e.target.value) {
+                  handleStartCadDraw(e.target.value as RiverStructureType);
+                }
+              }}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition cursor-pointer bg-slate-800 border-slate-700 text-slate-300 focus:outline-none focus:border-amber-400 ${
+                ['spurdike', 'bridge-pier', 'levee', 'weir', 'bridge', 'culvert', 'gate', 'custom-deflector', 'embankment'].includes(
+                  cadDrawMode || ''
+                )
+                  ? 'bg-amber-600 border-amber-400 text-white font-bold ring-2 ring-amber-400/50'
+                  : ''
+              }`}
+            >
+              <option value="" disabled className="bg-slate-900 text-slate-400">
+                🏗️ Civil Structures ▾
+              </option>
+              <option value="spurdike" className="bg-slate-900 text-slate-100">📐 Spur Dike / Groyne</option>
+              <option value="bridge-pier" className="bg-slate-900 text-slate-100">🏛️ Bridge Pier</option>
+              <option value="levee" className="bg-slate-900 text-slate-100">🧱 Levee / Floodwall</option>
+              <option value="weir" className="bg-slate-900 text-slate-100">🌊 Hydraulic Control Weir</option>
+              <option value="bridge" className="bg-slate-900 text-slate-100">🌉 Bridge Deck & Piers</option>
+              <option value="culvert" className="bg-slate-900 text-slate-100">🕳️ Culvert Barrel</option>
+              <option value="gate" className="bg-slate-900 text-slate-100">🚪 Sluice / Radial Gate</option>
+              <option value="custom-deflector" className="bg-slate-900 text-slate-100">🧭 Guide Bank Deflector</option>
+              <option value="embankment" className="bg-slate-900 text-slate-100">🛡️ Road Embankment</option>
+            </select>
+
+            {/* Manage Structures Inspector */}
             <button
               onClick={() => setIsStructurePlacerOpen(true)}
-              className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 ml-1"
+              className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 ml-0.5"
+              title="Open Hydraulic Structure Editor and Parameter Inspector"
             >
-              Manage ({structures.filter((s) => s.enabled).length})
+              Structures ({structures.filter((s) => s.enabled).length})
             </button>
 
             {/* Move & Align Mesh Button */}
             <button
               onClick={() => setIsMoveMeshMode(!isMoveMeshMode)}
-              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition ml-1 ${
+              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition ml-0.5 ${
                 isMoveMeshMode
                   ? 'bg-cyan-600 border-cyan-400 text-white shadow ring-2 ring-cyan-400/50'
                   : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-cyan-300'
@@ -1643,16 +1652,6 @@ export const RiverAnalysisModelling: React.FC = () => {
           </div>
         </div>
       </div>
-
-      {/* Global River Search & World Ingestion Modal */}
-      <GlobalRiverSearchModal
-        isOpen={isGlobalSearchOpen}
-        onClose={() => setIsGlobalSearchOpen(false)}
-        onSelectRealReach={handleSelectReach}
-        onStartMapProbeMode={() => {
-          setIsProbeMode(true);
-        }}
-      />
 
       {/* Cross-Section Geometry Editor Modal */}
       <CrossSectionEditor
