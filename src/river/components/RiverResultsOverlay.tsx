@@ -18,12 +18,15 @@ import {
 import { TurbulenceState } from '../types/turbulence';
 import { SedimentState } from '../types/sediment';
 import { RiverHydraulicStructure } from '../structures/structureTypes';
+import { expandPolylineToSolidPolygon } from '../structures/cadStructureBuilder';
 
 export type RiverThematicField =
   | 'depth'
-  | 'wse'
+  | 'pressure'
   | 'velocity'
+  | 'turbK'
   | 'froude'
+  | 'wse'
   | 'shear'
   | 'nuT'
   | 'sediment'
@@ -39,6 +42,7 @@ interface RiverResultsOverlayProps {
   thematicDisplay: RiverThematicField;
   onSelectCell?: (cell: RiverGridCell, cellIdx: number) => void;
   showVelocityVectors?: boolean;
+  showStreamlines?: boolean;
   isSimulating?: boolean;
   hydroRef?: React.RefObject<HydrodynamicsState | null>;
   turbRef?: React.RefObject<TurbulenceState | null>;
@@ -62,6 +66,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
   thematicDisplay,
   onSelectCell,
   showVelocityVectors = true,
+  showStreamlines = true,
   isSimulating = false,
   hydroRef,
   turbRef,
@@ -70,6 +75,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
   const overlayRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const nodeCacheRef = useRef<{ key: string; pts: { px: number; py: number }[][] } | null>(null);
+  const particlesRef = useRef<{ fi: number; fj: number; age: number; maxAge: number; trail: { x: number; y: number }[] }[]>([]);
 
   // Store latest props in a ref to avoid recreating the Leaflet layer on every tick
   const propsRef = useRef({
@@ -80,6 +86,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     structures,
     thematicDisplay,
     showVelocityVectors,
+    showStreamlines,
     onSelectCell,
     isSimulating,
     hydroRef,
@@ -95,6 +102,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     structures,
     thematicDisplay,
     showVelocityVectors,
+    showStreamlines,
     onSelectCell,
     isSimulating,
     hydroRef,
@@ -115,6 +123,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
       structures: curStructures,
       thematicDisplay: curThematic,
       showVelocityVectors: curShowVectors,
+      showStreamlines: curShowStreamlines,
       isSimulating: simulatingActive,
       hydroRef: liveHydroRef,
       turbRef: liveTurbRef,
@@ -156,11 +165,20 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     for (const s of curStructures) {
       if (!s.enabled) continue;
       const isSolid =
-        s.type === 'obstacle' ||
-        s.type === 'circle' ||
-        (s as any).solidMasking ||
-        s.type === 'rectangle' ||
-        s.type === 'polygon';
+        (s as any).solidMasking === true ||
+        (s.type === 'obstacle' && (s as any).solidMasking !== false) ||
+        (s.type === 'circle' && (s as any).solidMasking !== false) ||
+        (s.type === 'bridge-pier' && (s as any).solidMasking !== false) ||
+        (s.type === 'spurdike' && (s as any).solidMasking !== false && (s.permeability === undefined || s.permeability < 0.2)) ||
+        ((s.type === 'polygon' ||
+          s.type === 'rectangle' ||
+          s.type === 'line' ||
+          s.type === 'polyline' ||
+          s.type === 'levee' ||
+          s.type === 'custom-deflector' ||
+          s.type === 'gate' ||
+          s.type === 'weir') &&
+          (s as any).solidMasking);
       if (isSolid && s.cellIndices) {
         for (const idx of s.cellIndices) {
           if (idx >= 0 && idx < numCells) solidCellSet.add(idx);
@@ -187,6 +205,16 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
         val = curHydro.depth[c] || 0.0;
         fieldTitle = 'Water Depth';
         fieldUnit = 'm';
+      } else if (curThematic === 'pressure') {
+        const h = curHydro.depth[c] || 0.0;
+        const vel = curHydro.velocityMag[c] || 0.0;
+        val = h + (vel * vel) / (2.0 * 9.80665);
+        fieldTitle = 'Total Pressure Head';
+        fieldUnit = 'm';
+      } else if (curThematic === 'turbK') {
+        val = curTurb.k ? curTurb.k[c] : 0.0;
+        fieldTitle = 'Turbulent Kinetic Energy k';
+        fieldUnit = 'm²/s²';
       } else if (curThematic === 'wse') {
         val = curHydro.wse[c] || curMesh.cells[c].bedElevation;
         fieldTitle = 'Water Surface Elev';
@@ -230,6 +258,12 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     if (curThematic === 'velocity') {
       minVal = 0.0;
       maxVal = Math.max(1.0, maxVal);
+    } else if (curThematic === 'pressure') {
+      minVal = 0.0;
+      maxVal = Math.max(0.5, maxVal);
+    } else if (curThematic === 'turbK') {
+      minVal = 0.0;
+      maxVal = Math.max(1e-4, maxVal);
     } else if (minVal >= maxVal) {
       minVal = 0.0;
       maxVal = 1.0;
@@ -519,15 +553,12 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
           ctx.lineWidth = 1.0;
           ctx.stroke();
         }
-      } else if (
-        (s.type === 'polygon' || s.type === 'rectangle' || s.type === 'obstacle') &&
-        s.coordinates &&
-        s.coordinates.length >= 3
-      ) {
+      } else if (s.coordinates && s.coordinates.length >= 3) {
         ctx.beginPath();
         const p0 = map.latLngToContainerPoint([s.coordinates[0].lat, s.coordinates[0].lng]);
         ctx.moveTo(p0.x, p0.y);
         let minX = p0.x, maxX = p0.x, minY = p0.y, maxY = p0.y;
+        let sumX = p0.x, sumY = p0.y;
 
         for (let k = 1; k < s.coordinates.length; k++) {
           const pk = map.latLngToContainerPoint([s.coordinates[k].lat, s.coordinates[k].lng]);
@@ -536,15 +567,17 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
           maxX = Math.max(maxX, pk.x);
           minY = Math.min(minY, pk.y);
           maxY = Math.max(maxY, pk.y);
+          sumX += pk.x;
+          sumY += pk.y;
         }
         ctx.closePath();
 
-        // Brushed steel gradient across geometry
+        // Brushed metallic civil gradient
         const metalGrad = ctx.createLinearGradient(minX, minY, maxX, maxY);
-        metalGrad.addColorStop(0, '#3e4c5e');
-        metalGrad.addColorStop(0.3, '#2a3442');
-        metalGrad.addColorStop(0.7, '#1b222d');
-        metalGrad.addColorStop(1, '#111722');
+        metalGrad.addColorStop(0, '#475569');
+        metalGrad.addColorStop(0.25, '#334155');
+        metalGrad.addColorStop(0.65, '#1e293b');
+        metalGrad.addColorStop(1, '#0f172a');
 
         ctx.fillStyle = metalGrad;
         ctx.fill();
@@ -554,27 +587,65 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
         ctx.lineWidth = 2.5;
         ctx.stroke();
 
-        // Bevel highlight
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+        // Inner specular highlight
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.40)';
         ctx.lineWidth = 1.0;
         ctx.stroke();
-      } else if (s.coordinates && s.coordinates.length >= 2) {
+
+        // Technical badge (Name + Crest Elevation)
+        const count = s.coordinates.length;
+        const centerPx = { x: sumX / count, y: sumY / count };
+        const labelText = `${s.name || s.type.toUpperCase()}${s.crestElevationM !== undefined ? ` • ${s.crestElevationM.toFixed(1)}m` : ''}`;
+        ctx.font = 'bold 9px system-ui, -apple-system, sans-serif';
+        const textMetrics = ctx.measureText(labelText);
+        const badgeW = textMetrics.width + 10;
+        const badgeH = 14;
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.strokeStyle = 'rgba(148, 163, 184, 0.6)';
+        ctx.lineWidth = 0.8;
         ctx.beginPath();
-        const p0 = map.latLngToContainerPoint([s.coordinates[0].lat, s.coordinates[0].lng]);
-        ctx.moveTo(p0.x, p0.y);
-        for (let k = 1; k < s.coordinates.length; k++) {
-          const pk = map.latLngToContainerPoint([s.coordinates[k].lat, s.coordinates[k].lng]);
-          ctx.lineTo(pk.x, pk.y);
+        ctx.roundRect(centerPx.x - badgeW * 0.5, centerPx.y - badgeH * 0.5, badgeW, badgeH, 3);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(labelText, centerPx.x, centerPx.y);
+      } else if (s.coordinates && s.coordinates.length >= 2) {
+        // Expand 2-point structure to authentic solid 2D polygon with physical wall thickness
+        const wallThick = (s as any).wallThicknessM || (s as any).topWidthM || (s as any).crestWidthM || 3.0;
+        const solidFootprint = expandPolylineToSolidPolygon(s.coordinates, wallThick);
+        if (solidFootprint.length >= 3) {
+          ctx.beginPath();
+          const p0 = map.latLngToContainerPoint([solidFootprint[0].lat, solidFootprint[0].lng]);
+          ctx.moveTo(p0.x, p0.y);
+          let minX = p0.x, maxX = p0.x, minY = p0.y, maxY = p0.y;
+          for (let k = 1; k < solidFootprint.length; k++) {
+            const pk = map.latLngToContainerPoint([solidFootprint[k].lat, solidFootprint[k].lng]);
+            ctx.lineTo(pk.x, pk.y);
+            minX = Math.min(minX, pk.x);
+            maxX = Math.max(maxX, pk.x);
+            minY = Math.min(minY, pk.y);
+            maxY = Math.max(maxY, pk.y);
+          }
+          ctx.closePath();
+
+          const metalGrad = ctx.createLinearGradient(minX, minY, maxX, maxY);
+          metalGrad.addColorStop(0, '#475569');
+          metalGrad.addColorStop(0.25, '#334155');
+          metalGrad.addColorStop(0.65, '#1e293b');
+          metalGrad.addColorStop(1, '#0f172a');
+
+          ctx.fillStyle = metalGrad;
+          ctx.fill();
+
+          ctx.shadowColor = 'transparent';
+          ctx.strokeStyle = borderMetallicColor;
+          ctx.lineWidth = 2.0;
+          ctx.stroke();
         }
-
-        ctx.strokeStyle = '#1e293b';
-        ctx.lineWidth = 6.0;
-        ctx.stroke();
-
-        ctx.shadowColor = 'transparent';
-        ctx.strokeStyle = borderMetallicColor;
-        ctx.lineWidth = 3.0;
-        ctx.stroke();
       } else if (s.cellIndices && s.cellIndices.length > 0) {
         // Draw via cell bounds
         for (const cellIdx of s.cellIndices) {
@@ -599,7 +670,98 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
       ctx.restore();
     }
 
-    // 6. Velocity Vector Arrows (Wrapping around structures with wake separation)
+    // 6. Animated CFD Streamlines (Flow-3D / Ansys Fluent streaklines)
+    if (curShowStreamlines) {
+      let particles = particlesRef.current;
+      const targetCount = 180;
+      if (!particles || particles.length < targetCount) {
+        particles = particles || [];
+        while (particles.length < targetCount) {
+          particles.push({
+            fi: Math.random() * Math.max(1, nx * 0.35),
+            fj: Math.random() * Math.max(1, ny - 0.2),
+            age: Math.floor(Math.random() * 50),
+            maxAge: 40 + Math.floor(Math.random() * 45),
+            trail: [],
+          });
+        }
+        particlesRef.current = particles;
+      }
+
+      ctx.save();
+      for (let pIdx = 0; pIdx < particles.length; pIdx++) {
+        const p = particles[pIdx];
+        const ci = Math.floor(p.fi);
+        const cj = Math.floor(p.fj);
+        const cIdx = ci * ny + cj;
+
+        const isOOB = ci < 0 || ci >= nx || cj < 0 || cj >= ny;
+        const isSolid = !isOOB && solidCellSet.has(cIdx);
+        const isDry = !isOOB && curHydro.isWet[cIdx] !== 1;
+
+        if (isOOB || isSolid || isDry || p.age >= p.maxAge) {
+          p.fi = Math.random() * Math.min(nx * 0.25, 4);
+          p.fj = Math.random() * (ny - 0.1);
+          p.age = 0;
+          p.maxAge = 40 + Math.floor(Math.random() * 45);
+          p.trail = [];
+          continue;
+        }
+
+        const uFrac = p.fi - ci;
+        const vFrac = p.fj - cj;
+        const p00 = nodePts[ci][cj];
+        const p10 = nodePts[ci + 1][cj];
+        const p11 = nodePts[ci + 1][cj + 1];
+        const p01 = nodePts[ci][cj + 1];
+
+        const screenX =
+          (1 - uFrac) * (1 - vFrac) * p00.px +
+          uFrac * (1 - vFrac) * p10.px +
+          uFrac * vFrac * p11.px +
+          (1 - uFrac) * vFrac * p01.px;
+        const screenY =
+          (1 - uFrac) * (1 - vFrac) * p00.py +
+          uFrac * (1 - vFrac) * p10.py +
+          uFrac * vFrac * p11.py +
+          (1 - uFrac) * vFrac * p01.py;
+
+        p.trail.push({ x: screenX, y: screenY });
+        if (p.trail.length > 9) {
+          p.trail.shift();
+        }
+
+        const u = curHydro.u[cIdx] || 0.0;
+        const v = curHydro.v[cIdx] || 0.0;
+        const vel = curHydro.velocityMag[cIdx] || 0.0;
+        const advSpeed = Math.min(0.65, Math.max(0.08, vel * 0.35));
+
+        p.fi += (u >= 0 ? 1 : -1) * advSpeed;
+        p.fj += (v * 0.15);
+        p.age++;
+
+        if (p.trail.length >= 2) {
+          ctx.beginPath();
+          ctx.moveTo(p.trail[0].x, p.trail[0].y);
+          for (let t = 1; t < p.trail.length; t++) {
+            ctx.lineTo(p.trail[t].x, p.trail[t].y);
+          }
+          const lifeAlpha = Math.sin((p.age / p.maxAge) * Math.PI) * 0.85;
+          ctx.strokeStyle = `rgba(240, 249, 255, ${Math.max(0.1, lifeAlpha)})`;
+          ctx.lineWidth = 1.6;
+          ctx.stroke();
+
+          const head = p.trail[p.trail.length - 1];
+          ctx.fillStyle = `rgba(56, 189, 248, ${Math.max(0.2, lifeAlpha)})`;
+          ctx.beginPath();
+          ctx.arc(head.x, head.y, 2.0, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    // 7. Velocity Vector Arrows (Wrapping around structures with wake separation)
     if (curShowVectors) {
       const strideX = Math.max(1, Math.round(nx / 35));
       const strideY = Math.max(1, Math.round(ny / 8));
@@ -820,11 +982,12 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     structures,
     thematicDisplay,
     showVelocityVectors,
+    showStreamlines,
   ]);
 
-  // High-performance decoupled 60 FPS render loop when simulation is running
+  // High-performance decoupled 60 FPS render loop when simulation is running or streamlines active
   useEffect(() => {
-    if (!isSimulating) return;
+    if (!isSimulating && !showStreamlines) return;
     let animId: number;
     const tick = () => {
       if (overlayRef.current && overlayRef.current._update) {
@@ -834,7 +997,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     };
     animId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(animId);
-  }, [isSimulating]);
+  }, [isSimulating, showStreamlines]);
 
   return null;
 };

@@ -14,6 +14,7 @@ import {
   CrossSectionStation,
 } from '../types/riverReach';
 import { sampleCrossSectionElevation } from './empiricalSection';
+import { RiverHydraulicStructure } from '../structures/structureTypes';
 
 const METERS_PER_DEG_LAT = 111320.0;
 
@@ -121,20 +122,38 @@ export function resampleCenterline(
   return resampled;
 }
 
+export interface RiverMeshOptions {
+  targetStreamwiseSpacingM?: number;     // Target Δx spacing in meters
+  streamwiseCellsCount?: number;         // Explicit nx cell count
+  transverseCellsCount?: number;         // Explicit ny lateral cells
+  domainWidthMultiplier?: number;        // Active channel width scale
+  channelWidthScaling?: number;          // Alias for domainWidthMultiplier
+  lateralFloodplainWidthM?: number;      // Lateral floodplain width on both banks (meters)
+  localRefinementStructures?: RiverHydraulicStructure[]; // Structures around which to refine
+  localRefinementRatio?: number;         // Local grading/refinement ratio (e.g. 1.5 - 3.0)
+  localRefinementRadiusM?: number;       // Radius around structure to apply refinement (m)
+  originOffsetXM?: number;               // Mesh translation East (m)
+  originOffsetYM?: number;               // Mesh translation North (m)
+  rotationAngleDeg?: number;             // Mesh rotation (deg)
+}
+
 /**
  * Generate 2D RiverGridMesh from reach definition
  */
 export function generateRiverGridMesh(
   reach: RiverReachDefinition,
-  options: {
-    targetStreamwiseSpacingM?: number;
-    transverseCellsCount?: number;
-    domainWidthMultiplier?: number;
-  } = {}
+  options: RiverMeshOptions = {}
 ): RiverGridMesh {
-  const targetSpacingM = options.targetStreamwiseSpacingM || 20.0;
+  let targetSpacingM = options.targetStreamwiseSpacingM || 20.0;
+  if (options.streamwiseCellsCount && options.streamwiseCellsCount > 1) {
+    targetSpacingM = reach.reachLengthM / options.streamwiseCellsCount;
+  }
   const ny = Math.max(3, options.transverseCellsCount || 8);
-  const widthMult = options.domainWidthMultiplier || 1.3;
+  const widthMult = (options.channelWidthScaling ?? 1.0) * (options.domainWidthMultiplier ?? 1.0);
+  const floodplainW = Math.max(0.0, options.lateralFloodplainWidthM ?? 0.0);
+  const refStructures = options.localRefinementStructures || [];
+  const refRatio = Math.max(1.0, options.localRefinementRatio ?? 1.0);
+  const refRadiusM = Math.max(10.0, options.localRefinementRadiusM ?? 30.0);
 
   // 1. Resample centerline
   const centerline = resampleCenterline(reach.centerline, targetSpacingM);
@@ -182,9 +201,36 @@ export function generateRiverGridMesh(
     const normX = -ty;
     const normY = tx;
 
-    // Cross-section width at this station
-    const stationWidth = (pt.widthM || reach.meanWidthM || 30.0) * widthMult;
-    const halfWidth = stationWidth / 2.0;
+    // Cross-section width at this station + lateral floodplain extension
+    const channelWidth = (pt.widthM || reach.meanWidthM || 30.0) * widthMult;
+    const totalWidth = channelWidth + 2.0 * floodplainW;
+    const halfWidth = totalWidth / 2.0;
+
+    // Check proximity to solid structures for OpenFOAM-style boundary layer refinement / grading
+    let structureDistM = Infinity;
+    let targetEta = 0.0;
+
+    if (refStructures.length > 0 && refRatio > 1.0) {
+      for (const s of refStructures) {
+        if (!s.enabled) continue;
+        const sDist = Math.abs((pt.stationM ?? 0) - (s.stationM ?? 0));
+        if (sDist < structureDistM) {
+          structureDistM = sDist;
+          if (s.type === 'spurdike') {
+            targetEta = (s as any).bank === 'right' ? 0.65 : -0.65;
+          } else if (s.type === 'levee') {
+            targetEta = -0.75;
+          } else {
+            targetEta = 0.0;
+          }
+        }
+      }
+    }
+
+    const inRefinementZone = structureDistM < refRadiusM;
+    const refineWeight = inRefinementZone
+      ? (1.0 - structureDistM / refRadiusM) * ((refRatio - 1.0) / (refRatio + 1.0))
+      : 0.0;
 
     // Match or interpolate cross-section station
     const csStation = findClosestCrossSection(reach.crossSections, pt.stationM);
@@ -192,22 +238,36 @@ export function generateRiverGridMesh(
 
     const rowNodes: MeshNode[] = [];
     for (let j = 0; j <= ny; j++) {
-      // Lateral fraction from -1 (left bank) to +1 (right bank)
-      const eta = -1.0 + (2.0 * j) / ny;
+      // Base lateral fraction from -1 (left bank) to +1 (right bank)
+      let eta = -1.0 + (2.0 * j) / ny;
+
+      // Apply boundary layer cell grading towards solid structures
+      if (refineWeight > 0.0) {
+        const dEta = (targetEta - eta) * refineWeight * (1.0 - Math.abs(eta) * 0.4);
+        eta = Math.max(-1.0, Math.min(1.0, eta + dEta));
+      }
+
       const lateralDistM = eta * halfWidth;
 
       const nodeX = cx + lateralDistM * normX;
       const nodeY = cy + lateralDistM * normY;
       const [nodeLat, nodeLng] = localMetersToGeo(nodeX, nodeY, originLat, originLng);
 
-      // Bed elevation calculation across section
+      // Bed elevation calculation across section & floodplain
       let nodeBed = stationInvert;
       if (csStation && csStation.points.length > 0) {
         nodeBed = sampleCrossSectionElevation(csStation.points, lateralDistM, stationInvert);
       } else {
-        // Default parabolic cross-section
-        const depth = Math.max(1.0, stationWidth * 0.06);
-        nodeBed = stationInvert + depth * (eta * eta);
+        const channelHalfW = channelWidth * 0.5;
+        const depth = Math.max(1.0, channelWidth * 0.06);
+        if (Math.abs(lateralDistM) <= channelHalfW) {
+          const frac = lateralDistM / Math.max(1.0, channelHalfW);
+          nodeBed = stationInvert + depth * (frac * frac);
+        } else {
+          // Elevated floodplain terrace
+          const overbankDist = Math.abs(lateralDistM) - channelHalfW;
+          nodeBed = stationInvert + depth + 0.35 + overbankDist * 0.015;
+        }
       }
 
       rowNodes.push({
@@ -333,13 +393,13 @@ export function generateRiverGridMesh(
     }
   }
 
-  return {
+  let finalMesh: RiverGridMesh = {
     id: reach.id,
     name: reach.name,
     description: reach.description,
     source: reach.source,
     reachLengthM: reach.reachLengthM,
-    meanWidthM: reach.meanWidthM,
+    meanWidthM: (reach.meanWidthM || 30.0) * widthMult + 2.0 * floodplainW,
     nx,
     ny,
     cells,
@@ -347,6 +407,16 @@ export function generateRiverGridMesh(
     bounds: [minLat, minLng, maxLat, maxLng],
     surveyedBathymetryApplied: false,
   };
+
+  if ((options.originOffsetXM && options.originOffsetXM !== 0) || (options.originOffsetYM && options.originOffsetYM !== 0)) {
+    finalMesh = translateMesh(finalMesh, options.originOffsetXM || 0, options.originOffsetYM || 0);
+  }
+
+  if (options.rotationAngleDeg && options.rotationAngleDeg !== 0) {
+    finalMesh = rotateMesh(finalMesh, options.rotationAngleDeg);
+  }
+
+  return finalMesh;
 }
 
 function findClosestCrossSection(

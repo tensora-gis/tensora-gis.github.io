@@ -35,9 +35,20 @@ export interface RiverStructureBase {
   type: RiverStructureType;
   enabled: boolean;
   coordinates: RiverCoordinate[];
+  generatorPoints?: RiverCoordinate[]; // Original generating points (centerline / center / transect) to prevent vertex doubling
   cellIndices: number[];
   description?: string;
   stationM?: number;
+  solidMasking?: boolean; // masks internal cells in CFD finite volume equations (strict solid barrier)
+  crestElevationM?: number; // Crest elevation (m MSL)
+  wallThicknessM?: number; // Physical wall thickness or top width (m)
+  topWidthM?: number; // Top crest width (m)
+  baseWidthM?: number; // Foundation/base footprint width (m)
+  lengthM?: number; // Longitudinal structure length (m)
+  rotationDeg?: number; // Orientation angle (deg)
+  sideSlopeHtoV?: number; // Embankment / levee side slope (H:V)
+  permeability?: number; // Hydraulic porosity (0.0 = solid, 1.0 = open)
+  dragCoefficientCd?: number;
   cadProperties?: {
     layerName?: string;
     color?: string;
@@ -50,6 +61,11 @@ export interface RiverLeveeStructure extends RiverStructureBase {
   crestElevationM: number;
   topWidthM: number;
   sideSlopeHtoV: number;
+  solidMasking?: boolean;
+  wallThicknessM?: number;
+  lengthM?: number;
+  rotationDeg?: number;
+  permeability?: number;
 }
 
 export interface RiverWeirStructure extends RiverStructureBase {
@@ -57,7 +73,12 @@ export interface RiverWeirStructure extends RiverStructureBase {
   weirType: 'broad-crested' | 'sharp-crested';
   crestElevationM: number;
   crestLengthM: number;
+  crestWidthM?: number; // breadth of broad-crested weir block
+  wallThicknessM?: number;
   dischargeCoefficient: number; // e.g. 1.70 broad, 1.84 sharp
+  solidMasking?: boolean;
+  sideSlopeHtoV?: number;
+  permeability?: number;
 }
 
 export interface RiverBridgeStructure extends RiverStructureBase {
@@ -67,6 +88,7 @@ export interface RiverBridgeStructure extends RiverStructureBase {
   pierCount: number;
   pierWidthM: number;
   pierDragCoeff: number; // Yarnell K (e.g. 1.25)
+  solidMasking?: boolean;
 }
 
 export interface RiverCulvertStructure extends RiverStructureBase {
@@ -79,6 +101,7 @@ export interface RiverCulvertStructure extends RiverStructureBase {
   outletInvertM: number;
   manningN: number;
   inletLossCoeff: number; // Ke (e.g. 0.5)
+  solidMasking?: boolean;
 }
 
 export interface RiverGateStructure extends RiverStructureBase {
@@ -88,6 +111,9 @@ export interface RiverGateStructure extends RiverStructureBase {
   openingM: number;
   crestElevationM: number;
   dischargeCoefficient: number; // e.g. 0.60
+  wallThicknessM?: number;
+  solidMasking?: boolean;
+  permeability?: number;
 }
 
 export interface RiverEmbankmentStructure extends RiverStructureBase {
@@ -96,6 +122,9 @@ export interface RiverEmbankmentStructure extends RiverStructureBase {
   topWidthM: number;
   sideSlopeHtoV: number;
   overtopDischargeCoeff: number; // e.g. 1.45
+  solidMasking?: boolean;
+  wallThicknessM?: number;
+  permeability?: number;
 }
 
 export interface RiverSpurdikeStructure extends RiverStructureBase {
@@ -108,6 +137,8 @@ export interface RiverSpurdikeStructure extends RiverStructureBase {
   bank: 'left' | 'right';
   headSlopeHtoV: number;
   headScourDepthM?: number; // Melville & Coleman contraction scour
+  solidMasking?: boolean;
+  wallThicknessM?: number;
 }
 
 export interface RiverBridgePierStructure extends RiverStructureBase {
@@ -116,9 +147,13 @@ export interface RiverBridgePierStructure extends RiverStructureBase {
   widthM: number;
   lengthM: number;
   topElevationM: number;
+  crestElevationM?: number;
   dragCoefficientCd: number; // 1.2 circular, 2.0 square, 0.9 round-nose, 0.7 sharp-nose
   noseAngleDeg?: number;
   scourDepthM?: number; // HEC-18 pier scour estimate
+  solidMasking?: boolean;
+  rotationDeg?: number;
+  permeability?: number;
 }
 
 export interface RiverCustomDeflectorStructure extends RiverStructureBase {
@@ -127,6 +162,11 @@ export interface RiverCustomDeflectorStructure extends RiverStructureBase {
   wallThicknessM: number;
   deflectionEfficiency: number; // 0.0 to 1.0
   dragCoeff: number;
+  crestElevationM?: number;
+  solidMasking?: boolean;
+  permeability?: number;
+  sideSlopeHtoV?: number;
+  rotationDeg?: number;
 }
 
 export interface RiverPolygonStructure extends RiverStructureBase {

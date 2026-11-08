@@ -50,25 +50,31 @@ export function generateBlockMeshDict(options: OpenFoamCaseOptions): string {
   const minZ = Math.min(...mesh.cells.map((c) => c.bedElevation));
   const maxZ = minZ + Math.max(8.0, mesh.meanWidthM * 0.15); // Atmosphere height
 
-  const numVertices = (nx + 1) * (ny + 1) * 2;
-  const vertices: string[] = [];
+  const L = mesh.reachLengthM.toFixed(2);
+  const W = mesh.meanWidthM.toFixed(2);
+  const z0 = minZ.toFixed(2);
+  const z1 = maxZ.toFixed(2);
 
-  // Map 2D corners to 3D bottom (z = bed) and top (z = maxZ)
-  for (let level = 0; level < 2; level++) {
-    for (let i = 0; i <= nx; i++) {
-      for (let j = 0; j <= ny; j++) {
-        // Find reference cell to approximate corner (x, y)
-        const cellI = Math.min(nx - 1, i);
-        const cellJ = Math.min(ny - 1, j);
-        const cell = mesh.cells[cellI * ny + cellJ] || mesh.cells[0];
-
-        const x = cell.centerX;
-        const y = cell.centerY;
-        const z = level === 0 ? cell.bedElevation : maxZ;
-        vertices.push(`    ( ${x.toFixed(2)} ${y.toFixed(2)} ${z.toFixed(2)} )`);
-      }
-    }
-  }
+  // Vertices 0..7 define the 8 bounding corners for the hexahedral block
+  // OpenFOAM hex (0 1 2 3 4 5 6 7) requires exactly these 8 corners in order:
+  // 0: (0, 0, minZ)
+  // 1: (L, 0, minZ)
+  // 2: (L, W, minZ)
+  // 3: (0, W, minZ)
+  // 4: (0, 0, maxZ)
+  // 5: (L, 0, maxZ)
+  // 6: (L, W, maxZ)
+  // 7: (0, W, maxZ)
+  const cornerVertices = [
+    `    ( 0 0 ${z0} )`,
+    `    ( ${L} 0 ${z0} )`,
+    `    ( ${L} ${W} ${z0} )`,
+    `    ( 0 ${W} ${z0} )`,
+    `    ( 0 0 ${z1} )`,
+    `    ( ${L} 0 ${z1} )`,
+    `    ( ${L} ${W} ${z1} )`,
+    `    ( 0 ${W} ${z1} )`,
+  ];
 
   return `/*--------------------------------*- C++ -*----------------------------------*\\
 | =========                 |                                                 |
@@ -90,16 +96,7 @@ scale   1;
 
 vertices
 (
-${vertices.slice(0, 100).join('\n')}
-    // ... [Extruded ${numVertices} parametric vertices along thalweg]
-    ( 0 0 ${minZ.toFixed(2)} )
-    ( ${mesh.reachLengthM.toFixed(2)} 0 ${minZ.toFixed(2)} )
-    ( ${mesh.reachLengthM.toFixed(2)} ${mesh.meanWidthM.toFixed(2)} ${minZ.toFixed(2)} )
-    ( 0 ${mesh.meanWidthM.toFixed(2)} ${minZ.toFixed(2)} )
-    ( 0 0 ${maxZ.toFixed(2)} )
-    ( ${mesh.reachLengthM.toFixed(2)} 0 ${maxZ.toFixed(2)} )
-    ( ${mesh.reachLengthM.toFixed(2)} ${mesh.meanWidthM.toFixed(2)} ${maxZ.toFixed(2)} )
-    ( 0 ${mesh.meanWidthM.toFixed(2)} ${maxZ.toFixed(2)} )
+${cornerVertices.join('\n')}
 );
 
 blocks
@@ -768,90 +765,90 @@ export function generateStructuresStl(
       continue;
     }
 
-    // 2. POLYGON / RECTANGLE / SOLID OBSTACLE
-    if (s.type === 'polygon' || s.type === 'rectangle' || s.type === 'obstacle') {
-      const coords = s.coordinates || [];
-      if (coords.length >= 3) {
-        let localPts: [number, number][] = coords.map((c) => toLocal(c.lat, c.lng));
-        const nPts = localPts.length;
+    // 2. ALL CLOSED SOLID CIVIL STRUCTURES (coords.length >= 3)
+    // Applies to all authentic civil structures: bridge piers, groynes/spur dikes, levees, weirs,
+    // gates, guide bank deflectors, rectangular blocks, and polygons.
+    // Generates a watertight 3D manifold with ear-clipped top/bottom caps and continuous perimeter walls.
+    const coords = s.coordinates || [];
+    if (coords.length >= 3) {
+      let localPts: [number, number][] = coords.map((c) => toLocal(c.lat, c.lng));
+      const nPts = localPts.length;
 
-        // Ensure strictly counter-clockwise winding so outward facet normals are correct
-        let signedArea = 0;
-        for (let k = 0; k < nPts; k++) {
-          const next = (k + 1) % nPts;
-          signedArea += localPts[k][0] * localPts[next][1] - localPts[next][0] * localPts[k][1];
-        }
-        if (signedArea < 0) {
-          localPts = [...localPts].reverse();
-        }
-
-        // Robust ear-clipping triangulation for top and bottom caps (handles concave/L-shapes)
-        const capTriangles = triangulatePolygonEarClipping(localPts);
-
-        // Top cap facets
-        for (const [i0, i1, i2] of capTriangles) {
-          emitStlFacet(
-            lines,
-            0,
-            0,
-            1,
-            [localPts[i0][0], localPts[i0][1], zTop],
-            [localPts[i1][0], localPts[i1][1], zTop],
-            [localPts[i2][0], localPts[i2][1], zTop]
-          );
-        }
-
-        // Bottom cap facets
-        for (const [i0, i1, i2] of capTriangles) {
-          emitStlFacet(
-            lines,
-            0,
-            0,
-            -1,
-            [localPts[i0][0], localPts[i0][1], zBase],
-            [localPts[i2][0], localPts[i2][1], zBase],
-            [localPts[i1][0], localPts[i1][1], zBase]
-          );
-        }
-
-        // Side wall facets
-        for (let k = 0; k < nPts; k++) {
-          const next = (k + 1) % nPts;
-          const p1 = localPts[k];
-          const p2 = localPts[next];
-
-          const dx = p2[0] - p1[0];
-          const dy = p2[1] - p1[1];
-          const len = Math.max(1e-4, Math.hypot(dx, dy));
-          const nx = dy / len;
-          const ny = -dx / len;
-
-          emitStlFacet(
-            lines,
-            nx,
-            ny,
-            0,
-            [p1[0], p1[1], zBase],
-            [p2[0], p2[1], zBase],
-            [p2[0], p2[1], zTop]
-          );
-          emitStlFacet(
-            lines,
-            nx,
-            ny,
-            0,
-            [p1[0], p1[1], zBase],
-            [p2[0], p2[1], zTop],
-            [p1[0], p1[1], zTop]
-          );
-        }
-        continue;
+      // Ensure strictly counter-clockwise winding so outward facet normals are correct
+      let signedArea = 0;
+      for (let k = 0; k < nPts; k++) {
+        const next = (k + 1) % nPts;
+        signedArea += localPts[k][0] * localPts[next][1] - localPts[next][0] * localPts[k][1];
       }
+      if (signedArea < 0) {
+        localPts = [...localPts].reverse();
+      }
+
+      // Robust ear-clipping triangulation for top and bottom caps (handles concave/L-shapes/piers)
+      const capTriangles = triangulatePolygonEarClipping(localPts);
+
+      // Top cap facets
+      for (const [i0, i1, i2] of capTriangles) {
+        emitStlFacet(
+          lines,
+          0,
+          0,
+          1,
+          [localPts[i0][0], localPts[i0][1], zTop],
+          [localPts[i1][0], localPts[i1][1], zTop],
+          [localPts[i2][0], localPts[i2][1], zTop]
+        );
+      }
+
+      // Bottom cap facets
+      for (const [i0, i1, i2] of capTriangles) {
+        emitStlFacet(
+          lines,
+          0,
+          0,
+          -1,
+          [localPts[i0][0], localPts[i0][1], zBase],
+          [localPts[i2][0], localPts[i2][1], zBase],
+          [localPts[i1][0], localPts[i1][1], zBase]
+        );
+      }
+
+      // Side wall facets
+      for (let k = 0; k < nPts; k++) {
+        const next = (k + 1) % nPts;
+        const p1 = localPts[k];
+        const p2 = localPts[next];
+
+        const dx = p2[0] - p1[0];
+        const dy = p2[1] - p1[1];
+        const len = Math.max(1e-4, Math.hypot(dx, dy));
+        const nx = dy / len;
+        const ny = -dx / len;
+
+        emitStlFacet(
+          lines,
+          nx,
+          ny,
+          0,
+          [p1[0], p1[1], zBase],
+          [p2[0], p2[1], zBase],
+          [p2[0], p2[1], zTop]
+        );
+        emitStlFacet(
+          lines,
+          nx,
+          ny,
+          0,
+          [p1[0], p1[1], zBase],
+          [p2[0], p2[1], zTop],
+          [p1[0], p1[1], zTop]
+        );
+      }
+      continue;
     }
 
-    // 3. LINE, POLYLINE, LEVEE, WEIR, SPUR DIKE, BRIDGE, CULVERT, DEFLECTOR
-    const coords = s.coordinates || [];
-    if (coords.length >= 2) {
+    // 3. 2-POINT LINE / SEGMENT EXTRUSION (e.g. single barrier segment)
+    if (coords.length === 2) {
       const halfW = 0.5 * Math.max(
         1.0,
         (s as any).wallThicknessM ||
@@ -1043,11 +1040,9 @@ meshQualityControls
 }
 
 /**
- * Builds a complete OpenFOAM 3D CFD Case Archive (.zip)
+ * Populates a JSZip archive with full OpenFOAM 3D CFD case files
  */
-export async function buildOpenFoamCaseZip(options: OpenFoamCaseOptions): Promise<Blob> {
-  const zip = new JSZip();
-
+export function populateOpenFoamZip(zip: JSZip, options: OpenFoamCaseOptions): JSZip {
   // 1. system/
   const system = zip.folder('system')!;
   system.file('controlDict', generateControlDict(options));
@@ -1176,7 +1171,25 @@ echo "Case cleaned."
     { unixPermissions: '755' }
   );
 
+  return zip;
+}
+
+/**
+ * Builds a complete OpenFOAM 3D CFD Case Archive as a browser Blob
+ */
+export async function buildOpenFoamCaseZip(options: OpenFoamCaseOptions): Promise<Blob> {
+  const zip = new JSZip();
+  populateOpenFoamZip(zip, options);
   return zip.generateAsync({ type: 'blob' });
+}
+
+/**
+ * Builds a complete OpenFOAM 3D CFD Case Archive as a Node.js Uint8Array / Buffer
+ */
+export async function buildOpenFoamCaseBuffer(options: OpenFoamCaseOptions): Promise<Uint8Array> {
+  const zip = new JSZip();
+  populateOpenFoamZip(zip, options);
+  return zip.generateAsync({ type: 'uint8array' });
 }
 
 /**

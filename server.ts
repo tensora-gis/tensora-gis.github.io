@@ -7,6 +7,12 @@ import {
   validateSnapshotParams,
 } from './src/server/snapshotGenerator';
 import { createHydrologyExcelWorkbook } from './src/server/excelGenerator';
+import { execSync } from 'child_process';
+import { buildOpenFoamCaseBuffer } from './src/river/openfoam/openfoamCaseGenerator';
+import { createRhineReach } from './src/river/data/hydroRiversLoader';
+import { generateRiverGridMesh } from './src/river/geometry/meshGenerator';
+import { createInitialHydroState } from './src/river/gpu/cpuSolver';
+import { createInitialTurbulenceState } from './src/river/turbulence/turbulenceModels';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -80,6 +86,75 @@ app.post('/api/export-excel', async (req, res) => {
   } catch (err: any) {
     console.error('Error in /api/export-excel:', err);
     return res.status(500).json({ error: err.message || 'Excel export failed' });
+  }
+});
+
+// API: OpenFOAM Engine Status & Environment Discovery
+app.get('/api/openfoam/status', (_req, res) => {
+  let openFoamInstalled = false;
+  let version = 'not_detected';
+  let binaryPath = '';
+  try {
+    binaryPath = execSync('which blockMesh || which interFoam || which simpleFoam', { stdio: 'pipe' })
+      .toString()
+      .trim();
+    if (binaryPath) {
+      openFoamInstalled = true;
+      version = process.env.WM_PROJECT_VERSION || 'v2312';
+    }
+  } catch {
+    // OpenFOAM CLI binary not on host PATH
+  }
+
+  res.json({
+    available: openFoamInstalled,
+    version,
+    binaryPath: binaryPath || null,
+    solver: 'interFoam',
+    runtime: openFoamInstalled ? 'host-native' : 'portable-archive-generator',
+    supportedSolvers: ['interFoam', 'simpleFoam', 'pimpleFoam', 'twoPhaseEulerFoam'],
+    supportedMeshing: ['blockMesh', 'snappyHexMesh'],
+  });
+});
+
+// API: Generate & Export Complete OpenFOAM 3D CFD Case Archive (.zip)
+app.post('/api/openfoam/case', async (req, res) => {
+  try {
+    const reach = req.body.reach || createRhineReach();
+    const mesh = req.body.mesh || generateRiverGridMesh(reach);
+    const structures = req.body.structures || [];
+    const boundaries = req.body.boundaries || {
+      upstreamType: 'constant-discharge',
+      upstreamDischargeM3s: req.body.upstreamDischargeM3s || 250.0,
+      downstreamType: 'normal-depth',
+      downstreamSlope: 0.001,
+      downstreamStageM: req.body.downstreamStageM || 102.0,
+      rainfallMmPerHour: 0.0,
+      initialWaterDepthM: 2.5,
+      manningRoughnessDefault: req.body.manningN || 0.03,
+    };
+    const hydro = req.body.hydro || createInitialHydroState(mesh, boundaries, structures);
+    const turb = req.body.turb || createInitialTurbulenceState(mesh);
+
+    const buffer = await buildOpenFoamCaseBuffer({
+      reach,
+      mesh,
+      hydro,
+      turb,
+      structures,
+      upstreamDischargeM3s: req.body.upstreamDischargeM3s || 250.0,
+      downstreamStageM: req.body.downstreamStageM || boundaries.downstreamStageM || 102.0,
+      manningN: req.body.manningN || boundaries.manningRoughnessDefault || 0.03,
+      simEndTimeSec: req.body.simEndTimeSec || req.body.endTime || 30.0,
+    });
+
+    const filename = `OpenFOAM_Case_${String(reach.id || 'reach').replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`;
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    return res.send(Buffer.from(buffer));
+  } catch (err: any) {
+    console.error('Error in /api/openfoam/case:', err);
+    return res.status(500).json({ error: err.message || 'OpenFOAM case generation failed' });
   }
 });
 

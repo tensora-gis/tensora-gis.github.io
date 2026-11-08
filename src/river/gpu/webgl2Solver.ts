@@ -435,10 +435,20 @@ export class WebGl2RiverSolver implements IRiverSolver {
     for (const s of this.structures) {
       if (s.enabled && s.cellIndices) {
         const isSolid =
-          s.type === 'obstacle' ||
           (s as any).solidMasking === true ||
+          (s.type === 'obstacle' && (s as any).solidMasking !== false) ||
           (s.type === 'circle' && (s as any).solidMasking !== false) ||
-          ((s.type === 'polygon' || s.type === 'rectangle' || s.type === 'line' || s.type === 'polyline') && (s as any).solidMasking);
+          (s.type === 'bridge-pier' && (s as any).solidMasking !== false) ||
+          (s.type === 'spurdike' && (s as any).solidMasking !== false && (s.permeability === undefined || s.permeability < 0.2)) ||
+          ((s.type === 'polygon' ||
+            s.type === 'rectangle' ||
+            s.type === 'line' ||
+            s.type === 'polyline' ||
+            s.type === 'levee' ||
+            s.type === 'custom-deflector' ||
+            s.type === 'gate' ||
+            s.type === 'weir') &&
+            (s as any).solidMasking);
         if (isSolid) {
           for (const idx of s.cellIndices) {
             if (idx >= 0 && idx < nx * ny) solidMaskArr[idx] = 1;

@@ -196,6 +196,306 @@ export function createCirclePoints(
 }
 
 /**
+ * Expands an arbitrary polyline / transect into a watertight 2D closed polygon footprint
+ * with physical width / wall thickness (meters).
+ */
+export function expandPolylineToSolidPolygon(
+  points: RiverCoordinate[],
+  thicknessM: number
+): RiverCoordinate[] {
+  if (points.length === 0) return [];
+  const halfW = Math.max(0.5, thicknessM * 0.5);
+
+  if (points.length === 1) {
+    return createRotatedRectanglePoints(points[0], thicknessM, thicknessM, 0);
+  }
+
+  const leftSide: RiverCoordinate[] = [];
+  const rightSide: RiverCoordinate[] = [];
+
+  for (let i = 0; i < points.length; i++) {
+    const cur = points[i];
+    const cosLat = Math.cos((cur.lat * Math.PI) / 180.0);
+
+    let dx = 0;
+    let dy = 0;
+
+    if (i < points.length - 1) {
+      const nxt = points[i + 1];
+      dx += (nxt.lng - cur.lng) * METERS_PER_DEG_LAT * cosLat;
+      dy += (nxt.lat - cur.lat) * METERS_PER_DEG_LAT;
+    }
+    if (i > 0) {
+      const prv = points[i - 1];
+      dx += (cur.lng - prv.lng) * METERS_PER_DEG_LAT * cosLat;
+      dy += (cur.lat - prv.lat) * METERS_PER_DEG_LAT;
+    }
+
+    const segLen = Math.hypot(dx, dy) || 1e-4;
+    const tx = dx / segLen;
+    const ty = dy / segLen;
+
+    const normX = -ty;
+    const normY = tx;
+
+    const leftLat = cur.lat + (halfW * normY) / METERS_PER_DEG_LAT;
+    const leftLng = cur.lng + (halfW * normX) / (METERS_PER_DEG_LAT * cosLat);
+
+    const rightLat = cur.lat - (halfW * normY) / METERS_PER_DEG_LAT;
+    const rightLng = cur.lng - (halfW * normX) / (METERS_PER_DEG_LAT * cosLat);
+
+    leftSide.push({ lat: leftLat, lng: leftLng });
+    rightSide.push({ lat: rightLat, lng: rightLng });
+  }
+
+  return [...leftSide, ...rightSide.reverse()];
+}
+
+/**
+ * Generate 2D solid boundary footprint for bridge pier with hydrodynamic nose geometry
+ */
+export function createSolidPierFootprint(
+  center: RiverCoordinate,
+  lengthM: number,
+  widthM: number,
+  shape: 'circular' | 'square' | 'round-nose' | 'sharp-nose' = 'round-nose',
+  rotationDeg: number = 0
+): RiverCoordinate[] {
+  if (shape === 'circular') {
+    return createCirclePoints(center, widthM / 2.0, 24);
+  }
+  if (shape === 'square') {
+    return createRotatedRectanglePoints(center, lengthM, widthM, rotationDeg);
+  }
+
+  const rad = (rotationDeg * Math.PI) / 180.0;
+  const cosR = Math.cos(rad);
+  const sinR = Math.sin(rad);
+  const cosLat = Math.cos((center.lat * Math.PI) / 180.0);
+
+  const localPts: [number, number][] = [];
+  const hl = lengthM / 2.0;
+  const hw = widthM / 2.0;
+
+  if (shape === 'round-nose') {
+    const straightL = Math.max(0.5, hl - hw);
+    localPts.push([-straightL, hw]);
+    localPts.push([straightL, hw]);
+    const noseSegments = 8;
+    for (let k = 0; k <= noseSegments; k++) {
+      const ang = Math.PI / 2.0 - (Math.PI * k) / noseSegments;
+      localPts.push([straightL + hw * Math.cos(ang), hw * Math.sin(ang)]);
+    }
+    localPts.push([-straightL, -hw]);
+    for (let k = 0; k <= noseSegments; k++) {
+      const ang = -Math.PI / 2.0 - (Math.PI * k) / noseSegments;
+      localPts.push([-straightL + hw * Math.cos(ang), hw * Math.sin(ang)]);
+    }
+  } else if (shape === 'sharp-nose') {
+    const wedgeLen = Math.min(hl * 0.45, hw * 1.5);
+    const bodyL = Math.max(0.5, hl - wedgeLen);
+    localPts.push([-bodyL, hw]);
+    localPts.push([bodyL, hw]);
+    localPts.push([bodyL + wedgeLen, 0]);
+    localPts.push([bodyL, -hw]);
+    localPts.push([-bodyL, -hw]);
+    localPts.push([-bodyL - wedgeLen, 0]);
+  }
+
+  return localPts.map(([lx, ly]) => {
+    const rx = lx * cosR - ly * sinR;
+    const ry = lx * sinR + ly * cosR;
+    const lat = center.lat + ry / METERS_PER_DEG_LAT;
+    const lng = center.lng + rx / (METERS_PER_DEG_LAT * cosLat);
+    return { lat, lng };
+  });
+}
+
+/**
+ * Generate 2D solid boundary footprint for a spur dike / groyne projecting from bank
+ */
+export function createSolidGroyneFootprint(
+  bankPt: RiverCoordinate,
+  headPt: RiverCoordinate,
+  crestWidthM: number = 3.5
+): RiverCoordinate[] {
+  return expandPolylineToSolidPolygon([bankPt, headPt], Math.max(2.0, crestWidthM));
+}
+
+/**
+ * Generate 2D solid boundary footprint for a broad-crested weir block across the channel
+ */
+export function createBroadCrestedWeirFootprint(
+  p1: RiverCoordinate,
+  p2: RiverCoordinate,
+  crestWidthM: number = 6.0
+): RiverCoordinate[] {
+  return expandPolylineToSolidPolygon([p1, p2], Math.max(2.0, crestWidthM));
+}
+
+/**
+ * Generate 2D solid boundary footprint for an engineered levee / floodwall
+ */
+export function createSolidLeveeFootprint(
+  points: RiverCoordinate[],
+  topWidthM: number = 4.5,
+  sideSlopeHtoV: number = 2.5,
+  heightM: number = 3.5
+): RiverCoordinate[] {
+  const baseWidthM = Math.max(topWidthM, topWidthM + 2.0 * sideSlopeHtoV * Math.max(0.5, heightM));
+  return expandPolylineToSolidPolygon(points, baseWidthM);
+}
+
+/**
+ * Live parameter update and spatial repositioning engine for any hydraulic structure
+ */
+export function updateStructureLiveParameters(
+  structure: RiverHydraulicStructure,
+  updates: Record<string, any>,
+  mesh: RiverGridMesh
+): RiverHydraulicStructure {
+  const updated: any = { ...structure, ...updates };
+
+  const geomKeys = [
+    'topWidthM',
+    'wallThicknessM',
+    'crestWidthM',
+    'baseWidthM',
+    'lengthM',
+    'widthM',
+    'shape',
+    'rotationDeg',
+    'deflectionAngleDeg',
+    'sideSlopeHtoV',
+    'crestElevationM',
+    'stationM',
+    'offsetXM',
+    'offsetYM',
+  ];
+
+  const hasGeomChange = geomKeys.some((k) => k in updates);
+
+  if (hasGeomChange || updates.coordinates) {
+    let baseCoords: RiverCoordinate[] = (updates.coordinates || structure.coordinates || []).slice();
+
+    // Resolve unexpanded generating points to prevent exponential vertex doubling
+    let genPoints: RiverCoordinate[] = (structure.generatorPoints || []).slice();
+    if (genPoints.length === 0) {
+      if (baseCoords.length === 4) {
+        // Quadrilateral footprint [c0, c1, c2, c3]: recover centerline [mid(c0, c3), mid(c1, c2)]
+        genPoints = [
+          {
+            lat: 0.5 * (baseCoords[0].lat + baseCoords[3].lat),
+            lng: 0.5 * (baseCoords[0].lng + baseCoords[3].lng),
+          },
+          {
+            lat: 0.5 * (baseCoords[1].lat + baseCoords[2].lat),
+            lng: 0.5 * (baseCoords[1].lng + baseCoords[2].lng),
+          },
+        ];
+      } else if (baseCoords.length > 0) {
+        // Compute true polygon centroid for point-based structures (pier, circle, rectangle)
+        const avgLat = baseCoords.reduce((sum, p) => sum + p.lat, 0) / baseCoords.length;
+        const avgLng = baseCoords.reduce((sum, p) => sum + p.lng, 0) / baseCoords.length;
+        genPoints = [{ lat: avgLat, lng: avgLng }];
+      }
+    }
+
+    // Handle station shift if stationM was modified
+    if ('stationM' in updates && updates.stationM !== structure.stationM && mesh.centerline.length > 1) {
+      const targetStation = Math.max(0, Math.min(mesh.reachLengthM, updates.stationM));
+      const sFrac = targetStation / Math.max(1, mesh.reachLengthM);
+      const iStation = Math.min(mesh.centerline.length - 1, Math.floor(sFrac * (mesh.centerline.length - 1)));
+      const newCenter = mesh.centerline[iStation];
+      if (genPoints.length > 0) {
+        const oldCenter = {
+          lat: genPoints.reduce((sum, p) => sum + p.lat, 0) / genPoints.length,
+          lng: genPoints.reduce((sum, p) => sum + p.lng, 0) / genPoints.length,
+        };
+        const dLat = newCenter.lat - oldCenter.lat;
+        const dLng = newCenter.lng - oldCenter.lng;
+        genPoints = genPoints.map((p) => ({ lat: p.lat + dLat, lng: p.lng + dLng }));
+      }
+    }
+
+    // Handle offsetXM / offsetYM nudging
+    if (updates.offsetXM || updates.offsetYM) {
+      const originLat = genPoints[0]?.lat || mesh.centerline[0]?.lat || 0;
+      const dLat = (updates.offsetYM || 0) / METERS_PER_DEG_LAT;
+      const dLng =
+        (updates.offsetXM || 0) /
+        (METERS_PER_DEG_LAT * Math.max(0.1, Math.cos((originLat * Math.PI) / 180.0)));
+      genPoints = genPoints.map((p) => ({ lat: p.lat + dLat, lng: p.lng + dLng }));
+    }
+
+    // Compute true center point for rotation and localized placement
+    const center =
+      genPoints.length > 0
+        ? {
+            lat: genPoints.reduce((sum, p) => sum + p.lat, 0) / genPoints.length,
+            lng: genPoints.reduce((sum, p) => sum + p.lng, 0) / genPoints.length,
+          }
+        : mesh.centerline[0] || { lat: 0, lng: 0 };
+
+    let finalCoords: RiverCoordinate[] = [];
+
+    if (updated.type === 'levee' || updated.type === 'embankment') {
+      const topW = updated.topWidthM ?? updated.wallThicknessM ?? 4.5;
+      const slope = updated.sideSlopeHtoV ?? 2.5;
+      const height = Math.max(1.0, (updated.crestElevationM ?? 103.5) - 100.0);
+      finalCoords = createSolidLeveeFootprint(genPoints, topW, slope, height);
+    } else if (updated.type === 'weir') {
+      const crestW = updated.crestWidthM ?? updated.wallThicknessM ?? 6.0;
+      finalCoords =
+        genPoints.length >= 2
+          ? createBroadCrestedWeirFootprint(genPoints[0], genPoints[1], crestW)
+          : expandPolylineToSolidPolygon(genPoints, crestW);
+    } else if (updated.type === 'bridge-pier') {
+      finalCoords = createSolidPierFootprint(
+        center,
+        updated.lengthM ?? 6.0,
+        updated.widthM ?? 2.2,
+        updated.shape || 'round-nose',
+        updated.rotationDeg ?? 0
+      );
+    } else if (updated.type === 'spurdike') {
+      const crestW = updated.crestWidthM ?? updated.wallThicknessM ?? 3.5;
+      finalCoords =
+        genPoints.length >= 2
+          ? createSolidGroyneFootprint(genPoints[0], genPoints[1], crestW)
+          : expandPolylineToSolidPolygon(genPoints, crestW);
+    } else if (updated.type === 'custom-deflector' || updated.type === 'line' || updated.type === 'polyline') {
+      finalCoords = expandPolylineToSolidPolygon(genPoints, updated.wallThicknessM ?? 2.5);
+    } else if (updated.type === 'rectangle') {
+      finalCoords = createRotatedRectanglePoints(
+        center,
+        updated.lengthM ?? 20.0,
+        updated.topWidthM ?? updated.wallThicknessM ?? 8.0,
+        updated.rotationDeg ?? 0
+      );
+    } else if (updated.type === 'circle') {
+      finalCoords = createCirclePoints(center, updated.radiusM ?? 6.0, 24);
+    } else if (updated.type === 'polygon' || updated.type === 'obstacle') {
+      finalCoords = genPoints.length >= 3 ? genPoints : baseCoords;
+    } else {
+      finalCoords = expandPolylineToSolidPolygon(genPoints, updated.wallThicknessM ?? 3.0);
+    }
+
+    const res = findCellsInsidePolygon(finalCoords, mesh);
+    updated.coordinates = finalCoords;
+    updated.generatorPoints = genPoints;
+    updated.cellIndices = res.cellIndices.length > 0 ? res.cellIndices : updated.cellIndices;
+    if ('stationM' in updates) {
+      updated.stationM = updates.stationM;
+    } else if (res.stationM > 0) {
+      updated.stationM = res.stationM;
+    }
+  }
+
+  return updated as RiverHydraulicStructure;
+}
+
+/**
  * Finds all CFD cells within or intersecting an arbitrary polygon
  */
 export function findCellsInsidePolygon(
@@ -227,9 +527,20 @@ export function findCellsInsidePolygon(
       }
     }
 
-    // 3. Does polygon boundary pass through the cell?
+    // 3. Are any polygon vertices inside the cell?
+    if (!inside && cell.corners && cell.corners.length >= 3) {
+      const cellPolygon = cell.corners.map(([cLat, cLng]) => ({ lat: cLat, lng: cLng }));
+      for (const p of polygon) {
+        if (isPointInPolygon(p, cellPolygon)) {
+          inside = true;
+          break;
+        }
+      }
+    }
+
+    // 4. Does polygon boundary pass through the cell?
     if (!inside) {
-      const charRadius = Math.max(3.0, Math.sqrt(cell.areaM2) * 0.55);
+      const charRadius = Math.max(3.0, Math.sqrt(cell.areaM2) * 0.70);
       const polyDist = pointToPolylineDistance(cellCenter, polygon);
       if (polyDist.distanceM <= charRadius) {
         inside = true;
@@ -243,6 +554,28 @@ export function findCellsInsidePolygon(
     }
   }
 
+  // Fallback: If structure is smaller than coarse mesh cells,
+  // find the closest cell to polygon centroid so it is never dropped from CFD
+  if (affected.size === 0 && polygon.length > 0) {
+    const avgLat = polygon.reduce((s, p) => s + p.lat, 0) / polygon.length;
+    const avgLng = polygon.reduce((s, p) => s + p.lng, 0) / polygon.length;
+    let closestIdx = 0;
+    let minD = Infinity;
+    for (let c = 0; c < mesh.cells.length; c++) {
+      const cell = mesh.cells[c];
+      const dy = (cell.centerLat - avgLat) * 111320.0;
+      const dx = (cell.centerLng - avgLng) * 111320.0 * Math.cos((avgLat * Math.PI) / 180.0);
+      const d = Math.hypot(dx, dy);
+      if (d < minD) {
+        minD = d;
+        closestIdx = c;
+      }
+    }
+    affected.add(closestIdx);
+    bedElevSum = mesh.cells[closestIdx].bedElevation;
+    stationSum = (mesh.cells[closestIdx].i / Math.max(1, mesh.nx)) * mesh.reachLengthM;
+  }
+
   const cellIndices = Array.from(affected);
   const count = Math.max(1, cellIndices.length);
 
@@ -251,6 +584,13 @@ export function findCellsInsidePolygon(
     stationM: stationSum / count,
     avgBedElevM: bedElevSum / count,
   };
+}
+
+/**
+ * Convenience helper to return an array of cell indices inside a closed polygon
+ */
+export function queryCellsInPolygon(coords: RiverCoordinate[], mesh: RiverGridMesh): number[] {
+  return findCellsInsidePolygon(coords, mesh).cellIndices;
 }
 
 /**
@@ -475,7 +815,13 @@ export function createStructureFromMapPolyline(
   options: any = {}
 ): RiverHydraulicStructure {
   const isFullCrossChannel =
-    points.length === 2 && (type === 'weir' || type === 'bridge' || type === 'culvert');
+    points.length === 2 &&
+    (type === 'weir' ||
+      type === 'bridge' ||
+      type === 'culvert' ||
+      type === 'levee' ||
+      type === 'embankment' ||
+      type === 'gate');
 
   let cellIndices: number[] = [];
   let stationM: number = 0;
@@ -558,7 +904,9 @@ export function createStructureFromMapPolyline(
       avgBedElevM = res.avgBedElevM;
     }
   } else if (type === 'line' || type === 'polyline') {
-    const res = findCellsAlongLine(points, options.wallThicknessM ?? 2.0, mesh);
+    const wallThick = options.wallThicknessM ?? 2.5;
+    finalCoords = expandPolylineToSolidPolygon(points, wallThick);
+    const res = findCellsInsidePolygon(finalCoords, mesh);
     cellIndices = res.cellIndices;
     stationM = res.stationM;
     avgBedElevM = res.avgBedElevM;
@@ -582,19 +930,20 @@ export function createStructureFromMapPolyline(
     case 'polyline': {
       const lineStruct: RiverLineStructure = {
         id,
-        name: `CAD ${type === 'line' ? 'Line' : 'Polyline'} Wall (Station ${stationM.toFixed(0)}m)`,
+        name: `Solid Civil Floodwall (Station ${stationM.toFixed(0)}m)`,
         type,
         enabled: true,
         coordinates: finalCoords,
+        generatorPoints: [...points],
         cellIndices: fallbackIndices,
         stationM,
         crestElevationM: options.crestElevationM ?? parseFloat((avgBedElevM + 3.0).toFixed(2)),
-        wallThicknessM: options.wallThicknessM ?? 2.0,
+        wallThicknessM: options.wallThicknessM ?? 2.5,
         permeability: options.permeability ?? 0.0,
         dragCoefficientCd: options.dragCoefficientCd ?? 1.2,
         deflectionAngleDeg: options.deflectionAngleDeg ?? 0.0,
-        solidMasking: options.solidMasking ?? options.isSolid ?? false,
-        cadProperties: { layerName: 'CAD_LINES', color: options.color || '#38bdf8' },
+        solidMasking: options.solidMasking ?? options.isSolid ?? true,
+        cadProperties: { layerName: 'CIVIL_DEFENSE', color: options.color || '#38bdf8' },
       };
       return lineStruct;
     }
@@ -603,21 +952,22 @@ export function createStructureFromMapPolyline(
     case 'polygon': {
       const polyStruct: RiverPolygonStructure = {
         id,
-        name: `CAD ${type === 'rectangle' ? 'Rectangle' : 'Polygon'} Structure (Station ${stationM.toFixed(0)}m)`,
+        name: `Solid ${type === 'rectangle' ? 'Rectangular Block' : 'Civil Polygon'} (Station ${stationM.toFixed(0)}m)`,
         type,
         enabled: true,
         coordinates: finalCoords,
+        generatorPoints: [...points],
         cellIndices: fallbackIndices,
         stationM,
         crestElevationM: options.crestElevationM ?? parseFloat((avgBedElevM + 3.5).toFixed(2)),
         topWidthM: options.topWidthM ?? options.widthM ?? 10.0,
         wallThicknessM: options.wallThicknessM ?? 2.0,
         isClosedSolid: options.isClosedSolid ?? options.isSolid ?? true,
-        solidMasking: options.solidMasking ?? options.isSolid ?? false,
+        solidMasking: options.solidMasking ?? options.isSolid ?? true,
         rotationDeg: options.rotationDeg ?? 0.0,
         dragCoefficientCd: options.dragCoefficientCd ?? 1.4,
         permeability: options.permeability ?? 0.0,
-        cadProperties: { layerName: 'CAD_POLYGONS', color: options.color || '#f59e0b' },
+        cadProperties: { layerName: 'SOLID_STRUCTURES', color: options.color || '#f59e0b' },
       };
       return polyStruct;
     }
@@ -625,10 +975,11 @@ export function createStructureFromMapPolyline(
     case 'obstacle': {
       const obstacle: RiverPolygonStructure = {
         id,
-        name: `CAD Solid Obstacle (Station ${stationM.toFixed(0)}m)`,
+        name: `Solid Civil Obstacle (Station ${stationM.toFixed(0)}m)`,
         type: 'obstacle',
         enabled: true,
         coordinates: finalCoords,
+        generatorPoints: [...points],
         cellIndices: fallbackIndices,
         stationM,
         crestElevationM: options.crestElevationM ?? parseFloat((avgBedElevM + 5.0).toFixed(2)),
@@ -654,6 +1005,7 @@ export function createStructureFromMapPolyline(
         type: 'circle',
         enabled: true,
         coordinates: finalCoords,
+        generatorPoints: [center],
         cellIndices: fallbackIndices,
         stationM,
         center,
@@ -669,128 +1021,191 @@ export function createStructureFromMapPolyline(
     }
 
     case 'spurdike': {
+      const p1 = points[0] || mesh.centerline[0];
+      const p2 = points[1] || p1;
+      const crestWidthM = options.crestWidthM ?? options.wallThicknessM ?? 3.5;
+      const groyneFootprint = createSolidGroyneFootprint(p1, p2, crestWidthM);
+      const solidRes = findCellsInsidePolygon(groyneFootprint, mesh);
+      const cellInds = solidRes.cellIndices.length > 0 ? solidRes.cellIndices : fallbackIndices;
       const spurdike: RiverSpurdikeStructure = {
         id,
-        name: `CAD Spur Dike / Groyne (${options.bank || 'Left'} Bank, Station ${stationM.toFixed(0)}m)`,
+        name: `Solid Spur Dike / Groyne (${options.bank || 'Left'} Bank, Station ${stationM.toFixed(0)}m)`,
         type: 'spurdike',
         enabled: true,
-        coordinates: points,
-        cellIndices: fallbackIndices,
-        stationM,
+        coordinates: groyneFootprint,
+        generatorPoints: [p1, p2],
+        cellIndices: cellInds,
+        stationM: solidRes.stationM || stationM,
         crestElevationM: options.crestElevationM ?? parseFloat((avgBedElevM + 2.8).toFixed(2)),
         lengthM: options.lengthM ?? 30.0,
-        crestWidthM: options.crestWidthM ?? 3.5,
+        crestWidthM,
+        wallThicknessM: crestWidthM,
         permeability: options.permeability ?? 0.0,
         deflectionAngleDeg: options.deflectionAngleDeg ?? 90.0,
         bank: options.bank ?? 'left',
-        headSlopeHtoV: 2.0,
+        headSlopeHtoV: options.sideSlopeHtoV ?? 2.0,
         headScourDepthM: 1.85,
+        solidMasking: options.solidMasking ?? (options.permeability === undefined || options.permeability < 0.2),
         cadProperties: { layerName: 'RIVER_TRAINING', color: '#10b981' },
       };
       return spurdike;
     }
 
     case 'bridge-pier': {
+      const pierCenter = points[0] || mesh.centerline[0];
+      const shape = options.shape || 'round-nose';
+      const widthM = options.widthM ?? 2.2;
+      const lengthM = options.lengthM ?? 6.0;
+      const rotationDeg = options.rotationDeg ?? 0;
+      const pierFootprint = createSolidPierFootprint(pierCenter, lengthM, widthM, shape, rotationDeg);
+      const solidRes = findCellsInsidePolygon(pierFootprint, mesh);
+      const cellInds = solidRes.cellIndices.length > 0 ? solidRes.cellIndices : fallbackIndices;
       const pier: RiverBridgePierStructure = {
         id,
-        name: `CAD Bridge Pier (${options.shape || 'Round-Nose'}, Station ${stationM.toFixed(0)}m)`,
+        name: `Solid Bridge Pier (${shape}, Station ${stationM.toFixed(0)}m)`,
         type: 'bridge-pier',
         enabled: true,
-        coordinates: points,
-        cellIndices: fallbackIndices,
-        stationM,
-        shape: options.shape || 'round-nose',
-        widthM: options.widthM ?? 1.8,
-        lengthM: options.lengthM ?? 6.0,
-        topElevationM: options.topElevationM ?? parseFloat((avgBedElevM + 7.5).toFixed(2)),
-        dragCoefficientCd: options.dragCoefficientCd ?? 1.0,
+        coordinates: pierFootprint,
+        generatorPoints: [pierCenter],
+        cellIndices: cellInds,
+        stationM: solidRes.stationM || stationM,
+        shape,
+        widthM,
+        lengthM,
+        topElevationM: options.topElevationM ?? options.crestElevationM ?? parseFloat((avgBedElevM + 7.5).toFixed(2)),
+        crestElevationM: options.crestElevationM ?? parseFloat((avgBedElevM + 7.5).toFixed(2)),
+        dragCoefficientCd: options.dragCoefficientCd ?? (shape === 'sharp-nose' ? 0.75 : shape === 'square' ? 2.0 : shape === 'circular' ? 1.2 : 0.95),
         scourDepthM: 2.1,
+        solidMasking: options.solidMasking ?? true,
+        rotationDeg,
+        permeability: options.permeability ?? 0.0,
         cadProperties: { layerName: 'BRIDGE_SUBSTRUCTURE', color: '#8b5cf6' },
       };
       return pier;
     }
 
     case 'custom-deflector': {
+      const wallThicknessM = options.wallThicknessM ?? 2.0;
+      const deflectorFootprint = expandPolylineToSolidPolygon(points, wallThicknessM);
+      const solidRes = findCellsInsidePolygon(deflectorFootprint, mesh);
+      const cellInds = solidRes.cellIndices.length > 0 ? solidRes.cellIndices : fallbackIndices;
       const deflector: RiverCustomDeflectorStructure = {
         id,
-        name: `CAD River Training Deflector (Station ${stationM.toFixed(0)}m)`,
+        name: `Solid Guide Bank Deflector (Station ${stationM.toFixed(0)}m)`,
         type: 'custom-deflector',
         enabled: true,
-        coordinates: points,
-        cellIndices: fallbackIndices,
-        stationM,
+        coordinates: deflectorFootprint,
+        generatorPoints: [...points],
+        cellIndices: cellInds,
+        stationM: solidRes.stationM || stationM,
         heightM: options.heightM ?? 3.5,
-        wallThicknessM: options.wallThicknessM ?? 1.0,
+        wallThicknessM,
+        crestElevationM: options.crestElevationM ?? parseFloat((avgBedElevM + 3.5).toFixed(2)),
         deflectionEfficiency: options.deflectionEfficiency ?? 0.85,
-        dragCoeff: 1.2,
+        dragCoeff: options.dragCoeff ?? 1.2,
+        solidMasking: options.solidMasking ?? true,
+        permeability: options.permeability ?? 0.0,
         cadProperties: { layerName: 'GUIDE_BANKS', color: '#06b6d4' },
       };
       return deflector;
     }
 
     case 'levee': {
+      const topWidthM = options.topWidthM ?? options.wallThicknessM ?? 4.5;
+      const sideSlopeHtoV = options.sideSlopeHtoV ?? 2.5;
+      const crestElevationM = options.crestElevationM ?? parseFloat((avgBedElevM + 3.8).toFixed(2));
+      const leveeFootprint = createSolidLeveeFootprint(points, topWidthM, sideSlopeHtoV, Math.max(1.0, crestElevationM - avgBedElevM));
+      const solidRes = findCellsInsidePolygon(leveeFootprint, mesh);
+      const cellInds = fallbackIndices.length === mesh.ny ? fallbackIndices : (solidRes.cellIndices.length > 0 ? solidRes.cellIndices : fallbackIndices);
       const levee: RiverLeveeStructure = {
         id,
-        name: `CAD Flood Levee (Station ${stationM.toFixed(0)}m)`,
+        name: `Solid Levee / Floodwall (Station ${stationM.toFixed(0)}m)`,
         type: 'levee',
         enabled: true,
-        coordinates: points,
-        cellIndices: fallbackIndices,
-        stationM,
-        crestElevationM: options.crestElevationM ?? parseFloat((avgBedElevM + 3.8).toFixed(2)),
-        topWidthM: options.topWidthM ?? 4.5,
-        sideSlopeHtoV: options.sideSlopeHtoV ?? 2.5,
+        coordinates: leveeFootprint,
+        generatorPoints: [...points],
+        cellIndices: cellInds,
+        stationM: solidRes.stationM || stationM,
+        crestElevationM,
+        topWidthM,
+        wallThicknessM: topWidthM,
+        sideSlopeHtoV,
+        solidMasking: options.solidMasking ?? true,
+        permeability: options.permeability ?? 0.0,
         cadProperties: { layerName: 'CIVIL_DEFENSE', color: '#f59e0b' },
       };
       return levee;
     }
 
     case 'weir': {
+      const p1 = points[0] || mesh.centerline[0];
+      const p2 = points[1] || p1;
+      const crestWidthM = options.crestWidthM ?? options.wallThicknessM ?? 6.0;
+      const crestElevationM = options.crestElevationM ?? parseFloat((avgBedElevM + 2.2).toFixed(2));
+      const weirFootprint = createBroadCrestedWeirFootprint(p1, p2, crestWidthM);
+      const solidRes = findCellsInsidePolygon(weirFootprint, mesh);
+      const cellInds = fallbackIndices.length === mesh.ny ? fallbackIndices : (solidRes.cellIndices.length > 0 ? solidRes.cellIndices : fallbackIndices);
       const weir: RiverWeirStructure = {
         id,
-        name: `CAD Overflow Weir (Station ${stationM.toFixed(0)}m)`,
+        name: `Solid Broad-Crested Weir (Station ${stationM.toFixed(0)}m)`,
         type: 'weir',
         enabled: true,
-        coordinates: points,
-        cellIndices: fallbackIndices,
-        stationM,
+        coordinates: weirFootprint,
+        generatorPoints: [p1, p2],
+        cellIndices: cellInds,
+        stationM: solidRes.stationM || stationM,
         weirType: options.weirType || 'broad-crested',
-        crestElevationM: options.crestElevationM ?? parseFloat((avgBedElevM + 2.2).toFixed(2)),
+        crestElevationM,
         crestLengthM: mesh.meanWidthM,
+        crestWidthM,
+        wallThicknessM: crestWidthM,
         dischargeCoefficient: options.dischargeCoefficient ?? 1.70,
+        solidMasking: options.solidMasking ?? true,
+        permeability: options.permeability ?? 0.0,
         cadProperties: { layerName: 'FLOW_REGULATION', color: '#06b6d4' },
       };
       return weir;
     }
 
     case 'bridge': {
+      const deckWidthM = options.deckWidthM ?? options.wallThicknessM ?? 12.0;
+      const bridgeFootprint = expandPolylineToSolidPolygon(points, deckWidthM);
+      const solidRes = findCellsInsidePolygon(bridgeFootprint, mesh);
+      const cellInds = solidRes.cellIndices.length > 0 ? solidRes.cellIndices : fallbackIndices;
       const bridge: RiverBridgeStructure = {
         id,
         name: `CAD Multi-Span Bridge (Station ${stationM.toFixed(0)}m)`,
         type: 'bridge',
         enabled: true,
-        coordinates: points,
-        cellIndices: fallbackIndices,
-        stationM,
+        coordinates: bridgeFootprint,
+        generatorPoints: [...points],
+        cellIndices: cellInds,
+        stationM: solidRes.stationM || stationM,
         deckElevationM: options.deckElevationM ?? parseFloat((avgBedElevM + 6.5).toFixed(2)),
         lowChordElevationM: options.lowChordElevationM ?? parseFloat((avgBedElevM + 4.8).toFixed(2)),
         pierCount: options.pierCount ?? 3,
         pierWidthM: options.pierWidthM ?? 1.6,
         pierDragCoeff: options.pierDragCoeff ?? 1.25,
+        solidMasking: options.solidMasking ?? false,
         cadProperties: { layerName: 'TRANSPORT_INFRA', color: '#a855f7' },
       };
       return bridge;
     }
 
     case 'culvert': {
+      const culvertW = (options.diameterOrSpanM ?? 2.5) * (options.barrelCount ?? 2) + 2.0;
+      const culvertFootprint = expandPolylineToSolidPolygon(points, culvertW);
+      const solidRes = findCellsInsidePolygon(culvertFootprint, mesh);
+      const cellInds = solidRes.cellIndices.length > 0 ? solidRes.cellIndices : fallbackIndices;
       const culvert: RiverCulvertStructure = {
         id,
         name: `CAD Box Culvert (Station ${stationM.toFixed(0)}m)`,
         type: 'culvert',
         enabled: true,
-        coordinates: points,
-        cellIndices: fallbackIndices,
-        stationM,
+        coordinates: culvertFootprint,
+        generatorPoints: [...points],
+        cellIndices: cellInds,
+        stationM: solidRes.stationM || stationM,
         barrelCount: options.barrelCount ?? 2,
         diameterOrSpanM: options.diameterOrSpanM ?? 2.5,
         riseM: options.riseM ?? 2.5,
@@ -799,25 +1214,34 @@ export function createStructureFromMapPolyline(
         outletInvertM: avgBedElevM - 0.2,
         manningN: 0.013,
         inletLossCoeff: 0.5,
+        solidMasking: options.solidMasking ?? false,
         cadProperties: { layerName: 'DRAINAGE_INFRA', color: '#10b981' },
       };
       return culvert;
     }
 
     case 'gate': {
+      const wallThicknessM = options.wallThicknessM ?? 3.0;
+      const gateFootprint = expandPolylineToSolidPolygon(points, wallThicknessM);
+      const solidRes = findCellsInsidePolygon(gateFootprint, mesh);
+      const cellInds = solidRes.cellIndices.length > 0 ? solidRes.cellIndices : fallbackIndices;
       const gate: RiverGateStructure = {
         id,
-        name: `CAD Sluice / Radial Gate (Station ${stationM.toFixed(0)}m)`,
+        name: `Solid Control Gate (Station ${stationM.toFixed(0)}m)`,
         type: 'gate',
         enabled: true,
-        coordinates: points,
-        cellIndices: fallbackIndices,
-        stationM,
+        coordinates: gateFootprint,
+        generatorPoints: [...points],
+        cellIndices: cellInds,
+        stationM: solidRes.stationM || stationM,
         gateType: options.gateType || 'sluice',
         gateWidthM: options.gateWidthM ?? Math.min(25.0, mesh.meanWidthM * 0.4),
         openingM: options.openingM ?? 1.5,
         crestElevationM: options.crestElevationM ?? parseFloat((avgBedElevM + 1.0).toFixed(2)),
         dischargeCoefficient: options.dischargeCoefficient ?? 0.60,
+        wallThicknessM,
+        solidMasking: options.solidMasking ?? true,
+        permeability: options.permeability ?? 0.0,
         cadProperties: { layerName: 'ACTIVE_CONTROL', color: '#3b82f6' },
       };
       return gate;
@@ -825,18 +1249,26 @@ export function createStructureFromMapPolyline(
 
     case 'embankment':
     default: {
+      const topWidthM = options.topWidthM ?? options.wallThicknessM ?? 12.0;
+      const embFootprint = createSolidLeveeFootprint(points, topWidthM, 2.0, 3.2);
+      const solidRes = findCellsInsidePolygon(embFootprint, mesh);
+      const cellInds = solidRes.cellIndices.length > 0 ? solidRes.cellIndices : fallbackIndices;
       const emb: RiverEmbankmentStructure = {
         id,
-        name: `CAD Transportation Road Embankment (Station ${stationM.toFixed(0)}m)`,
+        name: `Solid Road Embankment (Station ${stationM.toFixed(0)}m)`,
         type: 'embankment',
         enabled: true,
-        coordinates: points,
-        cellIndices: fallbackIndices,
-        stationM,
+        coordinates: embFootprint,
+        generatorPoints: [...points],
+        cellIndices: cellInds,
+        stationM: solidRes.stationM || stationM,
         crestElevationM: options.crestElevationM ?? parseFloat((avgBedElevM + 3.2).toFixed(2)),
-        topWidthM: options.topWidthM ?? 12.0,
+        topWidthM,
+        wallThicknessM: topWidthM,
         sideSlopeHtoV: 2.0,
         overtopDischargeCoeff: 1.45,
+        solidMasking: options.solidMasking ?? true,
+        permeability: options.permeability ?? 0.0,
         cadProperties: { layerName: 'ROAD_NETWORK', color: '#ef4444' },
       };
       return emb;

@@ -46,7 +46,7 @@ import {
 } from '../river/data/globalRiverDatabase';
 import { createStructureFromMapPoints } from '../river/structures/cadStructureBuilder';
 import { RiverDataService } from '../river/data/riverDataService';
-import { generateRiverGridMesh } from '../river/geometry/meshGenerator';
+import { generateRiverGridMesh, RiverMeshOptions } from '../river/geometry/meshGenerator';
 import {
   createInitialHydroState,
   computeStableTimeStep,
@@ -83,8 +83,9 @@ import {
   createStructureFromMapPolyline,
   createRotatedRectanglePoints,
   createCirclePoints,
+  findCellsInsidePolygon,
 } from '../river/structures/cadStructureBuilder';
-import { exportRiverToVtk3D } from '../river/openfoam/openfoamCaseGenerator';
+import { exportRiverToVtk3D, buildOpenFoamCaseZip } from '../river/openfoam/openfoamCaseGenerator';
 import { ParaView3DVisualizer } from '../river/components/ParaView3DVisualizer';
 
 export const RiverAnalysisModelling: React.FC = () => {
@@ -126,6 +127,18 @@ export const RiverAnalysisModelling: React.FC = () => {
   // Visualization & Map State
   const [thematicDisplay, setThematicDisplay] = useState<RiverThematicField>('velocity');
   const [showVectors, setShowVectors] = useState(true);
+  const [showStreamlines, setShowStreamlines] = useState(true);
+  const [isMeshConfigModalOpen, setIsMeshConfigModalOpen] = useState(false);
+  const [meshOptions, setMeshOptions] = useState<RiverMeshOptions>(() => ({
+    streamwiseCellsCount: 40,
+    transverseCellsCount: 12,
+    targetStreamwiseSpacingM: 10.0,
+    domainWidthMultiplier: 1.0,
+    channelWidthScaling: 1.0,
+    lateralFloodplainWidthM: 0.0,
+    localRefinementRatio: 1.0,
+    localRefinementRadiusM: 20.0,
+  }));
   const [basemapType, setBasemapType] = useState<'satellite' | 'streets'>('satellite');
   const [selectedCell, setSelectedCell] = useState<{ cell: RiverGridCell; idx: number } | null>(null);
   const [isSamplingDEM, setIsSamplingDEM] = useState(false);
@@ -950,6 +963,77 @@ export const RiverAnalysisModelling: React.FC = () => {
     }
   };
 
+  // OpenFOAM 3D CFD Case Generation (.zip Archive)
+  const [isExportingOpenFoam, setIsExportingOpenFoam] = useState(false);
+  const handleExportOpenFoamCase = async () => {
+    setIsExportingOpenFoam(true);
+    try {
+      const zipBlob = await buildOpenFoamCaseZip({
+        mesh,
+        hydro,
+        turb,
+        structures,
+        reach,
+        upstreamDischargeM3s: boundaries.upstreamDischargeM3s,
+        downstreamStageM: boundaries.downstreamStageM,
+        manningN: boundaries.manningRoughnessDefault,
+        simEndTimeSec: 30.0,
+      });
+      triggerFileDownload(zipBlob, `openfoam_3d_river_case_${reach.id}.zip`);
+      setCadNotification('✅ Generated & Downloaded Full OpenFOAM 3D CFD Case (.zip)!');
+      setTimeout(() => setCadNotification(null), 5000);
+    } catch (err: any) {
+      alert(`OpenFOAM Case export failed: ${err.message}`);
+    } finally {
+      setIsExportingOpenFoam(false);
+    }
+  };
+
+  // Computational Mesh Generation & OpenFOAM Discretization Handler
+  const handleRegenerateMesh = (updatedOptions: Partial<RiverMeshOptions>) => {
+    const merged = { ...meshOptions, ...updatedOptions };
+    setMeshOptions(merged);
+    const newMesh = generateRiverGridMesh(reach, {
+      ...merged,
+      originOffsetXM: meshShiftM.x,
+      originOffsetYM: meshShiftM.y,
+      rotationAngleDeg: meshShiftM.rot,
+      localRefinementStructures: structures,
+    });
+    setMesh(newMesh);
+    meshRef.current = newMesh;
+
+    // Re-index all existing solid structures on the new discretized mesh
+    const updatedStructures = structures.map((s) => {
+      if (s.coordinates && s.coordinates.length >= 3) {
+        const res = findCellsInsidePolygon(s.coordinates, newMesh);
+        return {
+          ...s,
+          cellIndices: res.cellIndices.length > 0 ? res.cellIndices : [Math.floor(newMesh.cells.length / 2)],
+          stationM: res.stationM > 0 ? res.stationM : s.stationM,
+        };
+      }
+      return s;
+    });
+    setStructures(updatedStructures);
+    structuresRef.current = updatedStructures;
+
+    const newHydro = createInitialHydroState(newMesh, boundariesRef.current);
+    const newTurb = createInitialTurbulenceState(newMesh);
+    const newSed = createInitialSedimentState(newMesh);
+
+    setHydro(newHydro);
+    setTurb(newTurb);
+    setSed(newSed);
+
+    hydroRef.current = newHydro;
+    turbRef.current = newTurb;
+    sedRef.current = newSed;
+
+    setCadNotification(`Mesh discretized: ${newMesh.nx}×${newMesh.ny} cells (${newMesh.cells.length} finite volumes, ${updatedStructures.length} structures updated)`);
+    setTimeout(() => setCadNotification(null), 3500);
+  };
+
   // Mesh Movement & Alignment Actions
   const handleTranslateMesh = (dxM: number, dyM: number) => {
     const updated = translateMesh(meshRef.current, dxM, dyM);
@@ -1203,6 +1287,15 @@ export const RiverAnalysisModelling: React.FC = () => {
               >
                 📈 VTK
               </button>
+              <span className="text-slate-600 px-0.5">|</span>
+              <button
+                onClick={handleExportOpenFoamCase}
+                disabled={isExportingOpenFoam}
+                className="px-2 py-0.5 text-xs text-sky-300 hover:text-white hover:bg-sky-700/60 rounded font-medium transition"
+                title="Generate & Download Complete OpenFOAM 3D CFD Case Archive (.zip with blockMeshDict, snappyHexMeshDict, interFoam Allrun)"
+              >
+                {isExportingOpenFoam ? 'Building...' : '📦 OpenFOAM 3D'}
+              </button>
             </div>
 
             {/* Project Save / Load Modal */}
@@ -1225,13 +1318,16 @@ export const RiverAnalysisModelling: React.FC = () => {
               Draw:
             </span>
 
-            {/* 6 Core CAD Shapes */}
+            {/* Solid Civil Engineering Structure Quick-Draw Buttons */}
             {[
-              { type: 'line', label: '📏 Line' },
-              { type: 'polyline', label: '〰️ Poly' },
+              { type: 'levee', label: '🧱 Levee' },
+              { type: 'weir', label: '🌊 Weir' },
+              { type: 'bridge-pier', label: '🏛️ Pier' },
+              { type: 'spurdike', label: '📐 Spur' },
+              { type: 'custom-deflector', label: '🧭 Deflector' },
+              { type: 'gate', label: '🚪 Gate' },
               { type: 'rectangle', label: '🔲 Rect' },
               { type: 'circle', label: '⭕ Circle' },
-              { type: 'polygon', label: '🔷 Poly' },
               { type: 'obstacle', label: '⬛ Solid' },
             ].map((btn) => (
               <button
@@ -1242,7 +1338,7 @@ export const RiverAnalysisModelling: React.FC = () => {
                     ? 'bg-amber-600 border-amber-400 text-white shadow ring-2 ring-amber-400/50'
                     : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
                 }`}
-                title={`Click map to draw ${btn.label}`}
+                title={`Click map to draw solid civil ${btn.label}`}
               >
                 {btn.label}
               </button>
@@ -1291,6 +1387,15 @@ export const RiverAnalysisModelling: React.FC = () => {
               title="Open Hydraulic Structure Editor and Parameter Inspector"
             >
               Structures ({structures.filter((s) => s.enabled).length})
+            </button>
+
+            {/* Mesh Discretization Studio */}
+            <button
+              onClick={() => setIsMeshConfigModalOpen(true)}
+              className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 ml-0.5 shadow-sm"
+              title="Open Computational Mesh Generation & OpenFOAM Discretization Studio"
+            >
+              📐 Mesh Discretization ({mesh.nx}×{mesh.ny})
             </button>
 
             {/* Move & Align Mesh Button */}
@@ -1355,7 +1460,10 @@ export const RiverAnalysisModelling: React.FC = () => {
               {[
                 { id: 'depth', label: 'Depth' },
                 { id: 'velocity', label: '|V|' },
+                { id: 'pressure', label: 'Head H' },
+                { id: 'turbK', label: 'k' },
                 { id: 'wse', label: 'WSE' },
+                { id: 'froude', label: 'Fr' },
                 { id: 'shear', label: 'Shear' },
                 { id: 'nuT', label: 'ν_t' },
                 { id: 'sediment', label: 'Sed' },
@@ -1371,6 +1479,16 @@ export const RiverAnalysisModelling: React.FC = () => {
                   {f.label}
                 </button>
               ))}
+
+              <button
+                onClick={() => setShowStreamlines(!showStreamlines)}
+                className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${
+                  showStreamlines ? 'bg-slate-800 border-cyan-400 text-cyan-300' : 'bg-transparent border-slate-800 text-slate-500'
+                }`}
+                title="Toggle Flow-3D / Ansys Animated Streamlines"
+              >
+                Streamlines
+              </button>
 
               <button
                 onClick={() => setShowVectors(!showVectors)}
@@ -1415,6 +1533,7 @@ export const RiverAnalysisModelling: React.FC = () => {
           structures={structures}
           thematicDisplay={thematicDisplay}
           showVelocityVectors={showVectors}
+          showStreamlines={showStreamlines}
           isSimulating={isSimulating}
           onSelectCell={(cell, idx) => setSelectedCell({ cell, idx })}
         />
@@ -1928,6 +2047,239 @@ export const RiverAnalysisModelling: React.FC = () => {
         isSimulating={isSimulating}
         onToggleSimulation={() => setIsSimulating(!isSimulating)}
       />
+
+      {/* Completely Modifiable Mesh Generation & OpenFOAM Discretization Studio Modal */}
+      {isMeshConfigModalOpen && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl text-slate-100 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 bg-cyan-500/20 text-cyan-400 rounded-xl text-lg">📐</span>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-100">
+                    Computational Mesh Generation & OpenFOAM Discretization
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Interactive blockMesh grading, snappyHexMesh solid refinement, and lateral floodplain scaling
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsMeshConfigModalOpen(false)}
+                className="text-slate-400 hover:text-white transition"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Mesh Statistics Summary Card */}
+            <div className="grid grid-cols-4 gap-2 bg-slate-950/80 p-3 rounded-xl border border-slate-800 text-xs">
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase">Grid Dimensions</span>
+                <span className="text-cyan-400 font-mono font-bold">
+                  {mesh.nx} × {mesh.ny}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase">Total Finite Volumes</span>
+                <span className="text-emerald-400 font-mono font-bold">{mesh.cells.length} cells</span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase">Mean Cell Spacing Δx</span>
+                <span className="text-amber-400 font-mono font-bold">
+                  {(mesh.reachLengthM / Math.max(1, mesh.nx)).toFixed(1)} m
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-400 block text-[10px] uppercase">Cross-Channel Δy</span>
+                <span className="text-purple-400 font-mono font-bold">
+                  {(mesh.meanWidthM / Math.max(1, mesh.ny)).toFixed(1)} m
+                </span>
+              </div>
+            </div>
+
+            {/* Parameters Form */}
+            <div className="space-y-4 text-xs">
+              {/* Row 1: nx and ny */}
+              <div className="grid grid-cols-2 gap-4 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+                <div>
+                  <div className="flex justify-between text-slate-300 font-semibold mb-1">
+                    <span>Streamwise Cells (nx)</span>
+                    <span className="text-cyan-400 font-mono">
+                      {meshOptions.streamwiseCellsCount ?? mesh.nx}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="15"
+                    max="150"
+                    step="1"
+                    value={meshOptions.streamwiseCellsCount ?? mesh.nx}
+                    onChange={(e) =>
+                      handleRegenerateMesh({ streamwiseCellsCount: parseInt(e.target.value) })
+                    }
+                    className="w-full accent-cyan-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500 mt-0.5">
+                    <span>15 (Coarse)</span>
+                    <span>150 (Ultra-Fine)</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between text-slate-300 font-semibold mb-1">
+                    <span>Transverse Cells (ny)</span>
+                    <span className="text-cyan-400 font-mono">
+                      {meshOptions.transverseCellsCount ?? mesh.ny}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="4"
+                    max="40"
+                    step="1"
+                    value={meshOptions.transverseCellsCount ?? mesh.ny}
+                    onChange={(e) =>
+                      handleRegenerateMesh({ transverseCellsCount: parseInt(e.target.value) })
+                    }
+                    className="w-full accent-cyan-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500 mt-0.5">
+                    <span>4 (Fast)</span>
+                    <span>40 (Detailed Boundary Layer)</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 2: Channel Width Scale & Lateral Floodplain Width */}
+              <div className="grid grid-cols-2 gap-4 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+                <div>
+                  <div className="flex justify-between text-slate-300 font-semibold mb-1">
+                    <span>Channel Width Scaling Multiplier</span>
+                    <span className="text-cyan-400 font-mono">
+                      {(meshOptions.channelWidthScaling ?? 1.0).toFixed(2)}x
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="2.5"
+                    step="0.05"
+                    value={meshOptions.channelWidthScaling ?? 1.0}
+                    onChange={(e) =>
+                      handleRegenerateMesh({ channelWidthScaling: parseFloat(e.target.value) })
+                    }
+                    className="w-full accent-cyan-500 cursor-pointer"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    Scales main channel cross-section width from 0.5x (constricted gorge) to 2.5x (braided bed)
+                  </span>
+                </div>
+
+                <div>
+                  <div className="flex justify-between text-slate-300 font-semibold mb-1">
+                    <span>Lateral Floodplain Overbank Width</span>
+                    <span className="text-cyan-400 font-mono">
+                      {(meshOptions.lateralFloodplainWidthM ?? 0).toFixed(0)} m
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="80"
+                    step="5"
+                    value={meshOptions.lateralFloodplainWidthM ?? 0}
+                    onChange={(e) =>
+                      handleRegenerateMesh({ lateralFloodplainWidthM: parseFloat(e.target.value) })
+                    }
+                    className="w-full accent-cyan-500 cursor-pointer"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    Expands 2D mesh into left & right floodplain terraces for 2D overbank inundation modeling
+                  </span>
+                </div>
+              </div>
+
+              {/* Row 3: OpenFOAM snappyHexMesh Local Refinement around Solid Structures */}
+              <div className="grid grid-cols-2 gap-4 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+                <div>
+                  <div className="flex justify-between text-slate-300 font-semibold mb-1">
+                    <span>snappyHexMesh Boundary Layer Refinement</span>
+                    <span className="text-cyan-400 font-mono">
+                      {(meshOptions.localRefinementRatio ?? 1.0).toFixed(1)}x
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1.0"
+                    max="4.0"
+                    step="0.2"
+                    value={meshOptions.localRefinementRatio ?? 1.0}
+                    onChange={(e) =>
+                      handleRegenerateMesh({ localRefinementRatio: parseFloat(e.target.value) })
+                    }
+                    className="w-full accent-cyan-500 cursor-pointer"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    Concentrates grid lines near solid structures to capture no-slip viscous sublayer
+                  </span>
+                </div>
+
+                <div>
+                  <div className="flex justify-between text-slate-300 font-semibold mb-1">
+                    <span>Refinement Influence Radius</span>
+                    <span className="text-cyan-400 font-mono">
+                      {(meshOptions.localRefinementRadiusM ?? 20.0).toFixed(0)} m
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="5"
+                    max="60"
+                    step="5"
+                    value={meshOptions.localRefinementRadiusM ?? 20.0}
+                    onChange={(e) =>
+                      handleRegenerateMesh({ localRefinementRadiusM: parseFloat(e.target.value) })
+                    }
+                    className="w-full accent-cyan-500 cursor-pointer"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">
+                    Proximity radius around piers, groynes and levees where cell resolution increases
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-between border-t border-slate-800 pt-3">
+              <button
+                type="button"
+                onClick={() =>
+                  handleRegenerateMesh({
+                    streamwiseCellsCount: 40,
+                    transverseCellsCount: 12,
+                    channelWidthScaling: 1.0,
+                    lateralFloodplainWidthM: 0.0,
+                    localRefinementRatio: 1.0,
+                    localRefinementRadiusM: 20.0,
+                  })
+                }
+                className="text-xs text-amber-400 hover:underline font-semibold"
+              >
+                Reset Default OpenFOAM Discretization
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setIsMeshConfigModalOpen(false)}
+                className="px-5 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-xl text-xs font-bold transition shadow-lg"
+              >
+                Apply & Return to Simulation
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

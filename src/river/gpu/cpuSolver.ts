@@ -46,7 +46,8 @@ export interface CpuSolverContext {
 
 export function createInitialHydroState(
   mesh: RiverGridMesh,
-  boundaries: RiverBoundaryConditions
+  boundaries: RiverBoundaryConditions,
+  structures?: RiverHydraulicStructure[]
 ): HydrodynamicsState {
   const numCells = mesh.cells.length;
   const depth = new Float32Array(numCells);
@@ -64,8 +65,48 @@ export function createInitialHydroState(
   const meanVel = qIn > 0 ? Math.min(5.0, qIn / (estWidth * initH)) : 0.0;
   const ny = Math.max(1, mesh.ny);
 
+  const solidMask = new Uint8Array(numCells);
+  if (structures && structures.length > 0) {
+    for (const s of structures) {
+      if (s.enabled && s.cellIndices) {
+        const isSolid =
+          (s as any).solidMasking === true ||
+          (s.type === 'obstacle' && (s as any).solidMasking !== false) ||
+          (s.type === 'circle' && (s as any).solidMasking !== false) ||
+          (s.type === 'bridge-pier' && (s as any).solidMasking !== false) ||
+          (s.type === 'spurdike' && (s as any).solidMasking !== false && (s.permeability === undefined || s.permeability < 0.2)) ||
+          ((s.type === 'polygon' ||
+            s.type === 'rectangle' ||
+            s.type === 'line' ||
+            s.type === 'polyline' ||
+            s.type === 'levee' ||
+            s.type === 'custom-deflector' ||
+            s.type === 'gate' ||
+            s.type === 'weir') &&
+            (s as any).solidMasking);
+        if (isSolid) {
+          for (const idx of s.cellIndices) {
+            if (idx >= 0 && idx < numCells) solidMask[idx] = 1;
+          }
+        }
+      }
+    }
+  }
+
   for (let c = 0; c < numCells; c++) {
     const cell = mesh.cells[c];
+    if (solidMask[c] === 1) {
+      depth[c] = 0.0;
+      wse[c] = cell.bedElevation;
+      u[c] = 0.0;
+      v[c] = 0.0;
+      velocityMag[c] = 0.0;
+      froude[c] = 0.0;
+      shearStress[c] = 0.0;
+      isWet[c] = 0;
+      continue;
+    }
+
     depth[c] = initH;
     wse[c] = cell.bedElevation + initH;
 
@@ -284,10 +325,20 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
         if (cellIdx >= 0 && cellIdx < numCells) {
           structMap.set(cellIdx, s);
           const isSolid =
-            s.type === 'obstacle' ||
             (s as any).solidMasking === true ||
+            (s.type === 'obstacle' && (s as any).solidMasking !== false) ||
             (s.type === 'circle' && (s as any).solidMasking !== false) ||
-            ((s.type === 'polygon' || s.type === 'rectangle' || s.type === 'line' || s.type === 'polyline') && (s as any).solidMasking);
+            (s.type === 'bridge-pier' && (s as any).solidMasking !== false) ||
+            (s.type === 'spurdike' && (s as any).solidMasking !== false && (s.permeability === undefined || s.permeability < 0.2)) ||
+            ((s.type === 'polygon' ||
+              s.type === 'rectangle' ||
+              s.type === 'line' ||
+              s.type === 'polyline' ||
+              s.type === 'levee' ||
+              s.type === 'custom-deflector' ||
+              s.type === 'gate' ||
+              s.type === 'weir') &&
+              (s as any).solidMasking);
           if (isSolid) {
             solidMask[cellIdx] = 1;
           }
@@ -354,7 +405,7 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
 
         // No-slip wall viscous shear force
         const dWall = 0.5 * Math.max(1.0, Math.sqrt(cell.areaM2));
-        const nuEff = 1e-4 + (ctx.turb.nuT ? ctx.turb.nuT[c] : 0.0);
+        const nuEff = 1e-4 + (ctx.turb?.nuT ? ctx.turb.nuT[c] : 0.0);
         diffSumHu += nuEff * hL * ((0.0 - uL) / dWall) * length;
         diffSumHv += nuEff * hL * ((0.0 - vL) / dWall) * length;
       } else if (nbr >= 0) {
@@ -368,7 +419,7 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
         const nbrCell = mesh.cells[nbr];
         const dist = Math.max(0.5, Math.hypot(nbrCell.centerX - cell.centerX, nbrCell.centerY - cell.centerY));
         const hFace = 0.5 * (hL + hR);
-        const nuEffFace = 1e-4 + 0.5 * ((ctx.turb.nuT ? ctx.turb.nuT[c] : 0.0) + (ctx.turb.nuT ? ctx.turb.nuT[nbr] : 0.0));
+        const nuEffFace = 1e-4 + 0.5 * ((ctx.turb?.nuT ? ctx.turb.nuT[c] : 0.0) + (ctx.turb?.nuT ? ctx.turb.nuT[nbr] : 0.0));
         diffSumHu += nuEffFace * hFace * ((uR - uL) / dist) * length;
         diffSumHv += nuEffFace * hFace * ((vR - vL) / dist) * length;
       } else {
@@ -422,7 +473,7 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
           zR = zL;
 
           const dWall = 0.5 * Math.max(1.0, Math.sqrt(cell.areaM2));
-          const nuEff = 1e-4 + (ctx.turb.nuT ? ctx.turb.nuT[c] : 0.0);
+          const nuEff = 1e-4 + (ctx.turb?.nuT ? ctx.turb.nuT[c] : 0.0);
           diffSumHu += nuEff * hL * ((0.0 - uL) / dWall) * length;
           diffSumHv += nuEff * hL * ((0.0 - vL) / dWall) * length;
         }
@@ -551,21 +602,25 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
   ctx.stepCount += 1;
 
   // Step 2: Coupled RANS Turbulence Transport
-  stepTurbulenceModel(mesh, hydro, ctx.turb, turbParams, dtSec);
+  if (ctx.turb && turbParams) {
+    stepTurbulenceModel(mesh, hydro, ctx.turb, turbParams, dtSec);
+  }
 
   // Step 3: Coupled Sediment Transport & Exner Morphodynamics
-  const isMorpho =
-    sedParams.enabled &&
-    ctx.stepCount % (sedParams.decoupledIntervalSteps || 1) === 0;
+  if (ctx.sed && sedParams) {
+    const isMorpho =
+      sedParams.enabled &&
+      (ctx.stepCount || 1) % (sedParams.decoupledIntervalSteps || 1) === 0;
 
-  stepSedimentTransport(
-    dtSec,
-    mesh,
-    hydro,
-    ctx.turb,
-    ctx.sed,
-    sedParams,
-    turbParams,
-    isMorpho
-  );
+    stepSedimentTransport(
+      dtSec,
+      mesh,
+      hydro,
+      ctx.turb || { nuT: new Float32Array(mesh.cells.length), k: new Float32Array(mesh.cells.length), omega: new Float32Array(mesh.cells.length), epsilon: new Float32Array(mesh.cells.length) },
+      ctx.sed,
+      sedParams,
+      turbParams || ({} as any),
+      isMorpho
+    );
+  }
 }
