@@ -16,8 +16,9 @@ import {
 import { TurbulenceState, TurbulenceParameters } from '../types/turbulence';
 import { SedimentState, SedimentParameters } from '../types/sediment';
 import { RiverHydraulicStructure } from '../structures/structureTypes';
-import { exportRiverToVtk3D, buildOpenFoamCaseZip } from '../openfoam/openfoamCaseGenerator';
+import { exportRiverToVtk3D } from '../openfoam/openfoamCaseGenerator';
 import { triggerFileDownload } from '../export/riverExport';
+import { getFluentCfdRgb } from '../visualization/cfdColorMap';
 
 export type ParaViewScalarField =
   | 'velocity'
@@ -60,7 +61,7 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
 
   // Visualization settings
   const [scalarField, setScalarField] = useState<ParaViewScalarField>('velocity');
-  const [colorPalette, setColorPalette] = useState<ColorMapPalette>('cool-to-warm');
+  const [colorPalette, setColorPalette] = useState<ColorMapPalette>('rainbow');
   const [showWaterSurface, setShowWaterSurface] = useState(true);
   const [showBedTerrain, setShowBedTerrain] = useState(true);
   const [showStreamlines, setShowStreamlines] = useState(true);
@@ -153,12 +154,9 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
       const b = Math.round(255 * Math.cos(t * Math.PI * 0.5));
       return [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))];
     } else {
-      // Rainbow / Jet
-      const f = 4 * t;
-      const r = Math.max(0, Math.min(1, f - 1.5, -f + 4.5));
-      const g = Math.max(0, Math.min(1, f - 0.5, -f + 3.5));
-      const b = Math.max(0, Math.min(1, f + 0.5, -f + 2.5));
-      return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
+      // Classic Ansys Fluent / OpenFOAM CFD Rainbow Palette:
+      // Deep Navy Blue -> Royal Blue -> Cyan -> Emerald Green -> Yellow -> Orange -> Crimson Red
+      return getFluentCfdRgb(t);
     }
   };
 
@@ -255,116 +253,132 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
 
       const polygons: Polygon3D[] = [];
 
-      // 1. Render Bed Bathymetry Terrain Grid
+      const originLat = mesh.centerline[0]?.lat ?? 0;
+      const originLng = mesh.centerline[0]?.lng ?? 0;
+      const cosLatOrigin = Math.cos((originLat * Math.PI) / 180.0);
+      const toLocalXY = (lat: number, lng: number): [number, number] => [
+        (lng - originLng) * 111320.0 * cosLatOrigin,
+        (lat - originLat) * 111320.0,
+      ];
+
+      // 3D Directional Diffuse Lighting
+      const computeShading = (
+        p0: [number, number, number],
+        p1: [number, number, number],
+        p2: [number, number, number]
+      ): number => {
+        const ax = p1[0] - p0[0], ay = p1[1] - p0[1], az = p1[2] - p0[2];
+        const bx = p2[0] - p0[0], by = p2[1] - p0[1], bz = p2[2] - p0[2];
+        let nx = ay * bz - az * by;
+        let ny = az * bx - ax * bz;
+        let nz = ax * by - ay * bx;
+        const len = Math.hypot(nx, ny, nz);
+        if (len < 1e-5) return 0.85;
+        nx /= len; ny /= len; nz /= len;
+        const dot = Math.max(0, nx * 0.35 + ny * 0.45 + nz * 0.82);
+        return 0.72 + 0.28 * dot;
+      };
+
+      // 1. Render Bed Bathymetry Terrain Grid (All cells covering entire reach)
       if (showBedTerrain) {
-        for (let i = 0; i < nx - 1; i++) {
-          for (let j = 0; j < ny - 1; j++) {
-            const idx00 = i * ny + j;
-            const idx10 = (i + 1) * ny + j;
-            const idx11 = (i + 1) * ny + (j + 1);
-            const idx01 = i * ny + (j + 1);
+        for (let c = 0; c < cells.length; c++) {
+          const cell = cells[c];
+          if (!cell || !cell.corners || cell.corners.length < 4) continue;
 
-            const c00 = cells[idx00];
-            const c10 = cells[idx10];
-            const c11 = cells[idx11];
-            const c01 = cells[idx01];
-            if (!c00 || !c10 || !c11 || !c01) continue;
+          const pts3D: [number, number, number][] = cell.corners.slice(0, 4).map(([lat, lng]) => {
+            const [x, y] = toLocalXY(lat, lng);
+            return [x, y, cell.bedElevation];
+          });
 
-            const p00 = project(c00.centerX, c00.centerY, c00.bedElevation);
-            const p10 = project(c10.centerX, c10.centerY, c10.bedElevation);
-            const p11 = project(c11.centerX, c11.centerY, c11.bedElevation);
-            const p01 = project(c01.centerX, c01.centerY, c01.bedElevation);
+          const p0 = project(pts3D[0][0], pts3D[0][1], pts3D[0][2]);
+          const p1 = project(pts3D[1][0], pts3D[1][1], pts3D[1][2]);
+          const p2 = project(pts3D[2][0], pts3D[2][1], pts3D[2][2]);
+          const p3 = project(pts3D[3][0], pts3D[3][1], pts3D[3][2]);
 
-            const avgDepth = (p00.depth + p10.depth + p11.depth + p01.depth) * 0.25;
-            polygons.push({
-              depth: avgDepth - 2.0, // slight bias behind water
-              points: [p00, p10, p11, p01],
-              fillColor: '#334155',
-              strokeColor: '#1e293b',
-              lineWidth: 0.5,
-            });
-          }
+          const shade = computeShading(pts3D[0], pts3D[1], pts3D[3]);
+          const r = Math.round(51 * shade);
+          const g = Math.round(65 * shade);
+          const b = Math.round(85 * shade);
+
+          const avgDepth = (p0.depth + p1.depth + p2.depth + p3.depth) * 0.25;
+          polygons.push({
+            depth: avgDepth - 2.0, // slight bias behind water
+            points: [p0, p1, p2, p3],
+            fillColor: `rgb(${r}, ${g}, ${b})`,
+            strokeColor: '#1e293b',
+            lineWidth: 0.5,
+          });
         }
       }
 
-      // 2. Render 3D Free-Surface Water Mesh
+      // 2. Render 3D Free-Surface Water Mesh (All wet cells with volumetric lighting)
       if (showWaterSurface) {
-        for (let i = 0; i < nx - 1; i++) {
-          for (let j = 0; j < ny - 1; j++) {
-            const idx00 = i * ny + j;
-            const idx10 = (i + 1) * ny + j;
-            const idx11 = (i + 1) * ny + (j + 1);
-            const idx01 = i * ny + (j + 1);
+        for (let c = 0; c < cells.length; c++) {
+          const cell = cells[c];
+          if (!cell || !cell.corners || cell.corners.length < 4) continue;
 
-            const c00 = cells[idx00];
-            const c10 = cells[idx10];
-            const c11 = cells[idx11];
-            const c01 = cells[idx01];
-            if (!c00 || !c10 || !c11 || !c01) continue;
+          const h = hydro.depth[c] || 0;
+          if (h < 0.005) continue; // Skip dry cells
 
-            const h00 = hydro.depth[idx00] || 0;
-            const h10 = hydro.depth[idx10] || 0;
-            const h11 = hydro.depth[idx11] || 0;
-            const h01 = hydro.depth[idx01] || 0;
-            const avgH = (h00 + h10 + h11 + h01) * 0.25;
+          const wse = cell.bedElevation + h;
+          const pts3D: [number, number, number][] = cell.corners.slice(0, 4).map(([lat, lng]) => {
+            const [x, y] = toLocalXY(lat, lng);
+            return [x, y, wse];
+          });
 
-            // Skip dry cells
-            if (avgH < 0.005) continue;
+          const p0 = project(pts3D[0][0], pts3D[0][1], pts3D[0][2]);
+          const p1 = project(pts3D[1][0], pts3D[1][1], pts3D[1][2]);
+          const p2 = project(pts3D[2][0], pts3D[2][1], pts3D[2][2]);
+          const p3 = project(pts3D[3][0], pts3D[3][1], pts3D[3][2]);
 
-            const wse00 = c00.bedElevation + h00;
-            const wse10 = c10.bedElevation + h10;
-            const wse11 = c11.bedElevation + h11;
-            const wse01 = c01.bedElevation + h01;
-
-            const p00 = project(c00.centerX, c00.centerY, wse00);
-            const p10 = project(c10.centerX, c10.centerY, wse10);
-            const p11 = project(c11.centerX, c11.centerY, wse11);
-            const p01 = project(c01.centerX, c01.centerY, wse01);
-
-            // Compute cell scalar value for color
-            let scalarVal = 0;
-            if (scalarField === 'velocity') {
-              scalarVal = (hydro.velocityMag[idx00] + hydro.velocityMag[idx10] + hydro.velocityMag[idx11] + hydro.velocityMag[idx01]) * 0.25;
-            } else if (scalarField === 'wse') {
-              scalarVal = (wse00 + wse10 + wse11 + wse01) * 0.25;
-            } else if (scalarField === 'depth') {
-              scalarVal = avgH;
-            } else if (scalarField === 'pressure') {
-              scalarVal = avgH * 9.81;
-            } else if (scalarField === 'froude') {
-              scalarVal = (hydro.froude[idx00] + hydro.froude[idx10] + hydro.froude[idx11] + hydro.froude[idx01]) * 0.25;
-            } else if (scalarField === 'turbK') {
-              scalarVal = (turb.k[idx00] + turb.k[idx10] + turb.k[idx11] + turb.k[idx01]) * 0.25;
-            }
-
-            const tNorm = (scalarVal - fieldRange.min) / Math.max(1e-5, fieldRange.max - fieldRange.min);
-            const [r, g, b] = getColor(tNorm, colorPalette);
-
-            const avgDepth = (p00.depth + p10.depth + p11.depth + p01.depth) * 0.25;
-            polygons.push({
-              depth: avgDepth,
-              points: [p00, p10, p11, p01],
-              fillColor: `rgba(${r}, ${g}, ${b}, ${wireframe ? 0.3 : 0.85})`,
-              strokeColor: wireframe ? `rgb(${r}, ${g}, ${b})` : 'rgba(255, 255, 255, 0.15)',
-              lineWidth: wireframe ? 1.0 : 0.3,
-            });
+          // Compute cell scalar value for color
+          let scalarVal = 0;
+          if (scalarField === 'velocity') {
+            scalarVal = hydro.velocityMag[c] || 0;
+          } else if (scalarField === 'wse') {
+            scalarVal = wse;
+          } else if (scalarField === 'depth') {
+            scalarVal = h;
+          } else if (scalarField === 'pressure') {
+            scalarVal = h * 9.81;
+          } else if (scalarField === 'froude') {
+            scalarVal = hydro.froude[c] || 0;
+          } else if (scalarField === 'turbK') {
+            scalarVal = turb.k ? (turb.k[c] || 0) : 0;
           }
+
+          const tNorm = (scalarVal - fieldRange.min) / Math.max(1e-5, fieldRange.max - fieldRange.min);
+          const [rBase, gBase, bBase] = getColor(tNorm, colorPalette);
+          const shade = computeShading(pts3D[0], pts3D[1], pts3D[3]);
+          const r = Math.min(255, Math.round(rBase * shade));
+          const g = Math.min(255, Math.round(gBase * shade));
+          const b = Math.min(255, Math.round(bBase * shade));
+
+          const avgDepth = (p0.depth + p1.depth + p2.depth + p3.depth) * 0.25;
+          polygons.push({
+            depth: avgDepth,
+            points: [p0, p1, p2, p3],
+            fillColor: `rgba(${r}, ${g}, ${b}, ${wireframe ? 0.35 : 0.96})`,
+            strokeColor: wireframe ? `rgb(${r}, ${g}, ${b})` : undefined,
+            lineWidth: wireframe ? 1.0 : 0.0,
+          });
         }
       }
 
       // 3. Render 3D Extruded CAD Hydraulic Structures
       if (showCadStructures) {
-        const originLat = mesh.centerline[0]?.lat ?? 0;
-        const originLng = mesh.centerline[0]?.lng ?? 0;
-        const cosLatOrigin = Math.cos((originLat * Math.PI) / 180.0);
-        const toLocalXY = (lat: number, lng: number): [number, number] => [
-          (lng - originLng) * 111320.0 * cosLatOrigin,
-          (lat - originLat) * 111320.0,
-        ];
 
         for (const s of structures) {
           if (!s.enabled) continue;
-          const color = s.cadProperties?.color || '#f59e0b';
+          const isObstacleOrBaffle =
+            s.type === 'obstacle' ||
+            s.type === 'circle' ||
+            (s as any).solidMasking ||
+            s.type === 'rectangle' ||
+            s.type === 'polygon';
+          const solidTopColor = isObstacleOrBaffle ? '#3b4758' : (s.cadProperties?.color || '#475569');
+          const solidSideColor = isObstacleOrBaffle ? '#1e293b' : (s.cadProperties?.color || '#334155');
+          const solidStrokeColor = isObstacleOrBaffle ? '#64748b' : '#94a3b8';
 
           let zBase = 100.0;
           if (s.cellIndices && s.cellIndices.length > 0) {
@@ -405,8 +419,8 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
               polygons.push({
                 depth: avgDepth + 1.2,
                 points: topPts.map((p) => ({ px: p.px, py: p.py })),
-                fillColor: color,
-                strokeColor: '#ffffff',
+                fillColor: solidTopColor,
+                strokeColor: solidStrokeColor,
                 lineWidth: 1.0,
               });
 
@@ -426,8 +440,8 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
                     { px: fTop2.px, py: fTop2.py },
                     { px: fTop1.px, py: fTop1.py },
                   ],
-                  fillColor: color,
-                  strokeColor: '#000000',
+                  fillColor: solidSideColor,
+                  strokeColor: '#0f172a',
                   lineWidth: 0.5,
                 });
               }
@@ -451,8 +465,8 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             polygons.push({
               depth: avgDepth + 1.2,
               points: topPts.map((p) => ({ px: p.px, py: p.py })),
-              fillColor: color,
-              strokeColor: '#ffffff',
+              fillColor: solidTopColor,
+              strokeColor: solidStrokeColor,
               lineWidth: 1.0,
             });
 
@@ -472,8 +486,8 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
                   { px: fTop2.px, py: fTop2.py },
                   { px: fTop1.px, py: fTop1.py },
                 ],
-                fillColor: color,
-                strokeColor: '#000000',
+                fillColor: solidSideColor,
+                strokeColor: '#0f172a',
                 lineWidth: 0.5,
               });
             }
@@ -508,8 +522,8 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
               polygons.push({
                 depth: segDepth + 1.2,
                 points: [c1, c2, c3, c4],
-                fillColor: color,
-                strokeColor: '#ffffff',
+                fillColor: solidTopColor,
+                strokeColor: solidStrokeColor,
                 lineWidth: 1.0,
               });
 
@@ -517,15 +531,15 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
               polygons.push({
                 depth: (b1.depth + b4.depth + c4.depth + c1.depth) * 0.25 + 1.0,
                 points: [b1, b4, c4, c1],
-                fillColor: color,
-                strokeColor: '#000000',
+                fillColor: solidSideColor,
+                strokeColor: '#0f172a',
                 lineWidth: 0.5,
               });
               polygons.push({
                 depth: (b3.depth + b2.depth + c2.depth + c3.depth) * 0.25 + 1.0,
                 points: [b3, b2, c2, c3],
-                fillColor: color,
-                strokeColor: '#000000',
+                fillColor: solidSideColor,
+                strokeColor: '#0f172a',
                 lineWidth: 0.5,
               });
             }
@@ -559,8 +573,8 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             polygons.push({
               depth: structDepth + 1.0,
               points: [topP0, topP1, topP2, topP3],
-              fillColor: color,
-              strokeColor: '#ffffff',
+              fillColor: solidTopColor,
+              strokeColor: solidStrokeColor,
               lineWidth: 1.0,
             });
 
@@ -568,15 +582,15 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             polygons.push({
               depth: structDepth + 0.8,
               points: [botP0, botP1, topP1, topP0],
-              fillColor: color,
-              strokeColor: '#000000',
+              fillColor: solidSideColor,
+              strokeColor: '#0f172a',
               lineWidth: 0.5,
             });
             polygons.push({
               depth: structDepth + 0.8,
               points: [botP1, botP2, topP2, topP1],
-              fillColor: color,
-              strokeColor: '#000000',
+              fillColor: solidSideColor,
+              strokeColor: '#0f172a',
               lineWidth: 0.5,
             });
           }
@@ -895,21 +909,6 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
     triggerFileDownload(blob, `${mesh.id}-paraview-3d.vtk`);
   };
 
-  // Export complete OpenFOAM Case ZIP
-  const handleExportOpenFoam = async () => {
-    const zipBlob = await buildOpenFoamCaseZip({
-      mesh,
-      hydro,
-      turb,
-      structures,
-      reach,
-      upstreamDischargeM3s: boundaries.upstreamDischargeM3s,
-      downstreamStageM: boundaries.downstreamStageM,
-      manningN: boundaries.manningRoughnessDefault,
-    });
-    triggerFileDownload(zipBlob, `${mesh.id}-openfoam-case.zip`);
-  };
-
   if (!isOpen) return null;
 
   return (
@@ -924,8 +923,9 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
                 <h2 className="text-sm font-bold text-white tracking-wide">
                   ParaView 3D CFD Interactive Post-Processor
                 </h2>
-                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-950 text-indigo-300 border border-indigo-700/60 uppercase">
-                  OpenFOAM FVM
+                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-950 text-blue-300 border border-blue-700/60 uppercase flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  OpenFOAM FVM Solver Core
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
@@ -960,17 +960,6 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             >
               <span>📥</span>
               <span>Export .VTK</span>
-            </button>
-
-            {/* Download OpenFOAM Case */}
-            <button
-              type="button"
-              onClick={handleExportOpenFoam}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition shadow"
-              title="Download full OpenFOAM 3D interFoam case with CAD structures.stl"
-            >
-              <span>🌊</span>
-              <span>OpenFOAM Case (.zip)</span>
             </button>
 
             {/* Close button */}

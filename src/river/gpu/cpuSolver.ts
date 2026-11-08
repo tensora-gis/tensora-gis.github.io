@@ -59,16 +59,61 @@ export function createInitialHydroState(
   const isWet = new Uint8Array(numCells);
 
   const initH = Math.max(0.01, boundaries.initialWaterDepthM || 1.0);
+  const qIn = boundaries.upstreamDischargeM3s || 0;
+  const estWidth = Math.max(5.0, mesh.meanWidthM || 20.0);
+  const meanVel = qIn > 0 ? Math.min(5.0, qIn / (estWidth * initH)) : 0.0;
+  const ny = Math.max(1, mesh.ny);
 
   for (let c = 0; c < numCells; c++) {
     const cell = mesh.cells[c];
     depth[c] = initH;
     wse[c] = cell.bedElevation + initH;
-    u[c] = 0.0;
-    v[c] = 0.0;
-    velocityMag[c] = 0.0;
-    froude[c] = 0.0;
-    shearStress[c] = 0.0;
+
+    if (meanVel > 0) {
+      // Parabolic boundary layer across channel width
+      const eta = (cell.j + 0.5) / ny;
+      const prof = 1.5 * 4.0 * eta * (1.0 - eta);
+
+      // Streamwise unit tangent vector
+      let dirX = 1.0;
+      let dirY = 0.0;
+      const nextStreamwise = (cell.i + 1) * ny + cell.j;
+      if (cell.i + 1 < mesh.nx && mesh.cells[nextStreamwise]) {
+        const dX = mesh.cells[nextStreamwise].centerX - cell.centerX;
+        const dY = mesh.cells[nextStreamwise].centerY - cell.centerY;
+        const len = Math.hypot(dX, dY);
+        if (len > 1e-4) {
+          dirX = dX / len;
+          dirY = dY / len;
+        }
+      } else if (cell.i > 0) {
+        const prevStreamwise = (cell.i - 1) * ny + cell.j;
+        if (mesh.cells[prevStreamwise]) {
+          const dX = cell.centerX - mesh.cells[prevStreamwise].centerX;
+          const dY = cell.centerY - mesh.cells[prevStreamwise].centerY;
+          const len = Math.hypot(dX, dY);
+          if (len > 1e-4) {
+            dirX = dX / len;
+            dirY = dY / len;
+          }
+        }
+      }
+
+      const cellVel = meanVel * prof;
+      u[c] = cellVel * dirX;
+      v[c] = cellVel * dirY;
+      velocityMag[c] = cellVel;
+      froude[c] = cellVel / Math.sqrt(G * initH);
+      shearStress[c] =
+        (1000.0 * G * cell.manningN * cell.manningN * cellVel * cellVel) /
+        Math.max(Math.cbrt(initH), 0.05);
+    } else {
+      u[c] = 0.0;
+      v[c] = 0.0;
+      velocityMag[c] = 0.0;
+      froude[c] = 0.0;
+      shearStress[c] = 0.0;
+    }
     isWet[c] = 1;
   }
 
@@ -285,6 +330,8 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
     let fluxSumH = 0;
     let fluxSumHu = 0;
     let fluxSumHv = 0;
+    let diffSumHu = 0;
+    let diffSumHv = 0;
 
     const numFaces = cell.neighbors.length;
 
@@ -299,27 +346,46 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
       let zR = zL;
 
       if (nbr >= 0 && solidMask[nbr] === 1) {
-        // Face connects to an internal solid obstacle cell: reflective wall BC
-        const vnL = uL * nx + vL * ny;
-        const vtL = -uL * ny + vL * nx;
-        uR = (-vnL) * nx - vtL * ny;
-        vR = (-vnL) * ny + vtL * nx;
+        // Internal solid obstacle: strict no-slip wall (u_wall = 0, v_wall = 0)
+        uR = -uL;
+        vR = -vL;
         hR = hL;
         zR = zL;
+
+        // No-slip wall viscous shear force
+        const dWall = 0.5 * Math.max(1.0, Math.sqrt(cell.areaM2));
+        const nuEff = 1e-4 + (ctx.turb.nuT ? ctx.turb.nuT[c] : 0.0);
+        diffSumHu += nuEff * hL * ((0.0 - uL) / dWall) * length;
+        diffSumHv += nuEff * hL * ((0.0 - vL) / dWall) * length;
       } else if (nbr >= 0) {
         // Internal face with fluid neighbor
         hR = hydro.depth[nbr];
         uR = hydro.u[nbr];
         vR = hydro.v[nbr];
         zR = mesh.cells[nbr].bedElevation;
+
+        // Fluid-fluid viscous & turbulent momentum diffusion
+        const nbrCell = mesh.cells[nbr];
+        const dist = Math.max(0.5, Math.hypot(nbrCell.centerX - cell.centerX, nbrCell.centerY - cell.centerY));
+        const hFace = 0.5 * (hL + hR);
+        const nuEffFace = 1e-4 + 0.5 * ((ctx.turb.nuT ? ctx.turb.nuT[c] : 0.0) + (ctx.turb.nuT ? ctx.turb.nuT[nbr] : 0.0));
+        diffSumHu += nuEffFace * hFace * ((uR - uL) / dist) * length;
+        diffSumHv += nuEffFace * hFace * ((vR - vL) / dist) * length;
       } else {
         // Boundary face
-        if (cell.isBoundary === 'upstream') {
+        if (nbr === -1 || (f === 3 && cell.isBoundary === 'upstream')) {
           // Upstream discharge BC: Q_in = boundaries.upstreamDischargeM3s
           const qIn = boundaries.upstreamDischargeM3s;
           if (qIn > 0) {
-            const inflowVel = qIn / Math.max(10.0, cell.areaM2);
-            hR = Math.max(0.01, boundaries.initialWaterDepthM || 1.0);
+            const hUp = Math.max(0.01, boundaries.initialWaterDepthM || 1.0);
+            const estWidth = Math.max(5.0, mesh.meanWidthM || 20.0);
+            const meanInflowVel = qIn / (estWidth * hUp);
+            // Parabolic profile across channel width (zero at banks, 1.5x at center)
+            const eta = (cell.j + 0.5) / Math.max(1, mesh.ny);
+            const prof = 1.5 * 4.0 * eta * (1.0 - eta);
+            const inflowVel = Math.min(15.0, meanInflowVel * prof);
+
+            hR = hUp;
             uR = -inflowVel * nx;
             vR = -inflowVel * ny;
             zR = zL;
@@ -332,7 +398,7 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
             hR = hL;
             zR = zL;
           }
-        } else if (cell.isBoundary === 'downstream') {
+        } else if (nbr === -2 || (f === 1 && cell.isBoundary === 'downstream')) {
           // Downstream stage or normal depth BC
           if (boundaries.downstreamType === 'fixed-stage') {
             hR = Math.max(0.0, boundaries.downstreamStageM - zL);
@@ -347,14 +413,18 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
             zR = zL;
           }
         } else {
-          // Impermeable solid bank wall (reflective slip)
-          // vnR = -vnL, vtR = vtL
+          // Impermeable solid bank wall (no-slip / reflective wall BC)
           const vnL = uL * nx + vL * ny;
           const vtL = -uL * ny + vL * nx;
           uR = (-vnL) * nx - vtL * ny;
           vR = (-vnL) * ny + vtL * nx;
           hR = hL;
           zR = zL;
+
+          const dWall = 0.5 * Math.max(1.0, Math.sqrt(cell.areaM2));
+          const nuEff = 1e-4 + (ctx.turb.nuT ? ctx.turb.nuT[c] : 0.0);
+          diffSumHu += nuEff * hL * ((0.0 - uL) / dWall) * length;
+          diffSumHv += nuEff * hL * ((0.0 - vL) / dWall) * length;
         }
       }
 
@@ -409,8 +479,8 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
     const dH = (-fluxSumH / area + rainfallRateMs + tribQ / area) * dtSec;
     const newH = Math.max(0.0, hL + dH);
 
-    let newHu = nextHu[c] + (-fluxSumHu / area + sBx / area) * dtSec;
-    let newHv = nextHv[c] + (-fluxSumHv / area + sBy / area) * dtSec;
+    let newHu = nextHu[c] + (-fluxSumHu / area + sBx / area + diffSumHu / area) * dtSec;
+    let newHv = nextHv[c] + (-fluxSumHv / area + sBy / area + diffSumHv / area) * dtSec;
 
     // Semi-implicit bed friction integration:
     // (hu)^(n+1) = (hu)^* / (1 + dt * g * n^2 * |V| / h^(4/3))

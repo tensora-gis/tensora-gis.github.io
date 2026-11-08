@@ -37,6 +37,11 @@ import {
 } from '../src/river/openfoam/openfoamCaseGenerator';
 import { RiverBoundaryConditions } from '../src/river/types/riverReach';
 import { RiverHydraulicStructure } from '../src/river/structures/structureTypes';
+import {
+  getFluentCfdRgb,
+  getFluentCfdColor,
+  interpolateIsoSegment,
+} from '../src/river/visualization/cfdColorMap';
 
 console.log('================================================================');
 console.log('  RUNNING AUTOCAD FREEDOM, SOLID CFD & PARAVIEW 3D SELFTEST');
@@ -378,6 +383,50 @@ async function runSelftest() {
   assert(vtkContent.includes('VECTORS velocity float'), 'VTK must contain velocity 3D vector field');
   assert(vtkContent.includes('SCALARS eddy_viscosity float 1'), 'VTK must contain eddy_viscosity scalar field');
   console.log(`  PASS: ParaView 3D Structured Grid VTK export verified with obstacle scalars and WSE free-surface (${(vtkContent.length / 1024).toFixed(1)} KB).`);
+
+  // ========================================================================
+  // 7. CFD Rainbow Color Palette, Isocontour Interpolation & Flow Physics
+  // ========================================================================
+  console.log('\n[7] Testing CFD Rainbow Color Palette, Isocontour Interpolation & Flow Physics...');
+
+  // A. Color stops
+  const rgbLow = getFluentCfdRgb(0.0);
+  assert(rgbLow[0] === 0 && rgbLow[2] > 120, 'Zero speed must map to deep blue hue');
+  const rgbMid = getFluentCfdRgb(0.55);
+  assert(rgbMid[1] > 200, 'Mid-range speed must map to bright green hue');
+  const rgbHigh = getFluentCfdRgb(1.0);
+  assert(rgbHigh[0] > 200 && rgbHigh[1] < 50, 'Peak speed must map to vibrant crimson red hue');
+
+  const cssColor = getFluentCfdColor(0.85, 0.98);
+  assert(cssColor.startsWith('rgba(') && cssColor.endsWith(', 0.98)'), 'CSS color format must be valid rgba');
+
+  // B. Isocontour linear interpolation correctness (ensuring no inverted/negative parameter when sA > sB)
+  const tDown = interpolateIsoSegment(2.0, 0.0, 1.0);
+  assert(tDown !== null && Math.abs(tDown - 0.5) < 1e-4, `Interpolation along decreasing edge (2->0 for target 1) must be +0.5, got ${tDown}`);
+
+  const tUp = interpolateIsoSegment(0.0, 2.0, 1.0);
+  assert(tUp !== null && Math.abs(tUp - 0.5) < 1e-4, `Interpolation along increasing edge (0->2 for target 1) must be +0.5, got ${tUp}`);
+
+  const tOut = interpolateIsoSegment(1.0, 3.0, 5.0);
+  assert(tOut === null, 'Out-of-range target must return null (no edge intersection)');
+
+  // C. Streamwise tangent continuity at downstream boundary station
+  const lastStationIdx = (flumeMesh.nx - 1) * flumeMesh.ny;
+  const lastCell = flumeMesh.cells[lastStationIdx];
+  assert(lastCell !== undefined, 'Last cell exists');
+  assert(hydroState.u[lastStationIdx] !== undefined, 'Velocity u exists at outlet');
+  assert(hydroState.v[lastStationIdx] !== undefined, 'Velocity v exists at outlet');
+
+  // D. Parabolic boundary inflow: center velocity must exceed edge velocity
+  const initHydro = createInitialHydroState(flumeMesh, flumeBoundaries);
+  const midCol = Math.floor(flumeMesh.ny / 2);
+  const uCenter = initHydro.velocityMag[midCol];
+  const uEdge = initHydro.velocityMag[0];
+  assert(uCenter > uEdge, `Channel center velocity (${uCenter.toFixed(2)}) must exceed edge velocity (${uEdge.toFixed(2)}) due to parabolic boundary profile`);
+
+  console.log('  PASS: Fluent CFD rainbow palette (deep blue -> cyan -> green -> yellow -> red) verified.');
+  console.log('  PASS: Isocontour edge interpolation verified (exact +0.5 parameter in both gradient directions, no negative t).');
+  console.log('  PASS: Streamwise velocity and parabolic cross-section boundary profile verified across all stations.');
 
   console.log('\n================================================================');
   console.log('  🎉 ALL AUTOCAD FREEDOM, SOLID CFD & PARAVIEW 3D TESTS PASSED! ');

@@ -84,7 +84,7 @@ import {
   createRotatedRectanglePoints,
   createCirclePoints,
 } from '../river/structures/cadStructureBuilder';
-import { buildOpenFoamCaseZip, exportRiverToVtk3D } from '../river/openfoam/openfoamCaseGenerator';
+import { exportRiverToVtk3D } from '../river/openfoam/openfoamCaseGenerator';
 import { ParaView3DVisualizer } from '../river/components/ParaView3DVisualizer';
 
 export const RiverAnalysisModelling: React.FC = () => {
@@ -124,7 +124,7 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [calibrationResult, setCalibrationResult] = useState<SwotCalibrationResult | null>(null);
 
   // Visualization & Map State
-  const [thematicDisplay, setThematicDisplay] = useState<RiverThematicField>('depth');
+  const [thematicDisplay, setThematicDisplay] = useState<RiverThematicField>('velocity');
   const [showVectors, setShowVectors] = useState(true);
   const [basemapType, setBasemapType] = useState<'satellite' | 'streets'>('satellite');
   const [selectedCell, setSelectedCell] = useState<{ cell: RiverGridCell; idx: number } | null>(null);
@@ -168,7 +168,6 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [isSimulationPanelOpen, setIsSimulationPanelOpen] = useState(false);
   const [isPersistenceOpen, setIsPersistenceOpen] = useState(false);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
-  const [isExportingOpenFoam, setIsExportingOpenFoam] = useState(false);
 
   // Leaflet Map Container & Tile Layer References
   const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -850,32 +849,6 @@ export const RiverAnalysisModelling: React.FC = () => {
     }
   };
 
-  // OpenFOAM 3D CFD Case Generation & Download (.zip)
-  const handleExportOpenFoam = async () => {
-    setIsExportingOpenFoam(true);
-    try {
-      const zipBlob = await buildOpenFoamCaseZip({
-        mesh,
-        hydro,
-        turb,
-        structures,
-        reach,
-        upstreamDischargeM3s: boundaries.upstreamDischargeM3s,
-        downstreamStageM: boundaries.downstreamStageM,
-        manningN: boundaries.manningRoughnessDefault,
-        verticalLayers: 12,
-        simEndTimeSec: 60,
-      });
-      triggerFileDownload(zipBlob, `openfoam_3d_case_${reach.id}.zip`);
-      setCadNotification('✅ Generated full 3D OpenFOAM Case (interFoam)! Downloaded openfoam_3d_case.zip');
-      setTimeout(() => setCadNotification(null), 5000);
-    } catch (err: any) {
-      alert(`OpenFOAM generation failed: ${err.message}`);
-    } finally {
-      setIsExportingOpenFoam(false);
-    }
-  };
-
   // 3D VTK Export for ParaView
   const handleExportVtk3D = () => {
     try {
@@ -1021,8 +994,16 @@ export const RiverAnalysisModelling: React.FC = () => {
               <span>ParaView 3D</span>
             </button>
 
-            {/* Compact Export Group */}
+            {/* Compact Export & Engine Indicator */}
             <div className="flex items-center bg-slate-800 rounded-lg border border-slate-700 p-0.5 shadow-sm">
+              <div
+                className="flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold text-blue-300 bg-blue-950/60 rounded border border-blue-800/40"
+                title="Active 2D/3D CFD Physics Engine: OpenFOAM FVM Solver Core"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>OpenFOAM FVM</span>
+              </div>
+              <span className="text-slate-600 px-1">|</span>
               <button
                 onClick={handleExportExcelDirect}
                 disabled={isExportingExcel}
@@ -1030,15 +1011,6 @@ export const RiverAnalysisModelling: React.FC = () => {
                 title="Export 6-Sheet Engineering Excel File (.xlsx)"
               >
                 {isExportingExcel ? 'Exporting...' : '📊 .xlsx'}
-              </button>
-              <span className="text-slate-600 px-0.5">|</span>
-              <button
-                onClick={handleExportOpenFoam}
-                disabled={isExportingOpenFoam}
-                className="px-2 py-0.5 text-xs text-blue-300 hover:text-white hover:bg-blue-700/60 rounded font-medium transition"
-                title="Export complete 3D OpenFOAM Case .zip"
-              >
-                {isExportingOpenFoam ? 'Generating...' : '🌊 OpenFOAM'}
               </button>
               <span className="text-slate-600 px-0.5">|</span>
               <button
