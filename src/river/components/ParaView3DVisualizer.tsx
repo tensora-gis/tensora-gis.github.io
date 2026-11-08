@@ -16,8 +16,6 @@ import {
 import { TurbulenceState, TurbulenceParameters } from '../types/turbulence';
 import { SedimentState, SedimentParameters } from '../types/sediment';
 import { RiverHydraulicStructure } from '../structures/structureTypes';
-import { exportRiverToVtk3D } from '../openfoam/openfoamCaseGenerator';
-import { triggerFileDownload } from '../export/riverExport';
 import { getFluentCfdRgb } from '../visualization/cfdColorMap';
 
 export type ParaViewScalarField =
@@ -902,13 +900,6 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
     }
   };
 
-  // Export 3D VTK for ParaView Desktop
-  const handleExportVtk = () => {
-    const vtkData = exportRiverToVtk3D(mesh, hydro, turb, 8, structures);
-    const blob = new Blob([vtkData], { type: 'text/plain;charset=utf-8' });
-    triggerFileDownload(blob, `${mesh.id}-paraview-3d.vtk`);
-  };
-
   if (!isOpen) return null;
 
   return (
@@ -925,7 +916,7 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
                 </h2>
                 <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-950 text-blue-300 border border-blue-700/60 uppercase flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                  OpenFOAM FVM Solver Core
+                  2D FVM Riemann Solver Core
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
@@ -951,16 +942,6 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
               </button>
             )}
 
-            {/* Download ParaView VTK */}
-            <button
-              type="button"
-              onClick={handleExportVtk}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition shadow"
-              title="Download 3D Structured Grid (.vtk) for ParaView Desktop"
-            >
-              <span>📥</span>
-              <span>Export .VTK</span>
-            </button>
 
             {/* Close button */}
             <button
@@ -1179,7 +1160,7 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             <span>🖱️ Left-Drag: Orbit</span>
             <span>Right-Drag: Zoom</span>
             <span>Wheel: Scale</span>
-            <span className="text-cyan-400 font-semibold">Ready for ParaView Desktop VTK</span>
+            <span className="text-cyan-400 font-semibold">Interactive 3D Hydrodynamic Streamline Engine</span>
           </div>
         </div>
       </div>

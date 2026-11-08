@@ -56,7 +56,35 @@ export function generateCrossSectionPoints(
     points.push({ xM: halfW, zM: invertElevM });
     points.push({ xM: halfW, zM: bankTopElev });
     if (rightFp > 0) points.push({ xM: halfW + rightFp, zM: fpElev });
-  } else if (type === 'trapezoidal' || type === 'compound') {
+  } else if (type === 'compound') {
+    const halfB = bottomWidthM / 2;
+    const topOffset = halfB + bankSlopeHtoV * depthM;
+
+    if (leftFp > 0) {
+      points.push({ xM: -topOffset - leftFp, zM: fpElev });
+    }
+    // Left bank crest
+    points.push({ xM: -topOffset, zM: bankTopElev });
+    // Left shallow bank bench (littoral shelf for realistic near-bank boundary layer flow)
+    points.push({ xM: -halfB - 0.45 * (topOffset - halfB), zM: invertElevM + 0.60 * depthM });
+    // Left bank toe
+    points.push({ xM: -halfB, zM: invertElevM + 0.25 * depthM });
+    // Left channel thalweg transition
+    points.push({ xM: -halfB * 0.45, zM: invertElevM + 0.06 * depthM });
+    // Main channel Thalweg (deepest channel flow line)
+    points.push({ xM: 0.0, zM: invertElevM });
+    // Right channel thalweg transition
+    points.push({ xM: halfB * 0.45, zM: invertElevM + 0.06 * depthM });
+    // Right bank toe
+    points.push({ xM: halfB, zM: invertElevM + 0.25 * depthM });
+    // Right shallow bank bench (littoral shelf)
+    points.push({ xM: halfB + 0.45 * (topOffset - halfB), zM: invertElevM + 0.60 * depthM });
+    // Right bank crest
+    points.push({ xM: topOffset, zM: bankTopElev });
+    if (rightFp > 0) {
+      points.push({ xM: topOffset + rightFp, zM: fpElev });
+    }
+  } else if (type === 'trapezoidal') {
     const halfB = bottomWidthM / 2;
     const topOffset = halfB + bankSlopeHtoV * depthM;
 
@@ -117,25 +145,27 @@ export function sampleCrossSectionElevation(
 }
 
 /**
- * Build a default empirical CrossSectionStation
+ * Build a default empirical CrossSectionStation with realistic natural bathymetry
  */
 export function createDefaultEmpiricalStation(
   stationM: number,
   invertElevM: number,
   dischargeM3s: number = 25.0,
-  manningN: number = 0.035
+  manningN: number = 0.035,
+  channelWidthM?: number,
+  channelDepthM?: number
 ): CrossSectionStation {
-  const width = estimateBankfullWidthM(dischargeM3s);
-  const depth = estimateBankfullDepthM(dischargeM3s);
-  const bottomW = Math.max(3.0, width * 0.6);
+  const width = channelWidthM && channelWidthM > 0 ? channelWidthM : estimateBankfullWidthM(dischargeM3s);
+  const depth = channelDepthM && channelDepthM > 0 ? channelDepthM : estimateBankfullDepthM(dischargeM3s);
+  const bottomW = Math.max(3.0, width * 0.65);
 
   const template: CrossSectionTemplate = {
-    type: 'trapezoidal',
+    type: 'compound',
     bottomWidthM: bottomW,
     bankSlopeHtoV: 1.5,
     depthM: depth,
-    leftFloodplainWidthM: width * 0.5,
-    rightFloodplainWidthM: width * 0.5,
+    leftFloodplainWidthM: width * 0.4,
+    rightFloodplainWidthM: width * 0.4,
   };
 
   const points = generateCrossSectionPoints(template, invertElevM);

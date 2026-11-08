@@ -222,8 +222,22 @@ fn shallowWaterStep(@builtin(global_invocation_id) global_id: vec3<u32>) {
       let cL = sqrt(params.g * hStarL);
       let cR = sqrt(params.g * hStarR);
 
-      let sL = min(vnL - cL, vnR - cR);
-      let sR = max(vnL + cL, vnR + cR);
+      let sqrtHL = sqrt(max(0.0, hStarL));
+      let sqrtHR = sqrt(max(0.0, hStarR));
+      let denomRoe = sqrtHL + sqrtHR + 1.0e-6;
+      let uRoe = (sqrtHL * vnL + sqrtHR * vnR) / denomRoe;
+      let cRoe = sqrt(0.5 * params.g * (hStarL + hStarR));
+
+      let sL = min(vnL - cL, uRoe - cRoe);
+      let sR = max(vnR + cR, uRoe + cRoe);
+
+      var sStar: f32 = 0.0;
+      let denomStar = hStarR * (vnR - sR) - hStarL * (vnL - sL);
+      if (abs(denomStar) > 1.0e-6) {
+        sStar = (sL * hStarR * (vnR - sR) - sR * hStarL * (vnL - sL)) / denomStar;
+      } else {
+        sStar = 0.5 * (sL + sR);
+      }
 
       let fluxNormL_h = hStarL * vnL;
       let fluxNormL_u = hStarL * vnL * vnL + 0.5 * params.g * hStarL * hStarL;
@@ -245,11 +259,26 @@ fn shallowWaterStep(@builtin(global_invocation_id) global_id: vec3<u32>) {
         fNormH = fluxNormR_h;
         fNormU = fluxNormR_u;
         fNormV = fluxNormR_v;
+      } else if (sStar >= 0.0) {
+        var denomL = sL - sStar;
+        if (abs(denomL) < 1.0e-6) {
+          denomL = 1.0e-6;
+        }
+        let factorL = (sL - vnL) / denomL;
+        let hStarLRegion = max(0.0, hStarL * factorL);
+        fNormH = fluxNormL_h + sL * (hStarLRegion - hStarL);
+        fNormU = fluxNormL_u + sL * (hStarLRegion * sStar - hStarL * vnL);
+        fNormV = fluxNormL_v + sL * (hStarLRegion * vtL - hStarL * vtL);
       } else {
-        let denom = max(0.0001, sR - sL);
-        fNormH = (sR * fluxNormL_h - sL * fluxNormR_h + sR * sL * (hStarR - hStarL)) / denom;
-        fNormU = (sR * fluxNormL_u - sL * fluxNormR_u + sR * sL * (hStarR * vnR - hStarL * vnL)) / denom;
-        fNormV = (sR * fluxNormL_v - sL * fluxNormR_v + sR * sL * (hStarR * vtR - hStarL * vtL)) / denom;
+        var denomR = sR - sStar;
+        if (abs(denomR) < 1.0e-6) {
+          denomR = 1.0e-6;
+        }
+        let factorR = (sR - vnR) / denomR;
+        let hStarRRegion = max(0.0, hStarR * factorR);
+        fNormH = fluxNormR_h + sR * (hStarRRegion - hStarR);
+        fNormU = fluxNormR_u + sR * (hStarRRegion * sStar - hStarR * vnR);
+        fNormV = fluxNormR_v + sR * (hStarRRegion * vtR - hStarR * vtR);
       }
 
       let fluxHu = fNormU * nx - fNormV * ny;

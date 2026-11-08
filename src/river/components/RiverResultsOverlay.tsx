@@ -671,17 +671,18 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     }
 
     // 6. Animated CFD Streamlines (Flow-3D / Ansys Fluent streaklines)
+    // 6. Dynamic Flowing Streamlines & Particle Advection Traces (Ansys Fluent / Flow-3D Grade)
     if (curShowStreamlines) {
       let particles = particlesRef.current;
-      const targetCount = 180;
+      const targetCount = 320;
       if (!particles || particles.length < targetCount) {
         particles = particles || [];
         while (particles.length < targetCount) {
           particles.push({
-            fi: Math.random() * Math.max(1, nx * 0.35),
-            fj: Math.random() * Math.max(1, ny - 0.2),
-            age: Math.floor(Math.random() * 50),
-            maxAge: 40 + Math.floor(Math.random() * 45),
+            fi: Math.random() * Math.max(1, nx - 0.5),
+            fj: 0.15 + Math.random() * Math.max(0.2, ny - 1.3),
+            age: Math.floor(Math.random() * 60),
+            maxAge: 45 + Math.floor(Math.random() * 50),
             trail: [],
           });
         }
@@ -700,16 +701,21 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
         const isDry = !isOOB && curHydro.isWet[cIdx] !== 1;
 
         if (isOOB || isSolid || isDry || p.age >= p.maxAge) {
-          p.fi = Math.random() * Math.min(nx * 0.25, 4);
-          p.fj = Math.random() * (ny - 0.1);
+          // Continuous recirculation replenishment: 70% upstream inflow, 30% distributed along reach
+          if (Math.random() < 0.70) {
+            p.fi = Math.random() * Math.min(2.5, nx * 0.15);
+          } else {
+            p.fi = Math.random() * Math.max(1, nx - 1.0);
+          }
+          p.fj = 0.15 + Math.random() * Math.max(0.2, ny - 1.3);
           p.age = 0;
-          p.maxAge = 40 + Math.floor(Math.random() * 45);
+          p.maxAge = 45 + Math.floor(Math.random() * 50);
           p.trail = [];
           continue;
         }
 
-        const uFrac = p.fi - ci;
-        const vFrac = p.fj - cj;
+        const uFrac = Math.max(0, Math.min(1, p.fi - ci));
+        const vFrac = Math.max(0, Math.min(1, p.fj - cj));
         const p00 = nodePts[ci][cj];
         const p10 = nodePts[ci + 1][cj];
         const p11 = nodePts[ci + 1][cj + 1];
@@ -727,34 +733,106 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
           (1 - uFrac) * vFrac * p01.py;
 
         p.trail.push({ x: screenX, y: screenY });
-        if (p.trail.length > 9) {
-          p.trail.shift();
-        }
 
+        const cell = curMesh.cells[cIdx];
         const u = curHydro.u[cIdx] || 0.0;
         const v = curHydro.v[cIdx] || 0.0;
         const vel = curHydro.velocityMag[cIdx] || 0.0;
-        const advSpeed = Math.min(0.65, Math.max(0.08, vel * 0.35));
 
-        p.fi += (u >= 0 ? 1 : -1) * advSpeed;
-        p.fj += (v * 0.15);
+        // Dynamic trail length scaled with velocity
+        const maxTrailLen = Math.min(14, Math.max(4, Math.round(4 + (vel / Math.max(1.0, maxVal)) * 10)));
+        while (p.trail.length > maxTrailLen) {
+          p.trail.shift();
+        }
+
+        // Streamwise unit tangent from cell (ci, cj) to (ci+1, cj)
+        let dxS = 1.0, dyS = 0.0;
+        if (ci + 1 < nx) {
+          const nextCell = curMesh.cells[(ci + 1) * ny + cj];
+          dxS = nextCell.centerX - cell.centerX;
+          dyS = nextCell.centerY - cell.centerY;
+        } else if (ci > 0) {
+          const prevCell = curMesh.cells[(ci - 1) * ny + cj];
+          dxS = cell.centerX - prevCell.centerX;
+          dyS = cell.centerY - prevCell.centerY;
+        }
+        const lenS = Math.max(1.0, Math.hypot(dxS, dyS));
+        const tx = dxS / lenS;
+        const ty = dyS / lenS;
+
+        // Cross-stream unit normal from cell (ci, cj) to (ci, cj+1)
+        let dxN = 0.0, dyN = 1.0;
+        if (cj + 1 < ny) {
+          const rightCell = curMesh.cells[ci * ny + cj + 1];
+          dxN = rightCell.centerX - cell.centerX;
+          dyN = rightCell.centerY - cell.centerY;
+        } else if (cj > 0) {
+          const leftCell = curMesh.cells[ci * ny + cj - 1];
+          dxN = cell.centerX - leftCell.centerX;
+          dyN = cell.centerY - leftCell.centerY;
+        }
+        const lenN = Math.max(1.0, Math.hypot(dxN, dyN));
+        const nxDir = dxN / lenN;
+        const nyDir = dyN / lenN;
+
+        // Project Cartesian velocity (u, v) into curvilinear grid coordinates
+        const uStream = u * tx + v * ty;
+        const vCross = u * nxDir + v * nyDir;
+
+        // Visual advection time step: velocity-dependent displacement
+        const dtVis = 0.45;
+        const dFi = (uStream / lenS) * dtVis;
+        const dFj = (vCross / lenN) * dtVis;
+
+        // Check ahead for solid structure wall collision: slide along wall
+        const nextFi = p.fi + dFi;
+        const nextFj = p.fj + dFj;
+        const targetCi = Math.floor(nextFi);
+        const targetCj = Math.floor(nextFj);
+        const targetIdx = targetCi * ny + targetCj;
+
+        if (targetCi >= 0 && targetCi < nx && targetCj >= 0 && targetCj < ny) {
+          if (solidCellSet.has(targetIdx)) {
+            // Deflect around solid obstacle
+            p.fj += Math.sign(vCross || (p.fj > ny * 0.5 ? 1 : -1)) * 0.08;
+            p.age += 2;
+          } else {
+            p.fi = nextFi;
+            p.fj = Math.max(0.05, Math.min(ny - 1.05, nextFj));
+          }
+        } else {
+          p.fi = nextFi;
+          p.fj = Math.max(0.05, Math.min(ny - 1.05, nextFj));
+        }
         p.age++;
 
         if (p.trail.length >= 2) {
+          const lifeAlpha = Math.sin((p.age / p.maxAge) * Math.PI);
+          const speedFrac = Math.min(1.0, vel / Math.max(0.5, maxVal));
+
           ctx.beginPath();
           ctx.moveTo(p.trail[0].x, p.trail[0].y);
           for (let t = 1; t < p.trail.length; t++) {
             ctx.lineTo(p.trail[t].x, p.trail[t].y);
           }
-          const lifeAlpha = Math.sin((p.age / p.maxAge) * Math.PI) * 0.85;
-          ctx.strokeStyle = `rgba(240, 249, 255, ${Math.max(0.1, lifeAlpha)})`;
-          ctx.lineWidth = 1.6;
+          // Glowing electric cyan/white streamline with velocity-dependent width
+          const alpha = Math.max(0.12, Math.min(0.95, lifeAlpha * 0.9));
+          ctx.strokeStyle = `rgba(186, 230, 253, ${alpha})`;
+          ctx.lineWidth = 1.6 + speedFrac * 1.2;
           ctx.stroke();
 
+          // Luminous particle bead head
           const head = p.trail[p.trail.length - 1];
-          ctx.fillStyle = `rgba(56, 189, 248, ${Math.max(0.2, lifeAlpha)})`;
+          // Outer glow halo
           ctx.beginPath();
-          ctx.arc(head.x, head.y, 2.0, 0, 2 * Math.PI);
+          ctx.arc(head.x, head.y, 3.2 + speedFrac * 1.5, 0, 2 * Math.PI);
+          ctx.fillStyle = `rgba(56, 189, 248, ${Math.max(0.2, lifeAlpha * 0.5)})`;
+          ctx.fill();
+
+          // Inner bright core
+          ctx.beginPath();
+          ctx.arc(head.x, head.y, 1.6, 0, 2 * Math.PI);
+          ctx.fillStyle = `rgba(255, 255, 255, ${Math.max(0.4, lifeAlpha * 0.95)})`;
           ctx.fill();
         }
       }

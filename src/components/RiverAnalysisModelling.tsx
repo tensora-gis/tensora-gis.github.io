@@ -85,7 +85,6 @@ import {
   createCirclePoints,
   findCellsInsidePolygon,
 } from '../river/structures/cadStructureBuilder';
-import { exportRiverToVtk3D, buildOpenFoamCaseZip } from '../river/openfoam/openfoamCaseGenerator';
 import { ParaView3DVisualizer } from '../river/components/ParaView3DVisualizer';
 
 export const RiverAnalysisModelling: React.FC = () => {
@@ -758,6 +757,9 @@ export const RiverAnalysisModelling: React.FC = () => {
             const currentThroughput = Math.round(stepCountTotal / dtSec);
             setLiveFps(Math.min(60, Math.max(1, currentFps)));
             setLiveThroughput(currentThroughput);
+            setHydro({ ...state.hydro });
+            setTurb({ ...state.turb });
+            setSed({ ...state.sed });
             frameCount = 0;
             stepCountTotal = 0;
             lastTime = now;
@@ -950,46 +952,7 @@ export const RiverAnalysisModelling: React.FC = () => {
     }
   };
 
-  // 3D VTK Export for ParaView
-  const handleExportVtk3D = () => {
-    try {
-      const vtkContent = exportRiverToVtk3D(mesh, hydro, turb, 8);
-      const blob = new Blob([vtkContent], { type: 'text/plain' });
-      triggerFileDownload(blob, `river_3d_flow_field_${reach.id}.vtk`);
-      setCadNotification('✅ Exported 3D Structured Grid (.vtk for ParaView)!');
-      setTimeout(() => setCadNotification(null), 5000);
-    } catch (err: any) {
-      alert(`VTK export failed: ${err.message}`);
-    }
-  };
-
-  // OpenFOAM 3D CFD Case Generation (.zip Archive)
-  const [isExportingOpenFoam, setIsExportingOpenFoam] = useState(false);
-  const handleExportOpenFoamCase = async () => {
-    setIsExportingOpenFoam(true);
-    try {
-      const zipBlob = await buildOpenFoamCaseZip({
-        mesh,
-        hydro,
-        turb,
-        structures,
-        reach,
-        upstreamDischargeM3s: boundaries.upstreamDischargeM3s,
-        downstreamStageM: boundaries.downstreamStageM,
-        manningN: boundaries.manningRoughnessDefault,
-        simEndTimeSec: 30.0,
-      });
-      triggerFileDownload(zipBlob, `openfoam_3d_river_case_${reach.id}.zip`);
-      setCadNotification('✅ Generated & Downloaded Full OpenFOAM 3D CFD Case (.zip)!');
-      setTimeout(() => setCadNotification(null), 5000);
-    } catch (err: any) {
-      alert(`OpenFOAM Case export failed: ${err.message}`);
-    } finally {
-      setIsExportingOpenFoam(false);
-    }
-  };
-
-  // Computational Mesh Generation & OpenFOAM Discretization Handler
+  // Computational Mesh Generation & CFD Discretization Handler
   const handleRegenerateMesh = (updatedOptions: Partial<RiverMeshOptions>) => {
     const merged = { ...meshOptions, ...updatedOptions };
     setMeshOptions(merged);
@@ -1279,23 +1242,6 @@ export const RiverAnalysisModelling: React.FC = () => {
               >
                 {isExportingExcel ? 'Exporting...' : '📊 .xlsx'}
               </button>
-              <span className="text-slate-600 px-0.5">|</span>
-              <button
-                onClick={handleExportVtk3D}
-                className="px-2 py-0.5 text-xs text-indigo-300 hover:text-white hover:bg-indigo-700/60 rounded font-medium transition"
-                title="Export 3D Structured Grid (.vtk) for ParaView"
-              >
-                📈 VTK
-              </button>
-              <span className="text-slate-600 px-0.5">|</span>
-              <button
-                onClick={handleExportOpenFoamCase}
-                disabled={isExportingOpenFoam}
-                className="px-2 py-0.5 text-xs text-sky-300 hover:text-white hover:bg-sky-700/60 rounded font-medium transition"
-                title="Generate & Download Complete OpenFOAM 3D CFD Case Archive (.zip with blockMeshDict, snappyHexMeshDict, interFoam Allrun)"
-              >
-                {isExportingOpenFoam ? 'Building...' : '📦 OpenFOAM 3D'}
-              </button>
             </div>
 
             {/* Project Save / Load Modal */}
@@ -1393,7 +1339,7 @@ export const RiverAnalysisModelling: React.FC = () => {
             <button
               onClick={() => setIsMeshConfigModalOpen(true)}
               className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 ml-0.5 shadow-sm"
-              title="Open Computational Mesh Generation & OpenFOAM Discretization Studio"
+              title="Open Computational Mesh Generation & CFD Discretization Studio"
             >
               📐 Mesh Discretization ({mesh.nx}×{mesh.ny})
             </button>
@@ -2048,7 +1994,7 @@ export const RiverAnalysisModelling: React.FC = () => {
         onToggleSimulation={() => setIsSimulating(!isSimulating)}
       />
 
-      {/* Completely Modifiable Mesh Generation & OpenFOAM Discretization Studio Modal */}
+      {/* Completely Modifiable Mesh Generation & CFD Discretization Studio Modal */}
       {isMeshConfigModalOpen && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl text-slate-100 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
@@ -2057,10 +2003,10 @@ export const RiverAnalysisModelling: React.FC = () => {
                 <span className="p-2 bg-cyan-500/20 text-cyan-400 rounded-xl text-lg">📐</span>
                 <div>
                   <h3 className="text-lg font-bold text-slate-100">
-                    Computational Mesh Generation & OpenFOAM Discretization
+                    Computational Mesh Generation & CFD Discretization
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Interactive blockMesh grading, snappyHexMesh solid refinement, and lateral floodplain scaling
+                    Interactive curvilinear grid grading, solid boundary refinement, and lateral floodplain scaling
                   </p>
                 </div>
               </div>
@@ -2200,11 +2146,11 @@ export const RiverAnalysisModelling: React.FC = () => {
                 </div>
               </div>
 
-              {/* Row 3: OpenFOAM snappyHexMesh Local Refinement around Solid Structures */}
+              {/* Row 3: CFD Boundary Layer Refinement around Solid Structures */}
               <div className="grid grid-cols-2 gap-4 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
                 <div>
                   <div className="flex justify-between text-slate-300 font-semibold mb-1">
-                    <span>snappyHexMesh Boundary Layer Refinement</span>
+                    <span>Boundary Layer Grid Refinement</span>
                     <span className="text-cyan-400 font-mono">
                       {(meshOptions.localRefinementRatio ?? 1.0).toFixed(1)}x
                     </span>
@@ -2266,7 +2212,7 @@ export const RiverAnalysisModelling: React.FC = () => {
                 }
                 className="text-xs text-amber-400 hover:underline font-semibold"
               >
-                Reset Default OpenFOAM Discretization
+                Reset Default CFD Discretization
               </button>
 
               <button

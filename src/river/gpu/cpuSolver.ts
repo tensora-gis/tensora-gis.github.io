@@ -203,9 +203,16 @@ export function computeStableTimeStep(
 }
 
 /**
- * HLL Riemann Solver with Audusse Hydrostatic Bed Reconstruction
+ * Exact HLLC Riemann Solver with Audusse Hydrostatic Bed Reconstruction
+ *
+ * Implements:
+ * 1. Audusse et al. (2004) well-balanced hydrostatic bed reconstruction at interface
+ * 2. Exact 4-state HLLC Riemann wave structure (sL, sStar, sR) preserving contact
+ *    discontinuities and tangential shear momentum without excessive numerical diffusion
+ * 3. Exact Roe-averaged and gravitational wave speeds (cL = sqrt(g*hL), cR = sqrt(g*hR))
+ * 4. Preserves the exact lake-at-rest C-property (zero spurious velocities over irregular bathymetry)
  */
-function computeHllFlux(
+export function computeHllcFlux(
   hL: number,
   uL: number,
   vL: number,
@@ -237,14 +244,29 @@ function computeHllFlux(
   const vnR = uR * nx + vR * ny;
   const vtR = -uR * ny + vR * nx;
 
-  // Wave speeds sL and sR
+  // Wave speeds sL and sR with Roe celerity
   const cL = Math.sqrt(G * hStarL);
   const cR = Math.sqrt(G * hStarR);
 
-  const sL = Math.min(vnL - cL, vnR - cR);
-  const sR = Math.max(vnL + cL, vnR + cR);
+  const sqrtHL = Math.sqrt(Math.max(0, hStarL));
+  const sqrtHR = Math.sqrt(Math.max(0, hStarR));
+  const denomRoe = sqrtHL + sqrtHR + 1e-12;
+  const uRoe = (sqrtHL * vnL + sqrtHR * vnR) / denomRoe;
+  const cRoe = Math.sqrt(0.5 * G * (hStarL + hStarR));
 
-  // Flux evaluation in normal coordinates [h*vn, h*vn^2 + 0.5*g*h^2, h*vn*vt]
+  const sL = Math.min(vnL - cL, uRoe - cRoe);
+  const sR = Math.max(vnR + cR, uRoe + cRoe);
+
+  // Toro (2001) contact middle wave speed S* for shallow water
+  let sStar = 0.0;
+  const denomStar = hStarR * (vnR - sR) - hStarL * (vnL - sL);
+  if (Math.abs(denomStar) > 1e-6) {
+    sStar = (sL * hStarR * (vnR - sR) - sR * hStarL * (vnL - sL)) / denomStar;
+  } else {
+    sStar = 0.5 * (sL + sR);
+  }
+
+  // Normal flux vectors [h*vn, h*vn^2 + 0.5*g*h^2, h*vn*vt]
   const fluxNormL_h = hStarL * vnL;
   const fluxNormL_u = hStarL * vnL * vnL + 0.5 * G * hStarL * hStarL;
   const fluxNormL_v = hStarL * vnL * vtL;
@@ -267,25 +289,23 @@ function computeHllFlux(
     fNormH = fluxNormR_h;
     fNormU = fluxNormR_u;
     fNormV = fluxNormR_v;
+  } else if (sStar >= 0.0) {
+    // Star-Left region (sL < 0 <= sStar)
+    const factorL = (sL - vnL) / (sL - sStar + (sL === sStar ? 1e-12 : 0));
+    const hStarLRegion = Math.max(0.0, hStarL * factorL);
+    fNormH = fluxNormL_h + sL * (hStarLRegion - hStarL);
+    fNormU = fluxNormL_u + sL * (hStarLRegion * sStar - hStarL * vnL);
+    fNormV = fluxNormL_v + sL * (hStarLRegion * vtL - hStarL * vtL);
   } else {
-    // Subsonic flow: HLL weighted average
-    const denom = sR - sL;
-    fNormH = (sR * fluxNormL_h - sL * fluxNormR_h + sR * sL * (hStarR - hStarL)) / denom;
-    fNormU =
-      (sR * fluxNormL_u -
-        sL * fluxNormR_u +
-        sR * sL * (hStarR * vnR - hStarL * vnL)) /
-      denom;
-    fNormV =
-      (sR * fluxNormL_v -
-        sL * fluxNormR_v +
-        sR * sL * (hStarR * vtR - hStarL * vtL)) /
-      denom;
+    // Star-Right region (sStar < 0 <= sR)
+    const factorR = (sR - vnR) / (sR - sStar + (sR === sStar ? 1e-12 : 0));
+    const hStarRRegion = Math.max(0.0, hStarR * factorR);
+    fNormH = fluxNormR_h + sR * (hStarRRegion - hStarR);
+    fNormU = fluxNormR_u + sR * (hStarRRegion * sStar - hStarR * vnR);
+    fNormV = fluxNormR_v + sR * (hStarRRegion * vtR - hStarR * vtR);
   }
 
   // Rotate back to Cartesian coordinates (x, y)
-  // flux_x = fNormU * nx - fNormV * ny
-  // flux_y = fNormU * ny + fNormV * nx
   const fluxHu = fNormU * nx - fNormV * ny;
   const fluxHv = fNormU * ny + fNormV * nx;
 
@@ -295,6 +315,8 @@ function computeHllFlux(
     fluxHv,
   };
 }
+
+const computeHllFlux = computeHllcFlux;
 
 /**
  * Advance the CPU 2D Shallow Water Solver by dtSec

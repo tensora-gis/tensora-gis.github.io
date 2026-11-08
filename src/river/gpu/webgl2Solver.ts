@@ -205,8 +205,22 @@ void main() {
       float cL = sqrt(G * hStarL);
       float cR = sqrt(G * hStarR);
 
-      float sL = min(vnL - cL, vnR - cR);
-      float sR = max(vnL + cL, vnR + cR);
+      float sqrtHL = sqrt(max(0.0, hStarL));
+      float sqrtHR = sqrt(max(0.0, hStarR));
+      float denomRoe = sqrtHL + sqrtHR + 1.0e-6;
+      float uRoe = (sqrtHL * vnL + sqrtHR * vnR) / denomRoe;
+      float cRoe = sqrt(0.5 * G * (hStarL + hStarR));
+
+      float sL = min(vnL - cL, uRoe - cRoe);
+      float sR = max(vnR + cR, uRoe + cRoe);
+
+      float sStar = 0.0;
+      float denomStar = hStarR * (vnR - sR) - hStarL * (vnL - sL);
+      if (abs(denomStar) > 1.0e-6) {
+        sStar = (sL * hStarR * (vnR - sR) - sR * hStarL * (vnL - sL)) / denomStar;
+      } else {
+        sStar = 0.5 * (sL + sR);
+      }
 
       float fluxNormL_h = hStarL * vnL;
       float fluxNormL_u = hStarL * vnL * vnL + 0.5 * G * hStarL * hStarL;
@@ -228,11 +242,18 @@ void main() {
         fNormH = fluxNormR_h;
         fNormU = fluxNormR_u;
         fNormV = fluxNormR_v;
+      } else if (sStar >= 0.0) {
+        float factorL = (sL - vnL) / (sL - sStar + (sL == sStar ? 1.0e-6 : 0.0));
+        float hStarLRegion = max(0.0, hStarL * factorL);
+        fNormH = fluxNormL_h + sL * (hStarLRegion - hStarL);
+        fNormU = fluxNormL_u + sL * (hStarLRegion * sStar - hStarL * vnL);
+        fNormV = fluxNormL_v + sL * (hStarLRegion * vtL - hStarL * vtL);
       } else {
-        float denom = max(0.0001, sR - sL);
-        fNormH = (sR * fluxNormL_h - sL * fluxNormR_h + sR * sL * (hStarR - hStarL)) / denom;
-        fNormU = (sR * fluxNormL_u - sL * fluxNormR_u + sR * sL * (hStarR * vnR - hStarL * vnL)) / denom;
-        fNormV = (sR * fluxNormL_v - sL * fluxNormR_v + sR * sL * (hStarR * vtR - hStarL * vtL)) / denom;
+        float factorR = (sR - vnR) / (sR - sStar + (sR == sStar ? 1.0e-6 : 0.0));
+        float hStarRRegion = max(0.0, hStarR * factorR);
+        fNormH = fluxNormR_h + sR * (hStarRRegion - hStarR);
+        fNormU = fluxNormR_u + sR * (hStarRRegion * sStar - hStarR * vnR);
+        fNormV = fluxNormR_v + sR * (hStarRRegion * vtR - hStarR * vtR);
       }
 
       float fluxHu = fNormU * nxVal - fNormV * nyVal;

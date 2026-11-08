@@ -77,6 +77,17 @@ export function resampleCenterline(
   }
 
   const totalLength = currentStation;
+function evalCatmullRomSpline(v0: number, v1: number, v2: number, v3: number, t: number): number {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return 0.5 * (
+    (2 * v1) +
+    (-v0 + v2) * t +
+    (2 * v0 - 5 * v1 + 4 * v2 - v3) * t2 +
+    (-v0 + 3 * v1 - 3 * v2 + v3) * t3
+  );
+}
+
   const numSegments = Math.max(2, Math.round(totalLength / targetSpacingM));
   const actualSpacing = totalLength / numSegments;
 
@@ -96,19 +107,49 @@ export function resampleCenterline(
     const segLen = Math.max(1.0e-5, pB.station - pA.station);
     const t = Math.max(0, Math.min(1, (sTarget - pA.station) / segLen));
 
-    const interpX = pA.x + t * (pB.x - pA.x);
-    const interpY = pA.y + t * (pB.y - pA.y);
+    let interpX: number;
+    let interpY: number;
+    let interpBed: number | undefined;
+    let interpWidth: number | undefined;
+
+    if (metricPoints.length > 2) {
+      const p0 = metricPoints[Math.max(0, segIdx - 1)];
+      const p1 = pA;
+      const p2 = pB;
+      const p3 = metricPoints[Math.min(metricPoints.length - 1, segIdx + 2)];
+
+      interpX = evalCatmullRomSpline(p0.x, p1.x, p2.x, p3.x, t);
+      interpY = evalCatmullRomSpline(p0.y, p1.y, p2.y, p3.y, t);
+
+      if (p1.raw.bedElevationM !== undefined && p2.raw.bedElevationM !== undefined) {
+        const z0 = p0.raw.bedElevationM ?? p1.raw.bedElevationM;
+        const z1 = p1.raw.bedElevationM;
+        const z2 = p2.raw.bedElevationM;
+        const z3 = p3.raw.bedElevationM ?? p2.raw.bedElevationM;
+        interpBed = evalCatmullRomSpline(z0, z1, z2, z3, t);
+      }
+
+      if (p1.raw.widthM !== undefined && p2.raw.widthM !== undefined) {
+        const w0 = p0.raw.widthM ?? p1.raw.widthM;
+        const w1 = p1.raw.widthM;
+        const w2 = p2.raw.widthM;
+        const w3 = p3.raw.widthM ?? p2.raw.widthM;
+        interpWidth = Math.max(5.0, evalCatmullRomSpline(w0, w1, w2, w3, t));
+      }
+    } else {
+      interpX = pA.x + t * (pB.x - pA.x);
+      interpY = pA.y + t * (pB.y - pA.y);
+      interpBed =
+        pA.raw.bedElevationM !== undefined && pB.raw.bedElevationM !== undefined
+          ? pA.raw.bedElevationM + t * (pB.raw.bedElevationM - pA.raw.bedElevationM)
+          : undefined;
+      interpWidth =
+        pA.raw.widthM !== undefined && pB.raw.widthM !== undefined
+          ? pA.raw.widthM + t * (pB.raw.widthM - pA.raw.widthM)
+          : undefined;
+    }
+
     const [interpLat, interpLng] = localMetersToGeo(interpX, interpY, originLat, originLng);
-
-    const interpBed =
-      pA.raw.bedElevationM !== undefined && pB.raw.bedElevationM !== undefined
-        ? pA.raw.bedElevationM + t * (pB.raw.bedElevationM - pA.raw.bedElevationM)
-        : undefined;
-
-    const interpWidth =
-      pA.raw.widthM !== undefined && pB.raw.widthM !== undefined
-        ? pA.raw.widthM + t * (pB.raw.widthM - pA.raw.widthM)
-        : undefined;
 
     resampled.push({
       lat: interpLat,
@@ -177,11 +218,18 @@ export function generateRiverGridMesh(
     const pt = centerline[i];
     const [cx, cy] = geoToLocalMeters(pt.lat, pt.lng, originLat, originLng);
 
-    // Tangent vector
+    // Centered tangent vector for smooth curvilinear mesh grid alignment
     let tx = 1.0;
     let ty = 0.0;
 
-    if (i < nx) {
+    if (i > 0 && i < nx) {
+      const nextPt = centerline[i + 1];
+      const prevPt = centerline[i - 1];
+      const [nxX, nxY] = geoToLocalMeters(nextPt.lat, nextPt.lng, originLat, originLng);
+      const [pxX, pxY] = geoToLocalMeters(prevPt.lat, prevPt.lng, originLat, originLng);
+      tx = nxX - pxX;
+      ty = nxY - pxY;
+    } else if (i < nx) {
       const nextPt = centerline[i + 1];
       const [nxX, nxY] = geoToLocalMeters(nextPt.lat, nextPt.lng, originLat, originLng);
       tx = nxX - cx;
@@ -232,9 +280,51 @@ export function generateRiverGridMesh(
       ? (1.0 - structureDistM / refRadiusM) * ((refRatio - 1.0) / (refRatio + 1.0))
       : 0.0;
 
-    // Match or interpolate cross-section station
-    const csStation = findClosestCrossSection(reach.crossSections, pt.stationM);
-    const stationInvert = pt.bedElevationM ?? csStation?.invertElevM ?? 100.0;
+    // Continuous longitudinal cross-section interpolation
+    const sections = reach.crossSections;
+    let csA: CrossSectionStation | null = null;
+    let csB: CrossSectionStation | null = null;
+    let blendT = 0.0;
+
+    if (sections && sections.length > 0) {
+      if (sections.length === 1 || pt.stationM <= sections[0].stationM) {
+        csA = sections[0];
+        csB = sections[0];
+        blendT = 0.0;
+      } else if (pt.stationM >= sections[sections.length - 1].stationM) {
+        csA = sections[sections.length - 1];
+        csB = sections[sections.length - 1];
+        blendT = 1.0;
+      } else {
+        for (let k = 0; k < sections.length - 1; k++) {
+          if (pt.stationM >= sections[k].stationM && pt.stationM <= sections[k + 1].stationM) {
+            csA = sections[k];
+            csB = sections[k + 1];
+            const dS = Math.max(1.0, csB.stationM - csA.stationM);
+            blendT = (pt.stationM - csA.stationM) / dS;
+            break;
+          }
+        }
+      }
+    }
+
+    const stationInvert = pt.bedElevationM ?? csA?.invertElevM ?? 100.0;
+
+    // Centerline curvature for authentic thalweg migration in bends
+    let bendShiftM = 0.0;
+    if (i > 0 && i < nx) {
+      const prevPt = centerline[i - 1];
+      const nextPt = centerline[i + 1];
+      const [pxX, pxY] = geoToLocalMeters(prevPt.lat, prevPt.lng, originLat, originLng);
+      const [nxX, nxY] = geoToLocalMeters(nextPt.lat, nextPt.lng, originLat, originLng);
+      const d1x = cx - pxX, d1y = cy - pxY;
+      const d2x = nxX - cx, d2y = nxY - cy;
+      const cross = d1x * d2y - d1y * d2x;
+      const l1 = Math.max(1, Math.hypot(d1x, d1y));
+      const l2 = Math.max(1, Math.hypot(d2x, d2y));
+      const kappa = cross / (l1 * l2);
+      bendShiftM = Math.max(-0.35, Math.min(0.35, kappa * 2.0)) * halfWidth;
+    }
 
     const rowNodes: MeshNode[] = [];
     for (let j = 0; j <= ny; j++) {
@@ -253,16 +343,25 @@ export function generateRiverGridMesh(
       const nodeY = cy + lateralDistM * normY;
       const [nodeLat, nodeLng] = localMetersToGeo(nodeX, nodeY, originLat, originLng);
 
-      // Bed elevation calculation across section & floodplain
+      // Bed elevation calculation across section & floodplain with authentic thalweg and bank benches
       let nodeBed = stationInvert;
-      if (csStation && csStation.points.length > 0) {
-        nodeBed = sampleCrossSectionElevation(csStation.points, lateralDistM, stationInvert);
+      if (csA && csB && csA.points.length > 0 && csB.points.length > 0) {
+        const shiftedLateralM = lateralDistM - bendShiftM;
+        const dzA = sampleCrossSectionElevation(csA.points, shiftedLateralM, csA.invertElevM) - csA.invertElevM;
+        const dzB = sampleCrossSectionElevation(csB.points, shiftedLateralM, csB.invertElevM) - csB.invertElevM;
+        const dz = (1.0 - blendT) * dzA + blendT * dzB;
+        nodeBed = stationInvert + Math.max(0.0, dz);
+      } else if (csA && csA.points.length > 0) {
+        const shiftedLateralM = lateralDistM - bendShiftM;
+        const dz = sampleCrossSectionElevation(csA.points, shiftedLateralM, csA.invertElevM) - csA.invertElevM;
+        nodeBed = stationInvert + Math.max(0.0, dz);
       } else {
         const channelHalfW = channelWidth * 0.5;
         const depth = Math.max(1.0, channelWidth * 0.06);
+        const relX = lateralDistM - bendShiftM;
         if (Math.abs(lateralDistM) <= channelHalfW) {
-          const frac = lateralDistM / Math.max(1.0, channelHalfW);
-          nodeBed = stationInvert + depth * (frac * frac);
+          const frac = relX / Math.max(1.0, channelHalfW);
+          nodeBed = stationInvert + depth * Math.min(1.0, frac * frac);
         } else {
           // Elevated floodplain terrace
           const overbankDist = Math.abs(lateralDistM) - channelHalfW;
