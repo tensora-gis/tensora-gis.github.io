@@ -160,12 +160,9 @@ export const RiverAnalysisModelling: React.FC = () => {
     angleDeg: number;
   } | null>(null);
 
-  // Mesh Movement & Alignment Mode
+  // Mesh Movement & Alignment Mode (Pure Direct Drag & Drop)
   const [isMoveMeshMode, setIsMoveMeshMode] = useState(false);
   const [meshShiftM, setMeshShiftM] = useState({ x: 0, y: 0, rot: 0 });
-  const [moveStepM, setMoveStepM] = useState<number>(50);
-  const [rotStepDeg, setRotStepDeg] = useState<number>(5);
-  const [clickToCenter, setClickToCenter] = useState<boolean>(false);
 
   // Auto-Detected River Prompt (when clicking map)
   const [detectedRiver, setDetectedRiver] = useState<{ river: any; distanceKm: number } | null>(null);
@@ -211,12 +208,6 @@ export const RiverAnalysisModelling: React.FC = () => {
   // References for Real-time Animation Loop & Event Handlers
   const isMoveMeshModeRef = useRef(isMoveMeshMode);
   isMoveMeshModeRef.current = isMoveMeshMode;
-  const moveStepMRef = useRef(moveStepM);
-  moveStepMRef.current = moveStepM;
-  const rotStepDegRef = useRef(rotStepDeg);
-  rotStepDegRef.current = rotStepDeg;
-  const clickToCenterRef = useRef(clickToCenter);
-  clickToCenterRef.current = clickToCenter;
   const hydroRef = useRef(hydro);
   hydroRef.current = hydro;
   const turbRef = useRef(turb);
@@ -344,15 +335,6 @@ export const RiverAnalysisModelling: React.FC = () => {
       if (isDraggingGizmoRef.current) return;
 
       if (isMoveMeshModeRef.current) {
-        if (clickToCenterRef.current) {
-          const curMesh = meshRef.current;
-          const centerLat = 0.5 * (curMesh.bounds[0] + curMesh.bounds[2]);
-          const centerLng = 0.5 * (curMesh.bounds[1] + curMesh.bounds[3]);
-          const cosLat = Math.cos((0.5 * (centerLat + e.latlng.lat) * Math.PI) / 180.0);
-          const dxM = (e.latlng.lng - centerLng) * 111320.0 * cosLat;
-          const dyM = (e.latlng.lat - centerLat) * 111320.0;
-          handleTranslateMeshRef.current(dxM, dyM, true);
-        }
         return;
       }
 
@@ -1203,18 +1185,6 @@ export const RiverAnalysisModelling: React.FC = () => {
     setTimeout(() => setCadNotification(null), 3000);
   };
 
-  const handleCenterOnViewport = () => {
-    const map = mapInstance || mapInstanceRef.current;
-    if (!map) return;
-    const center = map.getCenter();
-    const curMesh = meshRef.current;
-    const meshCenterLat = 0.5 * (curMesh.bounds[0] + curMesh.bounds[2]);
-    const meshCenterLng = 0.5 * (curMesh.bounds[1] + curMesh.bounds[3]);
-    const cosLat = Math.cos((0.5 * (meshCenterLat + center.lat) * Math.PI) / 180.0);
-    const dxM = (center.lng - meshCenterLng) * 111320.0 * cosLat;
-    const dyM = (center.lat - meshCenterLat) * 111320.0;
-    handleTranslateMesh(dxM, dyM, true);
-  };
 
   const handleTranslateMeshRef = useRef(handleTranslateMesh);
   handleTranslateMeshRef.current = handleTranslateMesh;
@@ -1243,44 +1213,21 @@ export const RiverAnalysisModelling: React.FC = () => {
     const centerLng = 0.5 * (curMesh.bounds[1] + curMesh.bounds[3]);
     const downstreamPt = curMesh.centerline[curMesh.centerline.length - 1] || { lat: centerLat, lng: centerLng };
 
-    // Center Translation Gizmo (with 4 on-map direct nudge arrow buttons + central drag handle)
+    // Center Translation Handle (Pure Direct Drag & Drop)
     const centerIcon = L.divIcon({
       className: 'move-mesh-center-gizmo',
       html: `
-        <div style="position: relative; width: 120px; height: 120px; pointer-events: none; user-select: none;">
-          <!-- North Arrow Button -->
-          <button data-dir="north" type="button" style="position: absolute; top: 0; left: 42px; width: 36px; height: 26px; border-radius: 8px; background: rgba(15, 23, 42, 0.95); border: 1.5px solid #06b6d4; color: #22d3ee; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 13px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Nudge North (↑)">
-            ▲
-          </button>
-          
-          <!-- South Arrow Button -->
-          <button data-dir="south" type="button" style="position: absolute; bottom: 0; left: 42px; width: 36px; height: 26px; border-radius: 8px; background: rgba(15, 23, 42, 0.95); border: 1.5px solid #06b6d4; color: #22d3ee; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 13px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Nudge South (↓)">
-            ▼
-          </button>
-          
-          <!-- West Arrow Button -->
-          <button data-dir="west" type="button" style="position: absolute; top: 42px; left: 0; width: 26px; height: 36px; border-radius: 8px; background: rgba(15, 23, 42, 0.95); border: 1.5px solid #06b6d4; color: #22d3ee; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 13px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Nudge West (←)">
-            ◄
-          </button>
-          
-          <!-- East Arrow Button -->
-          <button data-dir="east" type="button" style="position: absolute; top: 42px; right: 0; width: 26px; height: 36px; border-radius: 8px; background: rgba(15, 23, 42, 0.95); border: 1.5px solid #06b6d4; color: #22d3ee; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 13px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Nudge East (→)">
-            ►
-          </button>
-
-          <!-- Center Draggable Handle -->
-          <div data-drag="center" style="position: absolute; top: 38px; left: 38px; width: 44px; height: 44px; border-radius: 50%; background: rgba(15, 23, 42, 0.95); border: 2.5px solid #06b6d4; box-shadow: 0 0 16px rgba(6, 182, 212, 0.9); display: flex; align-items: center; justify-content: center; color: #67e8f9; font-size: 20px; font-weight: bold; cursor: grab; pointer-events: auto;" title="Click and drag to move entire computational mesh">
+        <div style="position: relative; width: 48px; height: 48px; pointer-events: none; user-select: none;">
+          <div data-drag="center" style="position: absolute; top: 0; left: 0; width: 48px; height: 48px; border-radius: 50%; background: radial-gradient(circle, rgba(6, 182, 212, 0.45) 0%, rgba(15, 23, 42, 0.95) 75%); border: 2.5px solid #06b6d4; box-shadow: 0 0 20px rgba(6, 182, 212, 0.8), 0 4px 12px rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; color: #22d3ee; font-size: 22px; cursor: grab; pointer-events: auto; transition: transform 0.15s ease;" title="Drag to move computational mesh">
             ✥
           </div>
-
-          <!-- Label below -->
-          <div style="position: absolute; top: 124px; left: 50%; transform: translateX(-50%); padding: 2px 8px; background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(6, 182, 212, 0.6); border-radius: 6px; color: #a5f3fc; font-size: 10px; font-weight: 600; white-space: nowrap; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.8);">
-            Drag ✥ or Click Arrows
+          <div style="position: absolute; top: 54px; left: 50%; transform: translateX(-50%); padding: 2px 8px; background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(6, 182, 212, 0.6); border-radius: 9999px; color: #a5f3fc; font-size: 10px; font-weight: 600; white-space: nowrap; pointer-events: none; box-shadow: 0 2px 6px rgba(0,0,0,0.6);">
+            Drag to Move
           </div>
         </div>
       `,
-      iconSize: [120, 120],
-      iconAnchor: [60, 60],
+      iconSize: [48, 48],
+      iconAnchor: [24, 24],
     });
 
     const centerMarker = L.marker([centerLat, centerLng], {
@@ -1289,53 +1236,6 @@ export const RiverAnalysisModelling: React.FC = () => {
       zIndexOffset: 1000,
     }).addTo(layer);
     centerMarkerRef.current = centerMarker;
-
-    setTimeout(() => {
-      const el = centerMarker.getElement();
-      if (!el) return;
-      const northBtn = el.querySelector('[data-dir="north"]');
-      const southBtn = el.querySelector('[data-dir="south"]');
-      const westBtn = el.querySelector('[data-dir="west"]');
-      const eastBtn = el.querySelector('[data-dir="east"]');
-
-      [northBtn, southBtn, westBtn, eastBtn].forEach((btn) => {
-        if (!btn) return;
-        L.DomEvent.disableClickPropagation(btn as HTMLElement);
-        L.DomEvent.disableScrollPropagation(btn as HTMLElement);
-        L.DomEvent.on(btn as HTMLElement, 'mousedown', (e) => {
-          L.DomEvent.stopPropagation(e);
-        });
-      });
-
-      if (northBtn) {
-        L.DomEvent.on(northBtn as HTMLElement, 'click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          L.DomEvent.preventDefault(e);
-          handleTranslateMeshRef.current(0, moveStepMRef.current, true);
-        });
-      }
-      if (southBtn) {
-        L.DomEvent.on(southBtn as HTMLElement, 'click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          L.DomEvent.preventDefault(e);
-          handleTranslateMeshRef.current(0, -moveStepMRef.current, true);
-        });
-      }
-      if (westBtn) {
-        L.DomEvent.on(westBtn as HTMLElement, 'click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          L.DomEvent.preventDefault(e);
-          handleTranslateMeshRef.current(-moveStepMRef.current, 0, true);
-        });
-      }
-      if (eastBtn) {
-        L.DomEvent.on(eastBtn as HTMLElement, 'click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          L.DomEvent.preventDefault(e);
-          handleTranslateMeshRef.current(moveStepMRef.current, 0, true);
-        });
-      }
-    }, 0);
 
     let lastDragPos = { lat: centerLat, lng: centerLng };
 
@@ -1373,34 +1273,21 @@ export const RiverAnalysisModelling: React.FC = () => {
       if (guideLineRef.current) guideLineRef.current.setLatLngs([[fLat, fLng], [fDown.lat, fDown.lng]]);
     });
 
-    // Rotation Gizmo
+    // Downstream Rotation Handle (Pure Direct Drag & Drop)
     const rotIcon = L.divIcon({
       className: 'move-mesh-rot-gizmo',
       html: `
-        <div style="position: relative; width: 110px; height: 50px; pointer-events: none; user-select: none;">
-          <!-- CCW Button -->
-          <button data-dir="ccw" type="button" style="position: absolute; top: 7px; left: 0; width: 30px; height: 32px; border-radius: 8px; background: rgba(69, 26, 3, 0.95); border: 1.5px solid #f59e0b; color: #fde68a; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 14px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Rotate CCW (-${rotStepDegRef.current}°)">
-            ↺
-          </button>
-
-          <!-- Center Rotation Drag Handle -->
-          <div data-drag="rot" style="position: absolute; top: 5px; left: 37px; width: 36px; height: 36px; border-radius: 50%; background: rgba(69, 26, 3, 0.95); border: 2.5px solid #f59e0b; box-shadow: 0 0 14px rgba(245, 158, 11, 0.9); display: flex; align-items: center; justify-content: center; color: #fde68a; font-size: 18px; font-weight: bold; cursor: grab; pointer-events: auto;" title="Click and drag to rotate mesh around center">
+        <div style="position: relative; width: 42px; height: 42px; pointer-events: none; user-select: none;">
+          <div data-drag="rot" style="position: absolute; top: 0; left: 0; width: 42px; height: 42px; border-radius: 50%; background: radial-gradient(circle, rgba(245, 158, 11, 0.45) 0%, rgba(69, 26, 3, 0.95) 75%); border: 2.5px solid #f59e0b; box-shadow: 0 0 16px rgba(245, 158, 11, 0.8), 0 4px 12px rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; color: #fde68a; font-size: 20px; cursor: grab; pointer-events: auto; transition: transform 0.15s ease;" title="Drag to rotate mesh around center">
             ↻
           </div>
-
-          <!-- CW Button -->
-          <button data-dir="cw" type="button" style="position: absolute; top: 7px; right: 0; width: 30px; height: 32px; border-radius: 8px; background: rgba(69, 26, 3, 0.95); border: 1.5px solid #f59e0b; color: #fde68a; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; font-size: 14px; font-weight: bold; box-shadow: 0 2px 8px rgba(0,0,0,0.6);" title="Rotate CW (+${rotStepDegRef.current}°)">
-            ↻
-          </button>
-
-          <!-- Label below -->
-          <div style="position: absolute; top: 48px; left: 50%; transform: translateX(-50%); padding: 2px 6px; background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(245, 158, 11, 0.6); border-radius: 6px; color: #fde68a; font-size: 10px; font-weight: 600; white-space: nowrap; pointer-events: none; text-shadow: 0 1px 2px rgba(0,0,0,0.8);">
-            Drag or Click to Rotate
+          <div style="position: absolute; top: 48px; left: 50%; transform: translateX(-50%); padding: 2px 8px; background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(245, 158, 11, 0.6); border-radius: 9999px; color: #fde68a; font-size: 10px; font-weight: 600; white-space: nowrap; pointer-events: none; box-shadow: 0 2px 6px rgba(0,0,0,0.6);">
+            Drag to Rotate
           </div>
         </div>
       `,
-      iconSize: [110, 50],
-      iconAnchor: [55, 23],
+      iconSize: [42, 42],
+      iconAnchor: [21, 21],
     });
 
     const rotMarker = L.marker([downstreamPt.lat, downstreamPt.lng], {
@@ -1409,35 +1296,6 @@ export const RiverAnalysisModelling: React.FC = () => {
       zIndexOffset: 1000,
     }).addTo(layer);
     rotMarkerRef.current = rotMarker;
-
-    setTimeout(() => {
-      const el = rotMarker.getElement();
-      if (!el) return;
-      const ccwBtn = el.querySelector('[data-dir="ccw"]');
-      const cwBtn = el.querySelector('[data-dir="cw"]');
-      [ccwBtn, cwBtn].forEach((btn) => {
-        if (!btn) return;
-        L.DomEvent.disableClickPropagation(btn as HTMLElement);
-        L.DomEvent.disableScrollPropagation(btn as HTMLElement);
-        L.DomEvent.on(btn as HTMLElement, 'mousedown', (e) => {
-          L.DomEvent.stopPropagation(e);
-        });
-      });
-      if (ccwBtn) {
-        L.DomEvent.on(ccwBtn as HTMLElement, 'click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          L.DomEvent.preventDefault(e);
-          handleRotateMeshRef.current(-rotStepDegRef.current, true);
-        });
-      }
-      if (cwBtn) {
-        L.DomEvent.on(cwBtn as HTMLElement, 'click', (e) => {
-          L.DomEvent.stopPropagation(e);
-          L.DomEvent.preventDefault(e);
-          handleRotateMeshRef.current(rotStepDegRef.current, true);
-        });
-      }
-    }, 0);
 
     let lastRotPos = { lat: downstreamPt.lat, lng: downstreamPt.lng };
 
@@ -1531,7 +1389,7 @@ export const RiverAnalysisModelling: React.FC = () => {
     }
   }, [mesh, isMoveMeshMode]);
 
-  // Keyboard Navigation Listener for Moving and Rotating Mesh with Arrow Keys
+  // Keyboard Escape listener to exit Move Mesh mode cleanly
   useEffect(() => {
     if (!isMoveMeshMode) return;
 
@@ -1540,28 +1398,7 @@ export const RiverAnalysisModelling: React.FC = () => {
         return;
       }
 
-      const step = moveStepMRef.current;
-      const rot = rotStepDegRef.current;
-
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        handleTranslateMesh(0, step, true);
-      } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        handleTranslateMesh(0, -step, true);
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        handleTranslateMesh(-step, 0, true);
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        handleTranslateMesh(step, 0, true);
-      } else if (e.key === '[' || e.key === 'r') {
-        e.preventDefault();
-        handleRotateMesh(-rot, true);
-      } else if (e.key === ']' || e.key === 'R') {
-        e.preventDefault();
-        handleRotateMesh(rot, true);
-      } else if (e.key === 'Escape') {
+      if (e.key === 'Escape') {
         e.preventDefault();
         setIsMoveMeshMode(false);
       }
@@ -2197,207 +2034,39 @@ export const RiverAnalysisModelling: React.FC = () => {
           </div>
         )}
 
-        {/* Move & Align Mesh Floating Controls */}
+        {/* Move Mesh Active Banner (Pure Direct Drag & Drop - No Duplicate Controls) */}
         {isMoveMeshMode && (
           <div
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-            className="absolute top-4 left-4 z-[1000] bg-slate-900/95 backdrop-blur-md border border-cyan-500/80 rounded-2xl p-4 shadow-2xl text-xs space-y-3 w-80 max-w-sm animate-fade-in text-slate-100"
+            className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-slate-900/95 backdrop-blur-md border border-cyan-500/80 text-cyan-200 px-4 py-2 rounded-2xl shadow-2xl flex items-center gap-4 text-xs font-medium animate-fade-in"
           >
-            <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-              <span className="font-bold text-cyan-300 flex items-center gap-1.5 text-sm">
-                <span>🕹️</span>
-                <span>Mesh Alignment Controls</span>
-              </span>
-              <button
-                onClick={() => setIsMoveMeshMode(false)}
-                className="text-slate-400 hover:text-white transition p-1 rounded-lg hover:bg-slate-800"
-                title="Close Move Mesh Controls (Esc)"
-              >
-                ✕
-              </button>
+            <div className="flex items-center gap-2">
+              <span className="text-cyan-400 font-bold text-base">✥</span>
+              <span>Drag center handle to move • Drag amber handle to rotate</span>
             </div>
-
-            {/* Live Metrics Header */}
-            <div className="bg-slate-950/70 rounded-xl p-2.5 border border-slate-800 text-[11px] space-y-1">
-              <div className="flex items-center justify-between text-slate-400">
-                <span>Grid Dimension:</span>
-                <span className="font-mono text-cyan-300 font-semibold">{mesh.nx} × {mesh.ny} ({mesh.cells.length} cells)</span>
-              </div>
-              <div className="flex items-center justify-between text-slate-400">
-                <span>Accumulated Shift:</span>
-                <span className="font-mono text-amber-300 font-semibold">
-                  dx: {meshShiftM.x >= 0 ? '+' : ''}{meshShiftM.x.toFixed(0)}m, dy: {meshShiftM.y >= 0 ? '+' : ''}{meshShiftM.y.toFixed(0)}m
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-slate-400">
-                <span>Grid Rotation:</span>
-                <span className="font-mono text-emerald-300 font-semibold">
-                  {meshShiftM.rot >= 0 ? '+' : ''}{meshShiftM.rot.toFixed(1)}°
-                </span>
-              </div>
-            </div>
-
-            {/* Translation Step Size Selector */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                <span>Nudge Distance:</span>
-                <span className="text-cyan-400 font-mono font-bold">{moveStepM}m</span>
-              </div>
-              <div className="grid grid-cols-5 gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
-                {[10, 25, 50, 100, 250].map((step) => (
-                  <button
-                    key={step}
-                    onClick={() => setMoveStepM(step)}
-                    className={`py-0.5 rounded text-[10px] font-mono font-medium transition ${
-                      moveStepM === step
-                        ? 'bg-cyan-600 text-white font-bold shadow'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {step}m
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* D-Pad Directional Nudge Grid */}
-            <div className="space-y-1">
-              <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                Translate Mesh Position
-              </div>
-              <div className="grid grid-cols-3 gap-1.5 text-center">
-                <button
-                  onClick={() => handleRotateMesh(-rotStepDeg, true)}
-                  className="p-2 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex flex-col items-center justify-center gap-0.5"
-                  title={`Rotate Counter-Clockwise (-${rotStepDeg}°)`}
-                >
-                  <span className="text-sm">↺</span>
-                  <span className="text-[9px]">-{rotStepDeg}°</span>
-                </button>
-                <button
-                  onClick={() => handleTranslateMesh(0, moveStepM, true)}
-                  className="p-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex flex-col items-center justify-center gap-0.5"
-                  title={`Shift ${moveStepM}m North (↑)`}
-                >
-                  <span className="text-sm">▲</span>
-                  <span className="text-[9px]">North</span>
-                </button>
-                <button
-                  onClick={() => handleRotateMesh(rotStepDeg, true)}
-                  className="p-2 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex flex-col items-center justify-center gap-0.5"
-                  title={`Rotate Clockwise (+${rotStepDeg}°)`}
-                >
-                  <span className="text-sm">↻</span>
-                  <span className="text-[9px]">+{rotStepDeg}°</span>
-                </button>
-
-                <button
-                  onClick={() => handleTranslateMesh(-moveStepM, 0, true)}
-                  className="p-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex flex-col items-center justify-center gap-0.5"
-                  title={`Shift ${moveStepM}m West (←)`}
-                >
-                  <span className="text-sm">◄</span>
-                  <span className="text-[9px]">West</span>
-                </button>
-                <button
-                  onClick={handleCenterOnViewport}
-                  className="p-2 bg-cyan-950/80 hover:bg-cyan-900/80 text-cyan-200 rounded-lg font-mono text-[11px] border border-cyan-700/60 transition flex flex-col items-center justify-center gap-0.5"
-                  title="Snap mesh center to current map view center"
-                >
-                  <span className="text-sm">🎯</span>
-                  <span className="text-[9px]">Center</span>
-                </button>
-                <button
-                  onClick={() => handleTranslateMesh(moveStepM, 0, true)}
-                  className="p-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex flex-col items-center justify-center gap-0.5"
-                  title={`Shift ${moveStepM}m East (→)`}
-                >
-                  <span className="text-sm">►</span>
-                  <span className="text-[9px]">East</span>
-                </button>
-
-                <div className="col-span-3">
-                  <button
-                    onClick={() => handleTranslateMesh(0, -moveStepM, true)}
-                    className="w-full p-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 rounded-lg font-mono text-[11px] border border-slate-700 transition flex items-center justify-center gap-1.5"
-                    title={`Shift ${moveStepM}m South (↓)`}
-                  >
-                    <span>▼</span>
-                    <span>South (-{moveStepM}m)</span>
-                  </button>
+            {(meshShiftM.x !== 0 || meshShiftM.y !== 0 || meshShiftM.rot !== 0) && (
+              <>
+                <div className="h-4 w-px bg-slate-700" />
+                <div className="font-mono text-[11px] text-slate-300">
+                  Δ: {meshShiftM.x >= 0 ? '+' : ''}{meshShiftM.x.toFixed(0)}m, {meshShiftM.y >= 0 ? '+' : ''}{meshShiftM.y.toFixed(0)}m • {meshShiftM.rot >= 0 ? '+' : ''}{meshShiftM.rot.toFixed(1)}°
                 </div>
-              </div>
-            </div>
-
-            {/* Rotation Step Angle Selector */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-                <span>Rotation Step:</span>
-                <span className="text-amber-400 font-mono font-bold">{rotStepDeg}°</span>
-              </div>
-              <div className="grid grid-cols-4 gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800">
-                {[1, 5, 15, 45].map((angle) => (
-                  <button
-                    key={angle}
-                    onClick={() => setRotStepDeg(angle)}
-                    className={`py-0.5 rounded text-[10px] font-mono font-medium transition ${
-                      rotStepDeg === angle
-                        ? 'bg-amber-600 text-white font-bold shadow'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {angle}°
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Direct Map Interactive Features Toggle */}
-            <div className="space-y-1.5 border-t border-slate-800 pt-2">
-              <button
-                onClick={() => setClickToCenter(!clickToCenter)}
-                className={`w-full py-1.5 px-2.5 rounded-lg text-[11px] font-medium border transition flex items-center justify-between ${
-                  clickToCenter
-                    ? 'bg-cyan-950 border-cyan-400 text-cyan-200 shadow'
-                    : 'bg-slate-800/80 hover:bg-slate-800 border-slate-700 text-slate-300'
-                }`}
-                title="Click any position on the map to jump mesh center there"
-              >
-                <span className="flex items-center gap-1.5">
-                  <span>📍</span>
-                  <span>Click Map to Relocate Center</span>
-                </span>
-                <span className={`text-[10px] px-1.5 py-0.2 rounded font-bold ${
-                  clickToCenter ? 'bg-cyan-500 text-slate-950' : 'bg-slate-700 text-slate-400'
-                }`}>
-                  {clickToCenter ? 'ACTIVE' : 'OFF'}
-                </span>
-              </button>
-
-              <div className="text-[10px] text-slate-400 leading-snug bg-slate-950/60 p-2 rounded-lg border border-slate-800/70">
-                <span className="text-cyan-300 font-semibold">Tip: </span>
-                Drag the <strong className="text-cyan-200">✥ center</strong> gizmo or <strong className="text-amber-200">↻ rotation</strong> handle directly on the map, or use keyboard arrows (↑ ↓ ← →) and <code className="bg-slate-800 px-1 rounded text-cyan-300">[</code> / <code className="bg-slate-800 px-1 rounded text-cyan-300">]</code> to rotate.
-              </div>
-            </div>
-
-            {/* Footer Buttons */}
-            <div className="pt-2 flex items-center justify-between border-t border-slate-800">
-              <button
-                onClick={handleResetMesh}
-                className="text-[11px] text-amber-400 hover:underline font-semibold"
-                title="Reset translation and rotation back to reach centerline thalweg"
-              >
-                Reset Alignment
-              </button>
-              <button
-                onClick={() => setIsMoveMeshMode(false)}
-                className="px-3.5 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-bold text-[11px] transition shadow"
-              >
-                Done
-              </button>
-            </div>
+                <button
+                  onClick={handleResetMesh}
+                  className="text-[11px] text-amber-400 hover:text-amber-300 font-semibold underline underline-offset-2 transition"
+                  title="Reset mesh back to default reach alignment"
+                >
+                  Reset
+                </button>
+              </>
+            )}
+            <button
+              onClick={() => setIsMoveMeshMode(false)}
+              className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-[11px] font-bold transition shadow-sm"
+              title="Exit Move Mesh Mode (Esc)"
+            >
+              Done
+            </button>
           </div>
         )}
 
