@@ -83,72 +83,73 @@ Full dynamic sanitary and storm sewer modeling running on the EPA SWMM 5.2 compu
 
 ### 4. River Analysis & 2D Hydrodynamic CFD Modelling (8.5M-Reach Global River Digital Twin)
 
-Full two-dimensional depth-averaged Saint-Venant shallow-water hydrodynamic solver with coupled depth-averaged RANS turbulence and sediment transport running in real time directly within the client browser without external backend servers:
+Full two-dimensional depth-averaged Saint-Venant shallow-water hydrodynamic solver with coupled depth-averaged RANS turbulence, sediment transport, and solid civil structure CFD interactions running in real time directly inside the user's browser, utilizing the client machine's integrated or discrete GPU hardware resources:
 
+- **In-Browser Hardware Acceleration (WebGPU / WebGL2 / CPU)**:
+  - **Zero Backend Lag**: Solves the complete 2D finite-volume shallow-water equations in real time using the client machine's hardware resources via WebGPU compute shaders (`WGSL`).
+  - **High-Performance Fallbacks**: Seamless GPGPU fallback to WebGL2 floating-point render textures (`GLSL`), backed by a multi-threaded CPU reference solver.
+  - **Live Telemetry**: Real-time interactive simulation operating at up to 60 FPS with live computational throughput metrics (MegaCells/sec).
+- **Solid Civil Structures & Flow Disruption (Coupled CFD)**:
+  - Structures are **authentic 2D closed solid civil bodies with physical thickness**, not decorative lines or polylines.
+  - **Physical Flow Disruption**: Flow cannot penetrate solid structure cells ($h = 0$, $\mathbf{u} = 0$ strictly enforced, no-slip zero-flux reflective boundary walls). High-momentum river currents hit the upstream face, creating dynamic stagnation pressure heads, backwater curves, and wake vortex recirculation zones downstream.
+  - **Supported Civil Formulations**:
+    1. *Bridge Piers*: Sharp-nosed ($K_1=0.7$), round-nosed ($0.9$), circular ($1.0$), and square ($1.1$) piers with drag force ($F_d = \frac{1}{2} C_D \rho A V^2$), HEC-18 localized scour depth calculation, and wake turbulence shedding.
+    2. *Spur Dikes / Groynes*: Bank-anchored deflecting groynes with adjustable permeability ($0.0$ rock mound to $0.5$ timber piles), deflection angle ($70^\circ$ repelling to $110^\circ$ attracting), and Melville & Coleman head scour estimation.
+    3. *Levees & Floodwalls*: 100% lateral solid barriers with broad-crested weir overtopping and Villemonte submergence correction.
+    4. *Hydraulic Control Weirs*: Broad-crested and sharp-crested discharge formulations ($Q = C_d L H^{3/2}$) with submergence reduction.
+    5. *River Training Deflectors & Guide Walls*: Multi-point guide bunds redirecting high-velocity flow to protect vulnerable banks and intakes.
+    6. *Multi-Span Highway Bridges*: Yarnell pier drag headloss, submerged low-chord orifice pressure flow, and roadway deck weir overtopping.
+    7. *Box Culverts*: Dual-mode FHWA HDS-5 governing rating curves (Inlet Control vs. Outlet Control full-barrel pipe friction).
+    8. *Sluice & Radial Gates*: Underflow and free overflow orifice discharge with transition hydraulics.
+    9. *Road Embankments*: Highway embankment weir overflow modeling overtopping lanes during extreme flood events.
+    10. *Geometric Solid Obstacles*: Rotated rectangular caissons, circular cylinders/islands, and arbitrary multi-vertex solid polygons.
+- **Completely Modifiable Mesh Generation & Arbitrary Shaping**:
+  - Full freedom to deform, elongate, or compress mesh shapes at will along the river centerline:
+    - *Streamwise Elongation & Compression (`streamwiseStretchRatio`)*: $0.1\times$ to $10.0\times$ (interactive UI slider $0.2\times$ to $3.0\times$ with `[-20% Compress]`, `[1.0x Reset]`, and `[+20% Elongate]` quick actions).
+    - *Longitudinal Channel Width Tapering (`longitudinalTaperRatio`)*: $0.2\times$ to $3.0\times$ (linear cross-channel tapering from upstream to downstream for converging gorges or expanding delta estuaries).
+    - *Meander Curvature Scaling (`meanderCurvatureScale`)*: $0.0\times$ to $2.5\times$ ($0.0\times$ flattens bends into a straight hydraulic lab flume; $>1.0\times$ amplifies natural sinuous oxbow loops).
+    - *Asymmetric Bank Skew (`asymmetricBankRatio`)*: $-1.0$ (left bank heavy) to $+1.0$ (right bank heavy) for cut-bank shear stress modeling.
+    - *6 Rapid Shape Presets*: Natural Reach, Straight Flume, Convergent Gorge, Expanding Delta, S-Curve Meander, and Compressed Chute.
+    - *Discretization Control*: Full control over streamwise cells ($n_x = 15 - 150$), transverse cells ($n_y = 4 - 40$), channel width scaling ($0.5\times - 2.5\times$), lateral floodplain overbank width ($0 - 80\text{ m}$), and local boundary layer refinement around solid structures.
+    - *Standalone Scaling*: Exported `scaleMesh(mesh, streamwiseScale, lateralScale)` utility for direct mesh reshaping with automatic cell area, normal, and geodetic bounds recalculation.
+- **Pure Direct Interactive Leaflet Drag-and-Drop (Zero UI Duplication)**:
+  - Translate and rotate the computational mesh directly via interactive Leaflet map gizmos.
+  - Zero duplicate directional buttons, nudges, or residual sliders on the interface.
+  - Unified `🏗️ Civil Structure / Obstacle ▾` dropdown with live drawing guide and status feedback.
+  - Single `<select value={thematicDisplay}>` scalar field dropdown with explicit engineering units, eliminating cluttered horizontal button bars.
+- **Full OpenFOAM 3D CFD Engine & ANSYS Fluent / FLOW-3D Visualization**:
+  - **OpenFOAM Case Directory Export (`.zip`)**: Instantly generates an executable OpenFOAM case from the client browser:
+    - *Solvers*: Configured for `interFoam` free-surface two-phase VOF solver with RANS $k-\omega$ SST turbulence closure.
+    - *3D Extruded Hex Mesh*: `system/blockMeshDict` extrudes the 2D river mesh into 3D curvilinear hexahedra with vertical depth grading for near-bed boundary layer resolution.
+    - *Watertight Civil STL*: Generates `constant/triSurface/structures.stl` and `system/snappyHexMeshDict` for automatic boundary layer refinement around solid structures.
+    - *Boundary Conditions*: Full `0/` fields (`alpha.water`, `U`, `p_rgh`, `k`, `omega`, `nut`) with `flowRateInletVelocity`, rough bed wall functions ($k_s = 2.5 d_{50}$), and atmosphere inlet-outlet.
+    - *One-Click Execution*: Includes `Allrun` and `Allclean` bash scripts and generates ParaView `case.foam`.
+  - **Fluent / FLOW-3D Grade In-Browser Post-Processing**:
+    - Animated Flow-3D style continuous streamlines and velocity direction arrows.
+    - Continuous CFD rainbow palettes for depth, velocity magnitude $|\mathbf{V}|$, dynamic pressure head $H$, turbulent kinetic energy $k$, WSE, Froude number $\text{Fr}$, bed shear stress $\tau_b$, eddy viscosity $\nu_t$, sediment concentration $C$, and bed morphodynamics $\Delta z_b$.
+- **Exact CFD Mathematics & Physical Accuracy**:
+  - **Analytical Toro (2001) HLLC Riemann Solver**: Evaluates exact contact middle wave speed $S^*$ including the hydrostatic pressure gradient jump $\frac{1}{2}g(h_L^2 - h_R^2)$.
+  - **Dry-Bed Rarefaction Wave Speeds**: Exact analytical wave speeds ($v_n \pm 2\sqrt{gh}$) guaranteeing stable advancing flood wave fronts over dry terrain without division-by-zero.
+  - **Well-Balanced Audusse Hydrostatic Reconstruction**: Strict $C$-property preservation next to solid structures and over steep mountain drops ($< 10^{-7}\text{ m/s}$ spurious velocity).
+  - **Rastogi & Rodi (1978) Depth-Averaged Turbulence**: Bed source terms $P_{kv} = u_*^3/h$ and $P_{\epsilon v} = 3.6 u_*^4/h^2$ prevent catastrophic $\epsilon$ blowup in shallow water, preserving physical eddy viscosity $\nu_t$.
+  - **Reynolds Transport Outflow Tracking**: Physical downstream boundary outflow integration ($Q_{out}$) ensures 100% exact mass conservation auditing.
+  - **Sediment Wall Mass Conservation**: Boundary wall sediment flux masking prevents artificial loss, and Exner bed evolution updates local water depth ($h^{n+1} = \max(0, h^n - \Delta z_b)$).
+- **LiDAR Survey Point Cloud Ingestion & Bathymetric Rectification**:
+  - **Multi-Format Ingestion**: Parses Lat/Lng/Elev, Lng/Lat/Elev, and local metric $[X, Y, Z]$ total station and terrestrial LiDAR point clouds with automatic geo-referencing.
+  - **Adaptive Spatial Bucket Expansion**: Expands IDW search radius up to 8 buckets ($R \approx 320\text{ m}$) guaranteeing **100% terrain coverage** even on sparse surveys or elongated meshes.
+  - **Downstream Monotonic Thalweg Enforcement**: Enforces non-increasing bed profile downstream to eliminate spurious adverse slope humps.
+  - **Hydro-Enforced Bathymetry Carving**: Carves active wet channels below LiDAR water surface plateaus while preserving elevated floodplain overbanks with dual-zone Manning roughness.
 - **The 8.5M Reach Global Knowledge Graph**:
-  - Incorporates the complete global river network across every continent: all **~8.5 million reaches** from HydroRIVERS / FAO, down to headwater tributaries (catchment $\ge 10\text{ km}^2$, $Q \ge 0.1\text{ m}^3/\text{s}$).
+  - Incorporates the complete global river network across every continent: all **~8.5 million reaches** from HydroRIVERS / FAO down to headwater tributaries.
   - High-resolution SWORD v16 reach overlay (~248,000 reaches wider than $30\text{ m}$).
   - Prior cross-section shape and active channel bathymetry from SWOT-River-Volume (~240,000 reaches).
   - Modeled daily discharge time-series and 10-yr / 100-yr flood flows from GRADES-hydroDL (~2.94 million reaches).
   - Curated reference gauge observations and WMO calibration from GRDC-Caravan (~6,000 gauges).
   - Global river widths from Landsat (GRWL) and 30m global terrain from Copernicus GLO-30 DEM. See [`COVERAGE.md`](file:///home/orion/Downloads/VSC/Opencode/tensora-gis/COVERAGE.md).
-- **Four Accuracy Tiers & Confidence Badging**:
-  - `Estimated (Global)`: HydroRIVERS topology with Leopold–Maddock empirical hydraulic geometry ($h \propto Q^{0.4}$, $W = a Q^b$). No bathymetry is fabricated.
-  - `Estimated (SWOT)`: SWOT-River-Volume prior bathymetry overlay (~240k reaches).
-  - `Calibrated (SWOT)`: Assimilated and calibrated against NASA SWOT KaRIn radar altimetry (observed WSE and surface slope) with automated agreement classifications (`EXCELLENT`, `GOOD`, `NEEDS_CALIBRATION`) and Manning's $n$ assimilation.
-  - `Surveyed (Validated)`: Applied upon user-drawn cross-sections or ground-truth bathymetric soundings.
-- **Spatial Sharding Architecture (<5 MB per Tile)**:
-  - Partitions Earth's landmass into ~14,200 $1^\circ \times 1^\circ$ spatial shards.
-  - Fast client-side on-demand lazy loader (`reachShardLoader.ts`) backed by an IndexedDB tier and deterministic procedural reach synthesizer, ensuring **zero data gaps** anywhere on Earth.
-- **Multi-Branch Tributary Confluence Integration**:
-  - Domain extractor identifies contributing tributary branches within the buffer corridor.
-  - Aggregates upstream tributary discharge into multi-branch boundary inflows, conserving mass and momentum across all confluence angles.
-- **Licensing Guardrails & Attribution**:
-  - GRADES-hydroDL modeled discharge is license-tagged under **CC BY-NC 4.0 (Non-commercial)** with visible `NC` badges in the UI.
-  - GRDC-Caravan observed gauge subset is licensed under CC-BY-4.0.
-  - Esri World Imagery (High-Resolution Satellite) and Copernicus GloFAS via Open-Meteo require **0 API keys** and zero authentication tokens.
-- **Interactive Mesh Movement & Alignment Controls**:
-  - Full freedom to interactively reposition, shift, and rotate the 2D finite-volume computational mesh over any reach corridor:
-    - *Translation*: Nudge mesh North/South/East/West ($\pm 10\text{ m}, \pm 50\text{ m}, \pm 200\text{ m}$) across floodplains.
-    - *Rotation*: Rotate the computational grid ($\pm 2^\circ, \pm 10^\circ$) to align with complex meandering river geometries.
-    - *Thalweg Shifting*: Re-align streamwise stationing and lateral channel offset with automatic DEM elevation updates.
-- **Interactive CAD Hydraulic Structures with Full Drawing Freedom**:
-  - Users have full freedom to draw custom single-point, two-point, or multi-point polyline civil structures directly on the river canvas:
-    1. *Spur Dikes / Groynes*: Bank-anchored deflecting groynes with adjustable permeability ($0.0$ rock mound to $0.5$ timber piles), deflection angle ($70^\circ$ repelling to $110^\circ$ attracting), and Melville & Coleman head scour depth estimation.
-    2. *Standalone Bridge Piers*: Individual or clustered piers with nose shape coefficient $K_1$ (sharp-nosed $0.7$, round-nosed $0.9$, circular $1.0$, square $1.1$), drag force ($F_d = \frac{1}{2} C_D \rho A V^2$), HEC-18 localized pier scour depth calculation, and wake vortex turbulence generation.
-    3. *River Training Deflectors & Guide Walls*: Multi-point guide bunds redirecting high-velocity flow to protect vulnerable banks and intakes.
-    4. *Levees & Floodwalls*: 100% lateral flow barrier with broad-crested weir overtopping and Villemonte submergence correction.
-    5. *Overflow Weirs*: Broad-crested and sharp-crested discharge formulations ($Q = C_d L H^{3/2}$) with submergence reduction.
-    6. *Multi-Span Highway Bridges*: Yarnell pier drag headloss, submerged low-chord orifice pressure flow, and roadway deck weir overtopping.
-    7. *Box Culverts*: Dual-mode FHWA HDS-5 governing rating curves (Inlet Control vs. Outlet Control full-barrel pipe friction).
-    8. *Sluice & Radial Gates*: Underflow and free overflow orifice discharge with transition hydraulics.
-    9. *Transportation Road Embankments*: Highway embankment weir overflow modeling overtopping lanes during extreme flood events.
-- **Depth-Averaged RANS Turbulence Closure**:
-  - *None*: Fast inviscid / pure shallow-water solution ($\nu_t = 0$) for rapid layout previews.
-  - *Algebraic Mixing Length*: Nezu & Rodi parabolic vertical velocity profile ($\nu_t = \frac{1}{6} \kappa u_* h$).
-  - *Two-Equation $k-\varepsilon$*: Full transport for turbulent kinetic energy $k$ and dissipation rate $\varepsilon$ with shear production $P_k$, bed generation $P_{kv}, P_{\varepsilon v}$, and eddy viscosity $\nu_t = \min(c_\mu k^2 / \varepsilon, \nu_{t,max})$.
-  - *Two-Equation $k-\omega$ SST*: Shear Stress Transport formulation for separated boundary flows near bridge piers, weirs, and abutments.
-  - *Equilibrium Wall Functions*: Prescribes bed equilibrium $k$ and $\varepsilon$ from local friction velocity $u_* = n \sqrt{g} |\mathbf{V}| / h^{1/6}$.
-  - See [`PERFORMANCE.md`](file:///home/orion/Downloads/VSC/Opencode/tensora-gis/PERFORMANCE.md) for grid size vs. frame time benchmarks across all turbulence closures.
-- **Coupled Sediment Transport & Morphodynamic Bed Evolution**:
-  - *Advection-Diffusion Plume Dispersion*: $\frac{\partial (h C)}{\partial t} + \nabla \cdot (h C \mathbf{V}) = \nabla \cdot \left( \frac{\nu_t}{\sigma_c} h \nabla C \right) + E - D$.
-  - *4 Classical Transport Formulations*: Engelund & Hansen (1967) total load, Meyer-Peter & Müller (1948) bedload, van Rijn (1984) bed/suspended load, and Toffaleti (1969) multi-zone profile.
-  - *Exner Equation Bed Update*: $\frac{\partial z_{bed}}{\partial t} = -\frac{1}{1-p} \nabla \cdot \mathbf{q}_s$ with decoupled sub-stepping and a 5% depth change stability limiter.
-- **Full OpenFOAM 3D CFD Engine & ParaView Integration**:
-  - Instantly packages an executable, production-ready **OpenFOAM 3D CFD Case directory (`.zip`)** directly from the client browser:
-    - *Solvers*: Configured for `interFoam` free-surface two-phase VOF solver with RANS $k-\omega$ SST turbulence closure.
-    - *3D Extruded Hex Mesh*: `system/blockMeshDict` extrudes the 2D river mesh into 3D curvilinear hexahedra with vertical depth grading for near-bed boundary layer resolution.
-    - *Civil Structures STL*: Generates `constant/triSurface/structures.stl` and `system/snappyHexMeshDict` for automatic boundary layer refinement around bridge piers, spur dikes, and weirs.
-    - *Boundary Conditions*: Full `0/` fields (`alpha.water`, `U`, `p_rgh`, `k`, `omega`, `nut`) with `flowRateInletVelocity`, rough bed wall functions ($k_s = 2.5 d_{50}$), and atmosphere inlet-outlet.
-    - *One-Click Execution*: Includes `Allrun` and `Allclean` bash scripts and generates ParaView `case.foam`.
-  - *3D ParaView VTK Export*: Exports complete 3D Structured Grid (`.vtk`) files with logarithmic vertical velocity distributions and turbulent kinetic energy fields.
-- **Well-Balanced Audusse Hydrostatic Reconstruction**: Guarantees the strict $C$-property: undisturbed lake-at-rest over variable mountain bathymetry remains at exact zero velocity to machine precision ($< 10^{-7}\text{ m/s}$), preventing spurious artificial flow creation over steep terrain gradients.
-- **Wetting and Drying Fronts**: Stable threshold-based drying ($h_{dry} = 10^{-3}\text{ m}$) preventing numerical division-by-zero on steep dry banks and moving flood waves.
-- **Semi-Implicit Manning Bed Friction**: Implicit formulation stabilizing shear friction deceleration ($\tau_b = \rho g n^2 |\mathbf{u}| \mathbf{u} / h^{1/3}$) over extremely shallow inundation zones without timestep collapse.
-- **Adaptive CFL Dynamic Time-Stepping**: Dynamically evaluates Courant-Friedrichs-Lewy condition ($\text{CFL} \le 0.45$) based on maximum wave celerity $c = \sqrt{gh} + |\mathbf{u}|$ across all 2D quad cells.
-- **NASA SWOT Satellite Altimetry Calibration**: Direct comparison against NASA SWOT KaRIn Ka-band radar interferometer observations (Water Surface Elevation $\eta$, width, slope) with automated agreement classifications (`EXCELLENT`, `GOOD`, `NEEDS_CALIBRATION`) and automated Manning's $n$ calibration.
-- **Hardware-Accelerated Computing Architecture**: WebGPU compute shaders with WebGL2 float texture GPGPU fallback and multi-threaded CPU reference engine.
-- **6-Sheet Professional Engineering Excel Workbook (`.xlsx`)**: Executive Summary, 2D Hydrodynamics Flow Field, RANS Turbulence Diagnostics, Sediment Transport & Morphodynamics, Hydraulic Structures, and NASA SWOT Calibration registers.
+- **NASA SWOT Satellite Altimetry Calibration**:
+  - Direct comparison against NASA SWOT KaRIn Ka-band radar interferometer observations (Water Surface Elevation $\eta$, width, slope) with automated agreement classifications (`EXCELLENT`, `GOOD`, `NEEDS_CALIBRATION`), Nash-Sutcliffe Efficiency (NSE) computation, and analytical Strickler roughness scaling.
+- **6-Sheet Professional Engineering Excel Workbook (`.xlsx`)**:
+  - Generates comprehensive calculation registers covering Executive Summary, 2D Hydrodynamics Flow Field, RANS Turbulence Diagnostics, Sediment Transport & Morphodynamics, Hydraulic Structures, and NASA SWOT Calibration.
 
 ---
 
@@ -197,6 +198,16 @@ tensora-gis/
 │   ├── verify-stormwater-excel.ts     # Excel export & 70% snapshot verification
 │   ├── wastewater-selftest.ts         # SWMM hydraulic engine stability & 10-run suite
 │   ├── water-transient-selftest.ts    # EPANET GGA, EPS, Fire Flow & Hammer physics
+│   ├── river-cfd-selftest.ts          # 2D Shallow-Water Saint-Venant FVM solver tests
+│   ├── knowledge-graph-selftest.ts    # 8.5M Reach census & spatial shard loader
+│   ├── turbulence-selftest.ts         # Depth-averaged RANS (k-ε, k-ω SST) closure tests
+│   ├── sediment-selftest.ts           # Exner morphodynamics & sediment transport
+│   ├── openfoam-3d-selftest.ts        # OpenFOAM case directory (.zip) & blockMeshDict
+│   ├── autocad-cfd-paraview-selftest.ts # Solid CAD structures & ParaView VTK export
+│   ├── gpu-solver-selftest.ts         # WebGPU / WebGL2 / CPU solver parity & benchmarks
+│   ├── solid-cfd-mesh-selftest.ts     # Solid structure footprinting & flow disruption
+│   ├── move-mesh-selftest.ts          # Pure drag & drop Leaflet interactive mesh alignment
+│   ├── lidar-accuracy-selftest.ts     # LiDAR IDW parsing, Audusse C-property & Toro S* HLLC
 │   └── verify-crossing.ts             # End-to-end corridor crossing verification
 ├── server.ts                  # Express backend & Vite middleware server
 ├── src/
@@ -206,12 +217,25 @@ tensora-gis/
 │   │   ├── water/             # Water Distribution UI (Toolbar, FlexTables, Profile, etc.)
 │   │   ├── wastewater/        # Wastewater UI (Toolbar, FlexTables, Profile, etc.)
 │   │   ├── Header.tsx         # Top app navigation bar
-│   │   ├── LeftMenu.tsx       # Module selector (Stormwater / Water / Wastewater)
+│   │   ├── LeftMenu.tsx       # Module selector (Stormwater / Water / Wastewater / River CFD)
 │   │   ├── InputPanel.tsx     # Corridor file ingestion & coordinate inputs
 │   │   ├── MapViewport.tsx    # Leaflet stormwater GIS map viewer
 │   │   ├── ReportCard.tsx     # Hydrology calculation card & calibration tools
-│   │   ├── WaterDistributionModelling.tsx   # Water distribution workspace root
-│   │   └── WastewaterModelling.tsx          # Wastewater collection workspace root
+│   │   ├── RiverAnalysisModelling.tsx # River CFD workspace (2D FVM, GPU, CAD, Mesh Studio)
+│   │   ├── WaterDistributionModelling.tsx # Water distribution workspace root
+│   │   └── WastewaterModelling.tsx    # Wastewater collection workspace root
+│   ├── river/                 # River Analysis & 2D Hydrodynamic CFD Core Engine
+│   │   ├── calibration/       # NASA SWOT radar altimetry assimilation & Manning n tuning
+│   │   ├── components/        # Specialized physics panels (Turbulence, Sediment, LiDAR, etc.)
+│   │   ├── data/              # 8.5M Reach HydroRIVERS catalog & spatial shard loader
+│   │   ├── export/            # OpenFOAM 3D case packager, ParaView VTK & Excel exports
+│   │   ├── geometry/          # Mesh generation, arbitrary shaping, deformation & LiDAR IDW
+│   │   ├── gpu/               # WebGPU WGSL compute, WebGL2 GLSL & CPU reference solvers
+│   │   ├── sediment/          # Multi-formula sediment transport & Exner morphodynamics
+│   │   ├── solver/            # Finite-volume 2D Saint-Venant solver & CFL time-stepper
+│   │   ├── structures/        # Authentic solid CAD civil hydraulic structures & CFD coupling
+│   │   ├── turbulence/        # Depth-averaged RANS models (Mixing length, k-ε, k-ω SST)
+│   │   └── types/             # Hydrodynamic, mesh, and solver interface definitions
 │   ├── data/                  # Standard reference alignments and sample networks
 │   ├── server/                # Server-side snapshot canvas & Excel generators
 │   ├── types/                 # TypeScript interfaces and engineering data models
@@ -273,26 +297,23 @@ npm start
 
 ## Verification & Automated Self-Tests
 
-Tensora GIS includes exhaustive regression test suites verifying mathematical accuracy, convergence stability, and file integrity:
+Tensora GIS includes exhaustive regression and physics self-test suites verifying mathematical accuracy, convergence stability, and file integrity across all engineering domains:
 
 ```bash
-# Run core offline hydrology delineation test suite (65 tests)
+# Run all 11 core verification test suites end-to-end
 npm test
 
-# Run Stormwater Excel export & 70% snapshot verification suite (26 tests)
-npx tsx scripts/verify-stormwater-excel.ts
+# Run dedicated River CFD, GPU, CAD Solid & LiDAR verification suites
+npm run test:river
 
-# Run Wastewater SWMM hydraulics, stability & 10-run suite (34 tests)
-npx tsx scripts/wastewater-selftest.ts
-
-# Run Water Distribution EPANET GGA, EPS, Fire Flow & Hammer suite (100% pass)
-npx tsx scripts/water-transient-selftest.ts
-
-# Run River Analysis 2D Shallow-Water CFD & Hydraulic Structures suite (43 tests)
-npx tsx scripts/river-cfd-selftest.ts
-
-# Run all test suites combined
-npm test && npx tsx scripts/verify-stormwater-excel.ts && npx tsx scripts/wastewater-selftest.ts && npx tsx scripts/water-transient-selftest.ts && npx tsx scripts/river-cfd-selftest.ts
+# Individual module self-tests:
+npx tsx scripts/gpu-solver-selftest.ts         # WebGPU, WebGL2, CPU parity & performance
+npx tsx scripts/solid-cfd-mesh-selftest.ts    # Solid CAD civil structures & CFD flow disruption
+npx tsx scripts/move-mesh-selftest.ts         # Interactive Leaflet gizmo mesh drag-and-drop
+npx tsx scripts/lidar-accuracy-selftest.ts    # LiDAR IDW parsing, Audusse C-property & Toro S*
+npx tsx scripts/engine-selftest.ts --offline  # 65 offline stormwater delineation tests
+npx tsx scripts/wastewater-selftest.ts        # SWMM hydraulic engine stability & 10-run suite
+npx tsx scripts/water-transient-selftest.ts   # EPANET GGA, EPS, Fire Flow & Hammer surge
 ```
 
 ---
