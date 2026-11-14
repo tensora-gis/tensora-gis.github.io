@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ChainageRecord } from '../types/hydrology';
 import { X, Search, Download, FileSpreadsheet, MapPin } from 'lucide-react';
 import { downloadBlob } from '../utils/exportUtils';
+import { loadExcelJS } from '../utils/excelLoader';
 
 interface ChainageRegisterModalProps {
   isOpen: boolean;
@@ -75,7 +76,7 @@ export const ChainageRegisterModal: React.FC<ChainageRegisterModalProps> = ({
   if (!isOpen) return null;
 
   const handleExportRegisterExcel = async () => {
-    const { default: ExcelJS } = await import('exceljs');
+    const ExcelJS = await loadExcelJS();
     const wb = new ExcelJS.Workbook();
     const rows: (string | number)[][] = [
       ['CORRIDOR CHAINAGE COORDINATE REGISTER'],

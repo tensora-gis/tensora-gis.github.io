@@ -9,6 +9,7 @@
  */
 
 import type ExcelJS from 'exceljs';
+import { loadExcelJS } from '../../utils/excelLoader';
 import {
   RiverGridMesh,
   HydrodynamicsState,
@@ -78,7 +79,7 @@ export async function createRiverExcelWorkbook(
     calibrationResult,
   } = payload;
 
-  const ExcelJSModule = (await import('exceljs')).default;
+  const ExcelJSModule = await loadExcelJS();
   const workbook = new ExcelJSModule.Workbook();
   workbook.creator = 'Tensora GIS — River Analysis & CFD Engine';
   workbook.created = new Date();

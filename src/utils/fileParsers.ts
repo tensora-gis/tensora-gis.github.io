@@ -16,6 +16,7 @@ import {
   isValidLng,
 } from './geoUtils';
 import { fetchBulkElevations } from './elevationService';
+import { loadExcelJS } from './excelLoader';
 
 // Browser-safe working limits.  The source file may contain more detail, but
 // drawing or projecting every vertex/annotation can otherwise exhaust a tab.
@@ -797,7 +798,7 @@ export async function parseChainageFile(
       : ',';
     rawRows = lines.map((l) => l.split(delimiter).map((c) => c.replace(/^["']|["']$/g, '').trim()));
   } else {
-    const { default: ExcelJS } = await import('exceljs');
+    const ExcelJS = await loadExcelJS();
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(fileData);
 

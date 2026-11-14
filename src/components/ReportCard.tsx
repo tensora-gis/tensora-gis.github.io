@@ -12,6 +12,7 @@ import {
   subscribeDesignStandard,
   DprDesignStandard,
 } from '../utils/dprExcelBase';
+import { prewarmExcelJS } from '../utils/excelLoader';
 import {
   Download,
   FileSpreadsheet,
@@ -58,6 +59,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
   const isIndian = designStandard === 'INDIAN_DPR';
 
   useEffect(() => {
+    prewarmExcelJS();
     return subscribeDesignStandard((std) => {
       setDesignStandard(std);
     });
@@ -1413,8 +1415,30 @@ export const ReportCard: React.FC<ReportCardProps> = ({
       </div>
 
       {exportError && (
-        <div role="alert" className="mx-4 mb-2 p-2 rounded bg-[#ef4444]/10 border border-[#ef4444]/30 text-[#fca5a5] text-[11px]">
-          {exportError}
+        <div
+          role="alert"
+          className="mx-4 mb-2 p-2.5 rounded bg-[#ef4444]/10 border border-[#ef4444]/30 text-[#fca5a5] text-[11px] flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+        >
+          <div className="flex items-start gap-1.5 min-w-0">
+            <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />
+            <span className="leading-snug">{exportError}</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto">
+            <button
+              type="button"
+              onClick={() => void handleExportExcel()}
+              className="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-medium transition-colors font-tech cursor-pointer"
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="px-2 py-0.5 rounded bg-[#ef4444]/20 hover:bg-[#ef4444]/30 text-white text-[10px] font-medium transition-colors font-tech cursor-pointer"
+            >
+              Reload Page
+            </button>
+          </div>
         </div>
       )}
 

@@ -7,6 +7,7 @@
  */
 
 import type ExcelJS from 'exceljs';
+import { loadExcelJS } from './excelLoader';
 import {
   WaterDistributionNetwork,
   SimulationSummary,
@@ -16,7 +17,7 @@ export async function buildWaterExcelWorkbook(
   network: WaterDistributionNetwork,
   summary: SimulationSummary
 ) {
-  const { default: ExcelJS } = await import('exceljs');
+  const ExcelJS = await loadExcelJS();
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Tensora GIS - Water Distribution Hydraulic Engine';
   workbook.lastModifiedBy = 'Tensora GIS';

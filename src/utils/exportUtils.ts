@@ -2,6 +2,7 @@ import { CorridorAlignment, HydrologyReport } from '../types/hydrology';
 import { generateClientHydrologySnapshot } from './stormwaterSnapshot';
 import { populateStormwaterDprWorkbook } from './stormwaterDprBuilder';
 import { getGlobalDesignStandard, DprDesignStandard, DprProjectMetadata } from './dprExcelBase';
+import { loadExcelJS } from './excelLoader';
 
 const LABEL_FILL = {
   type: 'pattern' as const,
@@ -398,7 +399,7 @@ export async function buildClientHydrologyWorkbook(
   clientSnapshotDataUrl?: string,
   metadata?: DprProjectMetadata
 ): Promise<Blob> {
-  const { default: ExcelJS } = await import('exceljs');
+  const ExcelJS = await loadExcelJS();
   const workbook = new ExcelJS.Workbook();
   const standard = metadata?.designStandard || getGlobalDesignStandard();
   workbook.creator = standard === 'INTERNATIONAL'

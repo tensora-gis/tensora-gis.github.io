@@ -9,6 +9,7 @@
  */
 
 import type ExcelJS from 'exceljs';
+import { loadExcelJS } from './excelLoader';
 import {
   WastewaterNetwork,
   WastewaterSimulationSummary,
@@ -18,7 +19,7 @@ export async function generateWastewaterExcel(
   network: WastewaterNetwork,
   summary: WastewaterSimulationSummary
 ): Promise<Blob> {
-  const { default: ExcelJS } = await import('exceljs');
+  const ExcelJS = await loadExcelJS();
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'Tensora GIS - Wastewater Collection & SWMM Engine';
   workbook.lastModifiedBy = 'Tensora GIS';
