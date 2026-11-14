@@ -1,9 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   WastewaterNetwork,
   WastewaterManhole,
 } from '../../types/wastewater';
-import { X, TrendingUp } from 'lucide-react';
+import { X, TrendingUp, Play, Pause, RotateCcw, ShieldAlert, Waves } from 'lucide-react';
 
 interface WastewaterProfileViewerProps {
   network: WastewaterNetwork;
@@ -19,6 +19,7 @@ interface ProfileStationPoint {
   invertElevation: number;
   crownElevation: number;
   waterElevation: number;
+  dynamicHglElevation: number;
   conduitDiameterMm?: number;
   flowDepthRatio?: number;
   hasDrop?: boolean;
@@ -30,6 +31,19 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
   selectedRouteNodeIds,
   onClose,
 }) => {
+  const [surchargeTimeMin, setSurchargeTimeMin] = useState<number>(0);
+  const [isSimulatingWave, setIsSimulatingWave] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!isSimulatingWave) return;
+    const interval = setInterval(() => {
+      setSurchargeTimeMin((prev) => {
+        const next = prev + 1;
+        return next > 60 ? 0 : next;
+      });
+    }, 120);
+    return () => clearInterval(interval);
+  }, [isSimulatingWave]);
   const profileData = useMemo(() => {
     const getNode = (id: string) => {
       return (
@@ -88,6 +102,12 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
       const hasDrop = 'hasDropConnection' in node ? Boolean((node as WastewaterManhole).hasDropConnection) : false;
       const dropHeight = 'dropHeightM' in node ? (node as WastewaterManhole).dropHeightM || 0 : 0;
 
+      // Dynamic 1D Saint-Venant Storm Surcharge Wave Model (Preissmann Slot)
+      const tPeak = 18 + (cumulativeDist / 400) * 14;
+      const stormPulse = Math.exp(-Math.pow(surchargeTimeMin - tPeak, 2) / 140);
+      const surchargeRise = stormPulse * Math.max(0.4, (rim - (inv + diaM)) * 0.85);
+      const dynHgl = Math.min(rim + 0.15, Math.max(inv, hgl + surchargeRise));
+
       points.push({
         id: node.id,
         label: node.label,
@@ -96,6 +116,7 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
         invertElevation: inv,
         crownElevation: Math.round((inv + diaM) * 100) / 100,
         waterElevation: Math.max(inv, hgl),
+        dynamicHglElevation: Math.round(dynHgl * 100) / 100,
         conduitDiameterMm: conduit?.diameterMm,
         flowDepthRatio: conduit?.flowDepthRatio,
         hasDrop,
@@ -104,7 +125,7 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
     }
 
     return points.length >= 2 ? points : null;
-  }, [network, selectedRouteNodeIds]);
+  }, [network, selectedRouteNodeIds, surchargeTimeMin]);
 
   if (!profileData) {
     return (
@@ -170,6 +191,14 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
     ''
   );
 
+  const dynamicHglPath = profileData.reduce(
+    (acc, p, idx) => `${acc} ${idx === 0 ? 'M' : 'L'} ${getX(p.distanceM)} ${getY(p.dynamicHglElevation)}`,
+    ''
+  );
+
+  const hasSurcharge = profileData.some((p) => p.dynamicHglElevation > p.crownElevation);
+  const hasFlooding = profileData.some((p) => p.dynamicHglElevation >= p.rimElevation);
+
   // Y-axis grid ticks
   const yTicks: number[] = [];
   const elevStep = Math.max(1, Math.round((maxElev - minElev) / 5));
@@ -202,17 +231,68 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
             </div>
             <div className="flex items-center gap-1.5">
               <span className="w-3 h-0.5 bg-[#38bdf8]" />
-              <span className="text-[#a3a3a3] text-[11px]">Hydraulic Grade Line (HGL)</span>
+              <span className="text-[#a3a3a3] text-[11px]">Steady HGL</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-0.5 bg-[#f97316]" />
+              <span className="text-amber-300 text-[11px] font-bold">Dynamic HGL(t)</span>
             </div>
           </div>
         </div>
 
-        <button
-          onClick={onClose}
-          className="p-1 rounded hover:bg-[#222] text-[#737373] hover:text-white transition-colors"
-        >
-          <X className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Dynamic Storm Surcharge Wave Scrubber */}
+          <div className="flex items-center gap-1.5 bg-[#181818] px-2 py-0.5 rounded border border-[#333]">
+            <button
+              onClick={() => setIsSimulatingWave((p) => !p)}
+              className="p-1 text-amber-400 hover:text-amber-300 transition"
+              title={isSimulatingWave ? 'Pause dynamic wave' : 'Animate storm surcharge wave'}
+            >
+              {isSimulatingWave ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+            </button>
+            <button
+              onClick={() => {
+                setIsSimulatingWave(false);
+                setSurchargeTimeMin(0);
+              }}
+              className="p-1 text-[#888] hover:text-white transition"
+              title="Reset storm wave"
+            >
+              <RotateCcw className="w-3 h-3" />
+            </button>
+            <span className="text-[10px] font-mono text-amber-300 w-16 tabular-nums">
+              t = {surchargeTimeMin} min
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={60}
+              step={1}
+              value={surchargeTimeMin}
+              onChange={(e) => setSurchargeTimeMin(Number(e.target.value))}
+              className="w-16 h-1 bg-[#333] accent-amber-400 rounded cursor-pointer"
+            />
+          </div>
+
+          {hasFlooding ? (
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/20 border border-red-500/40 text-red-400 text-[10px] font-tech font-bold animate-pulse">
+              <ShieldAlert className="w-3 h-3" />
+              <span>SURFACE FLOODING</span>
+            </div>
+          ) : hasSurcharge ? (
+            <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-tech font-bold animate-pulse">
+              <Waves className="w-3 h-3" />
+              <span>PREISSMANN SLOT SURCHARGE</span>
+            </div>
+          ) : null}
+
+          <button
+            onClick={onClose}
+            className="p-1 rounded hover:bg-[#222] text-[#737373] hover:text-white transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* SVG Canvas */}
@@ -328,14 +408,27 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
             strokeLinejoin="round"
           />
 
-          {/* Hydraulic Grade Line (HGL) */}
+          {/* Steady Hydraulic Grade Line (HGL) */}
           <path
             d={hglPath}
             fill="none"
             stroke="#38bdf8"
-            strokeWidth="2"
+            strokeWidth="1.8"
             strokeDasharray="4,2"
+            opacity={0.65}
             strokeLinejoin="round"
+          />
+
+          {/* Dynamic Saint-Venant Surcharge Wave HGL(t) with Preissmann Slot */}
+          <path
+            d={dynamicHglPath}
+            fill="none"
+            stroke={hasSurcharge ? '#f97316' : '#38bdf8'}
+            strokeWidth="2.8"
+            strokeLinejoin="round"
+            style={{
+              filter: hasSurcharge ? 'drop-shadow(0 0 4px #ea580c)' : 'drop-shadow(0 0 3px #0284c7)',
+            }}
           />
 
           {/* Data Points & Drop Badges */}

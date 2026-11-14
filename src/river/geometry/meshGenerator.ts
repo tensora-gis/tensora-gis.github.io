@@ -177,8 +177,13 @@ export interface RiverMeshOptions {
   originOffsetYM?: number;               // Mesh translation North (m)
   rotationAngleDeg?: number;             // Mesh rotation (deg)
 
+  // Full-River Coverage & Intelligent Curvilinear Shortening along River Shape:
+  shortenReachFraction?: number;         // Fraction of full river reach (0.05 to 1.0, default 1.0 = 100% full river)
+  startStationM?: number;                // Starting longitudinal station along river (meters, default 0)
+  endStationM?: number;                  // Ending longitudinal station along river (meters, default full river reach length)
+
   // Advanced Arbitrary Shape Generation, Elongation & Compression along River Shape:
-  streamwiseStretchRatio?: number;       // Elongate (>1.0) or Compress (<1.0) reach along centerline (0.2x to 5.0x)
+  streamwiseStretchRatio?: number;       // Stretch (>1.0) or Compress/Shorten (<1.0) along river path (0.1x to 5.0x)
   longitudinalTaperRatio?: number;       // Linear width taper from inlet to outlet (0.2x convergent to 5.0x divergent)
   meanderCurvatureScale?: number;        // Amplify (>1.0) or straighten (0=straight flume) river centerline sinuosity
   asymmetricBankRatio?: number;          // Asymmetric lateral bank bias (-1.0 left heavy to +1.0 right heavy)
@@ -187,20 +192,103 @@ export interface RiverMeshOptions {
 }
 
 /**
+ * Intelligent adaptive 2D shallow water mesh resolution estimator.
+ * Calculates optimal streamwise cell count nx and spacing Δx so that
+ * the aspect ratio (Δx / Δy) is ideally conditioned (~1.0 - 2.0) and
+ * total cells remain computationally efficient (60 FPS on WebGPU / CPU).
+ */
+export function computeIntelligentMeshResolution(
+  reachLengthM: number,
+  meanWidthM: number,
+  transverseCells: number = 8,
+  options: { targetSpacingM?: number; explicitNx?: number; fullReachLengthM?: number } = {}
+): { nx: number; targetSpacingM: number } {
+  if (options.explicitNx && options.explicitNx > 1) {
+    const nx = Math.max(2, Math.round(options.explicitNx));
+    return { nx, targetSpacingM: reachLengthM / nx };
+  }
+
+  if (options.targetSpacingM && options.targetSpacingM > 0) {
+    const nx = Math.max(2, Math.round(reachLengthM / options.targetSpacingM));
+    return { nx, targetSpacingM: reachLengthM / nx };
+  }
+
+  const ny = Math.max(3, transverseCells);
+  const deltaY = Math.max(2.0, (meanWidthM || 30.0) / ny);
+  const idealDeltaX = Math.max(12.0, Math.min(120.0, deltaY * 1.5));
+
+  const totalLength = options.fullReachLengthM && options.fullReachLengthM > 0
+    ? options.fullReachLengthM
+    : reachLengthM;
+
+  const baseNx = Math.max(30, Math.min(160, Math.round(totalLength / idealDeltaX)));
+  const spanRatio = Math.max(0.05, Math.min(1.0, reachLengthM / totalLength));
+  const nx = Math.max(15, Math.round(baseNx * spanRatio));
+  const actualSpacingM = reachLengthM / nx;
+
+  return { nx, targetSpacingM: actualSpacingM };
+}
+
+/**
  * Generate 2D RiverGridMesh from reach definition with arbitrary shape deformation,
- * longitudinal elongation/compression, tapering, and sinuosity modulation.
+ * intelligent full-river coverage, curvilinear shortening along the river channel,
+ * tapering, and sinuosity modulation.
  */
 export function generateRiverGridMesh(
   reach: RiverReachDefinition,
   options: RiverMeshOptions = {}
 ): RiverGridMesh {
-  const stretchRatio = Math.max(0.1, Math.min(10.0, options.streamwiseStretchRatio ?? 1.0));
-  const effectiveReachLengthM = reach.reachLengthM * stretchRatio;
-
-  let targetSpacingM = options.targetStreamwiseSpacingM || 20.0;
-  if (options.streamwiseCellsCount && options.streamwiseCellsCount > 1) {
-    targetSpacingM = effectiveReachLengthM / options.streamwiseCellsCount;
+  const rawCenterline = reach.centerline;
+  if (!rawCenterline || rawCenterline.length === 0) {
+    throw new Error(`Reach ${reach.id} has an empty centerline`);
   }
+
+  const originLat = rawCenterline[0].lat;
+  const originLng = rawCenterline[0].lng;
+
+  // 1. Build cumulative station distance metric coordinates along raw physical centerline
+  const metricRaw: { x: number; y: number; station: number; raw: RiverCenterlinePoint }[] = [];
+  let cumStation = 0;
+  for (let i = 0; i < rawCenterline.length; i++) {
+    const pt = rawCenterline[i];
+    const [x, y] = geoToLocalMeters(pt.lat, pt.lng, originLat, originLng);
+    if (i > 0) {
+      const prev = metricRaw[i - 1];
+      cumStation += Math.hypot(x - prev.x, y - prev.y);
+    }
+    metricRaw.push({ x, y, station: cumStation, raw: pt });
+  }
+
+  const rawTotalStation = Math.max(1.0, cumStation);
+  const fullRiverLengthM = reach.reachLengthM && reach.reachLengthM > 0 ? reach.reachLengthM : rawTotalStation;
+  // Station scale ensures stations match calibrated reachLengthM perfectly
+  const stationScale = fullRiverLengthM / rawTotalStation;
+  for (const p of metricRaw) {
+    p.station *= stationScale;
+  }
+  const scaledTotalStation = fullRiverLengthM;
+
+  // Determine reach coverage fraction & shortening along the true river channel
+  let reachFraction = 1.0;
+  if (options.shortenReachFraction !== undefined) {
+    reachFraction = Math.max(0.05, Math.min(1.0, options.shortenReachFraction));
+  } else if (options.streamwiseStretchRatio !== undefined && options.streamwiseStretchRatio < 1.0) {
+    reachFraction = Math.max(0.05, Math.min(1.0, options.streamwiseStretchRatio));
+  }
+
+  const stretchRatio = Math.max(0.05, Math.min(10.0, options.streamwiseStretchRatio ?? 1.0));
+  const isElongated = stretchRatio > 1.0 && options.shortenReachFraction === undefined;
+
+  const startStationM = Math.max(0.0, Math.min(fullRiverLengthM - 10.0, options.startStationM ?? 0.0));
+  let endStationM = options.endStationM !== undefined
+    ? Math.max(startStationM + 10.0, Math.min(fullRiverLengthM, options.endStationM))
+    : startStationM + (fullRiverLengthM - startStationM) * reachFraction;
+
+  let effectiveReachLengthM = endStationM - startStationM;
+  if (isElongated) {
+    effectiveReachLengthM = fullRiverLengthM * stretchRatio;
+  }
+
   const ny = Math.max(3, options.transverseCellsCount || 8);
   const widthMult = (options.channelWidthScaling ?? 1.0) * (options.domainWidthMultiplier ?? 1.0);
   const floodplainW = Math.max(0.0, options.lateralFloodplainWidthM ?? 0.0);
@@ -214,63 +302,147 @@ export function generateRiverGridMesh(
   const waveAmpM = options.sinusoidalWaveAmplitudeM ?? 0.0;
   const wavePeriods = options.sinusoidalWavePeriods ?? 1.0;
 
-  // 1. Resample and shape centerline
-  let rawCenterline = reach.centerline;
+  // Intelligent CFD discretization
+  const res = computeIntelligentMeshResolution(
+    effectiveReachLengthM,
+    reach.meanWidthM * widthMult,
+    ny,
+    {
+      explicitNx: options.streamwiseCellsCount,
+      targetSpacingM: options.targetStreamwiseSpacingM,
+      fullReachLengthM: fullRiverLengthM,
+    }
+  );
+  const nx = res.nx;
+  const targetSpacingM = res.targetSpacingM;
 
-  // Apply streamwise elongation / compression scaling and meander curvature modulation
-  if (rawCenterline.length > 1) {
-    const originLat = rawCenterline[0].lat;
-    const originLng = rawCenterline[0].lng;
-    const pEnd = rawCenterline[rawCenterline.length - 1];
-    const [endX, endY] = geoToLocalMeters(pEnd.lat, pEnd.lng, originLat, originLng);
-    const chordLen = Math.max(1.0, Math.hypot(endX, endY));
-    const chordUx = endX / chordLen;
-    const chordUy = endY / chordLen;
+  function evalCatmullRomSpline(v0: number, v1: number, v2: number, v3: number, t: number): number {
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return 0.5 * (
+      (2 * v1) +
+      (-v0 + v2) * t +
+      (2 * v0 - 5 * v1 + 4 * v2 - v3) * t2 +
+      (-v0 + 3 * v1 - 3 * v2 + v3) * t3
+    );
+  }
+
+  // Direction vector at outlet for tangential extrapolation when elongated
+  const pEnd = metricRaw[metricRaw.length - 1];
+  const pPrev = metricRaw[Math.max(0, metricRaw.length - 2)];
+  const termDx = pEnd.x - pPrev.x;
+  const termDy = pEnd.y - pPrev.y;
+  const termLen = Math.hypot(termDx, termDy) || 1.0;
+  const termUx = termDx / termLen;
+  const termUy = termDy / termLen;
+
+  // Resample centerline points along the curved river centerline spline
+  const centerline: RiverCenterlinePoint[] = [];
+
+  for (let k = 0; k <= nx; k++) {
+    const sTarget = startStationM + k * targetSpacingM;
+
+    let interpX: number;
+    let interpY: number;
+    let interpBed: number | undefined;
+    let interpWidth: number | undefined;
+
+    if (sTarget <= scaledTotalStation) {
+      let segIdx = 0;
+      while (segIdx < metricRaw.length - 2 && metricRaw[segIdx + 1].station < sTarget) {
+        segIdx++;
+      }
+      const pA = metricRaw[segIdx];
+      const pB = metricRaw[segIdx + 1] || pA;
+      const segLen = Math.max(1.0e-5, pB.station - pA.station);
+      const t = Math.max(0, Math.min(1, (sTarget - pA.station) / segLen));
+
+      if (metricRaw.length > 2) {
+        const p0 = metricRaw[Math.max(0, segIdx - 1)];
+        const p1 = pA;
+        const p2 = pB;
+        const p3 = metricRaw[Math.min(metricRaw.length - 1, segIdx + 2)];
+
+        interpX = evalCatmullRomSpline(p0.x, p1.x, p2.x, p3.x, t);
+        interpY = evalCatmullRomSpline(p0.y, p1.y, p2.y, p3.y, t);
+
+        if (p1.raw.bedElevationM !== undefined && p2.raw.bedElevationM !== undefined) {
+          const z0 = p0.raw.bedElevationM ?? p1.raw.bedElevationM;
+          const z1 = p1.raw.bedElevationM;
+          const z2 = p2.raw.bedElevationM;
+          const z3 = p3.raw.bedElevationM ?? p2.raw.bedElevationM;
+          interpBed = evalCatmullRomSpline(z0, z1, z2, z3, t);
+        }
+
+        if (p1.raw.widthM !== undefined && p2.raw.widthM !== undefined) {
+          const w0 = p0.raw.widthM ?? p1.raw.widthM;
+          const w1 = p1.raw.widthM;
+          const w2 = p2.raw.widthM;
+          const w3 = p3.raw.widthM ?? p2.raw.widthM;
+          interpWidth = Math.max(5.0, evalCatmullRomSpline(w0, w1, w2, w3, t));
+        }
+      } else {
+        interpX = pA.x + t * (pB.x - pA.x);
+        interpY = pA.y + t * (pB.y - pA.y);
+        interpBed = pA.raw.bedElevationM;
+        interpWidth = pA.raw.widthM;
+      }
+    } else {
+      // Extrapolate smoothly beyond downstream terminus along outlet vector
+      const excessDist = (sTarget - scaledTotalStation) / stationScale;
+      interpX = pEnd.x + termUx * excessDist;
+      interpY = pEnd.y + termUy * excessDist;
+      interpBed = pEnd.raw.bedElevationM;
+      interpWidth = pEnd.raw.widthM;
+    }
+
+    const [interpLat, interpLng] = localMetersToGeo(interpX, interpY, originLat, originLng);
+    centerline.push({
+      lat: interpLat,
+      lng: interpLng,
+      stationM: sTarget - startStationM,
+      bedElevationM: interpBed,
+      widthM: interpWidth,
+    });
+  }
+
+  // Apply meander curvature modulation or harmonic sine wave only when explicitly modified from 1.0 / 0.0
+  if ((curvatureScale !== 1.0 || waveAmpM > 0.0) && centerline.length > 1) {
+    const pStart = centerline[0];
+    const pTerminal = centerline[centerline.length - 1];
+    const [startLocalX, startLocalY] = geoToLocalMeters(pStart.lat, pStart.lng, originLat, originLng);
+    const [endLocalX, endLocalY] = geoToLocalMeters(pTerminal.lat, pTerminal.lng, originLat, originLng);
+    const chordDx = endLocalX - startLocalX;
+    const chordDy = endLocalY - startLocalY;
+    const chordLen = Math.max(1.0, Math.hypot(chordDx, chordDy));
+    const chordUx = chordDx / chordLen;
+    const chordUy = chordDy / chordLen;
     const chordNormX = -chordUy;
     const chordNormY = chordUx;
 
-    rawCenterline = rawCenterline.map((pt, idx) => {
+    for (let k = 0; k < centerline.length; k++) {
+      const pt = centerline[k];
       const [mX, mY] = geoToLocalMeters(pt.lat, pt.lng, originLat, originLng);
-      const frac = idx / Math.max(1, rawCenterline.length - 1);
-
-      // Straight chord point
-      const chordX = frac * endX;
-      const chordY = frac * endY;
-
-      // Meander deviation vector
+      const frac = k / Math.max(1, centerline.length - 1);
+      const chordX = startLocalX + frac * chordDx;
+      const chordY = startLocalY + frac * chordDy;
       const devX = mX - chordX;
       const devY = mY - chordY;
 
-      // Modulate meander curvature (0.0 = straight flume, 1.0 = natural, >1.0 = amplified loops)
       let shapedX = chordX + devX * curvatureScale;
       let shapedY = chordY + devY * curvatureScale;
 
-      // Superimpose harmonic sine wave if requested
       if (waveAmpM > 0.0) {
         const sineOffset = waveAmpM * Math.sin(2.0 * Math.PI * wavePeriods * frac);
         shapedX += sineOffset * chordNormX;
         shapedY += sineOffset * chordNormY;
       }
 
-      // Apply streamwise stretch / compression
-      shapedX *= stretchRatio;
-      shapedY *= stretchRatio;
-
       const [newLat, newLng] = localMetersToGeo(shapedX, shapedY, originLat, originLng);
-      return {
-        ...pt,
-        lat: newLat,
-        lng: newLng,
-        stationM: (pt.stationM ?? 0) * stretchRatio,
-      };
-    });
+      pt.lat = newLat;
+      pt.lng = newLng;
+    }
   }
-
-  const centerline = resampleCenterline(rawCenterline, targetSpacingM);
-  const nx = centerline.length - 1; // Streamwise quad cells
-
-  const originLat = centerline[0].lat;
-  const originLng = centerline[0].lng;
 
   // 2. Generate mesh nodes (nx + 1 stations by ny + 1 lateral points)
   interface MeshNode {
@@ -334,7 +506,8 @@ export function generateRiverGridMesh(
     if (refStructures.length > 0 && refRatio > 1.0) {
       for (const s of refStructures) {
         if (!s.enabled) continue;
-        const sDist = Math.abs((pt.stationM ?? 0) - (s.stationM ?? 0));
+        const actualStation = (pt.stationM ?? 0) + startStationM;
+        const sDist = Math.abs(actualStation - (s.stationM ?? 0));
         if (sDist < structureDistM) {
           structureDistM = sDist;
           if (s.type === 'spurdike') {
@@ -360,7 +533,7 @@ export function generateRiverGridMesh(
     let blendT = 0.0;
 
     if (sections && sections.length > 0) {
-      const baseStation = (pt.stationM ?? 0) / stretchRatio;
+      const baseStation = (pt.stationM ?? 0) + startStationM;
       if (sections.length === 1 || baseStation <= sections[0].stationM) {
         csA = sections[0];
         csB = sections[0];

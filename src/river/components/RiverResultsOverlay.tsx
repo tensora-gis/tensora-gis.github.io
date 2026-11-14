@@ -30,7 +30,9 @@ export type RiverThematicField =
   | 'shear'
   | 'nuT'
   | 'sediment'
-  | 'bedChange';
+  | 'bedChange'
+  | 'dynamic-pressure'
+  | 'lts-tier';
 
 interface RiverResultsOverlayProps {
   map: L.Map | null;
@@ -48,6 +50,7 @@ interface RiverResultsOverlayProps {
   turbRef?: React.RefObject<TurbulenceState | null>;
   sedRef?: React.RefObject<SedimentState | null>;
   isMoveMeshMode?: boolean;
+  showMeshWireframe?: boolean;
 }
 
 import {
@@ -73,6 +76,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
   turbRef,
   sedRef,
   isMoveMeshMode = false,
+  showMeshWireframe = true,
 }) => {
   const overlayRef = useRef<any>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -95,6 +99,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     turbRef,
     sedRef,
     isMoveMeshMode,
+    showMeshWireframe,
   });
 
   propsRef.current = {
@@ -112,6 +117,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     turbRef,
     sedRef,
     isMoveMeshMode,
+    showMeshWireframe,
   };
 
   // Main rendering routine executed on every redraw
@@ -133,6 +139,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
       turbRef: liveTurbRef,
       sedRef: liveSedRef,
       isMoveMeshMode: curIsMoveMode,
+      showMeshWireframe: curShowMeshWireframe,
     } = propsRef.current;
 
     const curHydro = (simulatingActive && liveHydroRef?.current) ? liveHydroRef.current : stateHydro;
@@ -248,6 +255,14 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
         val = curSed.bedElevationChangeM[c] || 0.0;
         fieldTitle = 'Bed Morphodynamics';
         fieldUnit = 'm';
+      } else if (curThematic === 'dynamic-pressure') {
+        val = curHydro.dynamicPressure ? Math.abs(curHydro.dynamicPressure[c]) : 0.0;
+        fieldTitle = 'Dynamic Pressure q';
+        fieldUnit = 'Pa';
+      } else if (curThematic === 'lts-tier') {
+        val = curHydro.ltsTier ? curHydro.ltsTier[c] : 0;
+        fieldTitle = 'LTS Sub-Cycle Tier';
+        fieldUnit = 'Tier (k)';
       } else {
         val = curHydro.velocityMag[c] || 0.0;
       }
@@ -266,6 +281,12 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     } else if (curThematic === 'pressure') {
       minVal = 0.0;
       maxVal = Math.max(0.5, maxVal);
+    } else if (curThematic === 'dynamic-pressure') {
+      minVal = 0.0;
+      maxVal = Math.max(25.0, maxVal);
+    } else if (curThematic === 'lts-tier') {
+      minVal = 0.0;
+      maxVal = 3.0;
     } else if (curThematic === 'turbK') {
       minVal = 0.0;
       maxVal = Math.max(1e-4, maxVal);
@@ -444,12 +465,12 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
       }
     }
 
-    // 3b. Interactive Mesh Alignment Wireframe & Guidance Grid (When moving mesh)
-    if (curIsMoveMode) {
+    // 3b. 2D Computational Mesh Grid Wireframe & Centerline (When Grid toggle active or moving mesh)
+    if (curShowMeshWireframe || curIsMoveMode) {
       ctx.save();
       // Quad cell interior edges
-      ctx.strokeStyle = 'rgba(6, 182, 212, 0.45)';
-      ctx.lineWidth = 1.0;
+      ctx.strokeStyle = curIsMoveMode ? 'rgba(6, 182, 212, 0.70)' : 'rgba(6, 182, 212, 0.38)';
+      ctx.lineWidth = curIsMoveMode ? 1.2 : 0.8;
       ctx.beginPath();
       for (let j = 0; j <= ny; j++) {
         if (!nodePts[0]?.[j]) continue;
@@ -467,9 +488,9 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
       }
       ctx.stroke();
 
-      // Outer bounding boundary in vibrant cyan
-      ctx.strokeStyle = '#06b6d4';
-      ctx.lineWidth = 2.5;
+      // Outer boundary in vibrant cyan
+      ctx.strokeStyle = curIsMoveMode ? '#06b6d4' : 'rgba(6, 182, 212, 0.85)';
+      ctx.lineWidth = curIsMoveMode ? 2.5 : 1.8;
       ctx.beginPath();
       ctx.moveTo(nodePts[0][0].px, nodePts[0][0].py);
       for (let i = 1; i <= nx; i++) ctx.lineTo(nodePts[i][0].px, nodePts[i][0].py);
@@ -482,7 +503,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
       // Centerline / Thalweg in luminous amber with dashed pattern
       if (curMesh.centerline && curMesh.centerline.length > 0) {
         ctx.strokeStyle = '#f59e0b';
-        ctx.lineWidth = 2.4;
+        ctx.lineWidth = 2.2;
         ctx.setLineDash([6, 4]);
         ctx.beginPath();
         const p0 = map.latLngToContainerPoint([curMesh.centerline[0].lat, curMesh.centerline[0].lng]);
@@ -495,23 +516,25 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
         ctx.setLineDash([]);
       }
 
-      // Centroid Target Reticle
-      const midLat = 0.5 * (curMesh.bounds[0] + curMesh.bounds[2]);
-      const midLng = 0.5 * (curMesh.bounds[1] + curMesh.bounds[3]);
-      const centerPt = map.latLngToContainerPoint([midLat, midLng]);
-      ctx.strokeStyle = '#22d3ee';
-      ctx.fillStyle = 'rgba(6, 182, 212, 0.20)';
-      ctx.lineWidth = 2.0;
-      ctx.beginPath();
-      ctx.arc(centerPt.x, centerPt.y, 22, 0, 2 * Math.PI);
-      ctx.fill();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(centerPt.x - 28, centerPt.y);
-      ctx.lineTo(centerPt.x + 28, centerPt.y);
-      ctx.moveTo(centerPt.x, centerPt.y - 28);
-      ctx.lineTo(centerPt.x, centerPt.y + 28);
-      ctx.stroke();
+      // Centroid Target Reticle (only in Move Mesh mode)
+      if (curIsMoveMode) {
+        const midLat = 0.5 * (curMesh.bounds[0] + curMesh.bounds[2]);
+        const midLng = 0.5 * (curMesh.bounds[1] + curMesh.bounds[3]);
+        const centerPt = map.latLngToContainerPoint([midLat, midLng]);
+        ctx.strokeStyle = '#22d3ee';
+        ctx.fillStyle = 'rgba(6, 182, 212, 0.20)';
+        ctx.lineWidth = 2.0;
+        ctx.beginPath();
+        ctx.arc(centerPt.x, centerPt.y, 22, 0, 2 * Math.PI);
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(centerPt.x - 28, centerPt.y);
+        ctx.lineTo(centerPt.x + 28, centerPt.y);
+        ctx.moveTo(centerPt.x, centerPt.y - 28);
+        ctx.lineTo(centerPt.x, centerPt.y + 28);
+        ctx.stroke();
+      }
 
       ctx.restore();
     }
@@ -1146,6 +1169,7 @@ export const RiverResultsOverlay: React.FC<RiverResultsOverlayProps> = ({
     showVelocityVectors,
     showStreamlines,
     isMoveMeshMode,
+    showMeshWireframe,
   ]);
 
   // High-performance decoupled 60 FPS render loop when simulation is running or streamlines active

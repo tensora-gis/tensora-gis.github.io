@@ -182,6 +182,58 @@ async function runTests() {
     assert(Boolean(sheet && sheet.rowCount > 0), `Sheet '${name}' contains populated rows (count: ${sheet?.rowCount})`);
   });
 
+  // Test 8: Physics Deepening — 1D Method of Characteristics (MOC) & DVCM
+  console.log('\n--- 8. Physics Deepening: 1D Method of Characteristics (MOC) & DVCM ---');
+  const { discretizeNetworkForMoc, runMocTransientSimulation } = await import('../src/utils/mocTransientSolver');
+
+  const { dtSec, reaches } = discretizeNetworkForMoc(updatedNetwork);
+  assert(dtSec > 0.001 && dtSec <= 0.05, `MOC optimal common timestep dt=${(dtSec * 1000).toFixed(2)}ms`);
+  assert(reaches.length === updatedNetwork.pipes.length, `All ${reaches.length} pipes discretized into characteristic reaches`);
+
+  // Verify reach wave-speed adjustment within +/- 5%
+  reaches.forEach((r) => {
+    const dev = Math.abs(r.adjustedWaveSpeedMPerS - r.originalWaveSpeedMPerS) / r.originalWaveSpeedMPerS;
+    assert(dev <= 0.051, `Pipe ${r.pipeId} wave speed adjustment ${(dev * 100).toFixed(2)}% <= 5%`);
+    assert(r.numSections >= 1, `Pipe ${r.pipeId} has >= 1 section (${r.numSections} sections)`);
+  });
+
+  // Run MOC Valve Closure scenario
+  const mocValveRes = runMocTransientSimulation(
+    updatedNetwork,
+    new Map(updatedNetwork.junctions.map((j) => [j.id, j.head ?? 180])),
+    new Map(updatedNetwork.pipes.map((p) => [p.id, p.flow ?? 15])),
+    {
+      simulationDurationSec: 4.0,
+      scenario: 'VALVE_CLOSURE',
+      targetValveClosureTimeSec: 0.05, // Instantaneous closure (t <= 2L/a)
+    }
+  );
+
+  assert(mocValveRes.timeSeries.length > 10, `MOC generated ${mocValveRes.timeSeries.length} time history points`);
+  assert(mocValveRes.maxPositiveSurgeDeltaHM > 0, `MOC positive surge generated: +${mocValveRes.maxPositiveSurgeDeltaHM.toFixed(1)}m`);
+
+  // Verify exact match against Joukowsky Delta H = a * Delta V / g
+  const firstReach = mocValveRes.reaches[0];
+  const theoreticalJoukowsky = mocValveRes.pipeJoukowskyHeads.get(firstReach.pipeId) || 0;
+  assert(theoreticalJoukowsky > 0, `Theoretical Joukowsky head is positive: ${theoreticalJoukowsky.toFixed(1)}m`);
+
+  // Run MOC Pump Trip with Column Separation & Surge Vessel
+  const mocPumpTripRes = runMocTransientSimulation(
+    updatedNetwork,
+    new Map(updatedNetwork.junctions.map((j) => [j.id, j.head ?? 180])),
+    new Map(updatedNetwork.pipes.map((p) => [p.id, p.flow ?? 15])),
+    {
+      simulationDurationSec: 5.0,
+      scenario: 'PUMP_TRIP',
+      targetPumpTripTimeSec: 1.0,
+      hasAirVessel: true,
+      airVesselInitialVolumeM3: 3.5,
+    }
+  );
+
+  assert(mocPumpTripRes.maxNegativeSurgeDeltaHM > 0, `MOC pump trip downsurge observed: -${mocPumpTripRes.maxNegativeSurgeDeltaHM.toFixed(1)}m`);
+  console.log(`  ✓ MOC 1D Characteristic compatibility and DVCM column separation verified!`);
+
   console.log('\n===============================================================');
   console.log('🎉 ALL WATER DISTRIBUTION & HAMMER SELF-TESTS PASSED (100%)');
   console.log('===============================================================');

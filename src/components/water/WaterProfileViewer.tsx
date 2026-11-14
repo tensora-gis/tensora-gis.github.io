@@ -1,10 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   WaterDistributionNetwork,
   WaterReservoir,
   WaterTank,
 } from '../../types/waterDistribution';
-import { X, TrendingUp, ShieldAlert } from 'lucide-react';
+import { X, TrendingUp, ShieldAlert, Play, Pause, RotateCcw } from 'lucide-react';
 
 interface WaterProfileViewerProps {
   network: WaterDistributionNetwork;
@@ -31,6 +31,19 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
   onClose,
 }) => {
   const [showTransientEnvelopes, setShowTransientEnvelopes] = useState(true);
+  const [scrubberTimeSec, setScrubberTimeSec] = useState<number>(0.0);
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    const timer = setInterval(() => {
+      setScrubberTimeSec((prev) => {
+        const next = prev + 0.04;
+        return next > 4.0 ? 0.0 : Math.round(next * 100) / 100;
+      });
+    }, 40);
+    return () => clearInterval(timer);
+  }, [isPlaying]);
 
   // Compute profile stations along the selected route
   const profileData = useMemo(() => {
@@ -196,6 +209,21 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
   const vaporLimitPoints = profileData.map((p) => `${getX(p.distanceM)},${getY(p.vaporLimitHead)}`);
   const vaporLimitPath = `M ${vaporLimitPoints.join(' L ')}`;
 
+  // Dynamic transient HGL wave computed at scrubberTimeSec
+  const totalL = Math.max(10, profileData[profileData.length - 1].distanceM);
+  const dynamicWavePoints = profileData.map((p) => {
+    const meanA = 1050; // typical acoustic celerity (m/s)
+    const phase = (2 * Math.PI * (p.distanceM - meanA * scrubberTimeSec)) / (2 * totalL);
+    const decay = Math.exp(-0.25 * scrubberTimeSec);
+    const deltaSurge = (p.maxTransientHead - p.hydraulicHead) * Math.cos(phase) * decay;
+    const dynamicH = Math.max(
+      p.minTransientHead,
+      Math.min(p.maxTransientHead, p.hydraulicHead + deltaSurge)
+    );
+    return `${getX(p.distanceM)},${getY(dynamicH)}`;
+  });
+  const dynamicWavePath = `M ${dynamicWavePoints.join(' L ')}`;
+
   // Cavitation risk check along route
   const hasCavitationRisk = profileData.some((p) => p.minTransientHead <= p.vaporLimitHead);
 
@@ -218,6 +246,10 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
               <span className="w-3 h-0.5 bg-[#38bdf8]" />
               <span className="text-[#a3a3a3] text-[11px]">Steady HGL</span>
             </div>
+            <div className="flex items-center gap-1.5">
+              <span className="w-3 h-0.5 bg-[#38bdf8] shadow-[0_0_6px_#38bdf8]" />
+              <span className="text-cyan-300 text-[11px] font-bold">Wave H(t)</span>
+            </div>
             {showTransientEnvelopes && (
               <>
                 <div className="flex items-center gap-1.5">
@@ -238,6 +270,41 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Transient Wave Time Scrubber */}
+          <div className="flex items-center gap-1.5 bg-[#181818] px-2 py-0.5 rounded border border-[#333]">
+            <button
+              onClick={() => setIsPlaying((p) => !p)}
+              className="p-1 text-cyan-400 hover:text-cyan-300 transition"
+              title={isPlaying ? 'Pause transient wave' : 'Play transient wave'}
+            >
+              {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+            </button>
+            <button
+              onClick={() => {
+                setIsPlaying(false);
+                setScrubberTimeSec(0);
+              }}
+              className="p-1 text-[#888] hover:text-white transition"
+              title="Reset wave time to t=0s"
+            >
+              <RotateCcw className="w-3 h-3" />
+            </button>
+            <span className="text-[10px] font-mono text-cyan-300 w-14 tabular-nums">
+              t={scrubberTimeSec.toFixed(2)}s
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={4.0}
+              step={0.02}
+              value={scrubberTimeSec}
+              onChange={(e) => {
+                setScrubberTimeSec(Number(e.target.value));
+              }}
+              className="w-16 h-1 bg-[#333] accent-cyan-400 rounded cursor-pointer"
+            />
+          </div>
+
           {hasCavitationRisk && (
             <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/20 border border-red-500/40 text-red-400 text-[10px] font-tech font-bold animate-pulse">
               <ShieldAlert className="w-3 h-3" />
@@ -314,8 +381,18 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
             d={hglPath}
             fill="none"
             stroke="#38bdf8"
-            strokeWidth="2.5"
+            strokeWidth="1.8"
             strokeDasharray="4, 2"
+            opacity={0.7}
+          />
+
+          {/* Instantaneous Time-Domain Transient Surge Wave H(x, t) */}
+          <path
+            d={dynamicWavePath}
+            fill="none"
+            stroke="#38bdf8"
+            strokeWidth="2.8"
+            style={{ filter: 'drop-shadow(0 0 3px #0284c7)' }}
           />
 
           {/* Maximum Transient Surge Head Envelope (H_max) */}

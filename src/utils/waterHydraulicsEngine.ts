@@ -32,6 +32,7 @@ import {
   TransientTimeHistoryPoint,
   TransientSimulationSummary,
 } from '../types/waterDistribution';
+import { runMocTransientSimulation } from './mocTransientSolver';
 
 const HAZEN_WILLIAMS_EXP = 1.852;
 const MAX_ITERATIONS = 40;
@@ -923,6 +924,21 @@ export function computeTransientSurgeAnalysis(
     });
   }
 
+  // 5. Full 1D Method of Characteristics (MOC) & DVCM Column Separation Solver
+  let mocResult = undefined;
+  try {
+    mocResult = runMocTransientSimulation(network, heads, flows, {
+      simulationDurationSec: Math.max(4.0, closureOrTripTimeSec * 3.0),
+      scenario,
+      targetValveClosureTimeSec: closureOrTripTimeSec,
+      targetPumpTripTimeSec: closureOrTripTimeSec,
+      hasAirVessel: totalAirVesselVolM3 > 0,
+      airVesselInitialVolumeM3: Math.max(1.0, totalAirVesselVolM3),
+    });
+  } catch (err) {
+    console.warn('MOC Transient simulation fallback:', err);
+  }
+
   return {
     scenario,
     closureOrTripTimeSec,
@@ -930,13 +946,14 @@ export function computeTransientSurgeAnalysis(
     criticalHighPressureNodeId,
     minSystemSurgeHeadM: Math.round(minSystemSurgeHeadM * 10) / 10,
     criticalCavitationNodeId,
-    vaporCavitationOccurred: pipesAtCavitationRisk.length > 0,
+    vaporCavitationOccurred: pipesAtCavitationRisk.length > 0 || (mocResult?.cavitationOccurred ?? false),
     pipesAtRuptureRisk,
     pipesAtCavitationRisk,
     airVesselRecommendedVolumeM3: Math.max(1.0, Math.round(totalAirVesselVolM3 * 10) / 10),
     pipeResults,
     timeHistory,
     protectionDevices,
+    mocResult,
   };
 }
 

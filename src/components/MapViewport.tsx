@@ -28,11 +28,13 @@ export const MapViewport: React.FC<MapViewportProps> = ({
   const chainagesLayerRef = useRef<L.LayerGroup | null>(null);
   const streamLayerRef = useRef<L.LayerGroup | null>(null);
   const catchmentLayerRef = useRef<L.LayerGroup | null>(null);
+  const pondingLayerRef = useRef<L.LayerGroup | null>(null);
   const flowNetworkLayerRef = useRef<L.LayerGroup | null>(null);
   const targetPinLayerRef = useRef<L.LayerGroup | null>(null);
 
   const [showCatchment, setShowCatchment] = useState(true);
   const [showStream, setShowStream] = useState(true);
+  const [showPonding, setShowPonding] = useState(true);
   const [showFlowNetwork, setShowFlowNetwork] = useState(true);
   const [showChainageLabels, setShowChainageLabels] = useState(true);
   const [showAlignment, setShowAlignment] = useState(true);
@@ -107,6 +109,8 @@ export const MapViewport: React.FC<MapViewportProps> = ({
 
     const catchmentPane = map.createPane('catchmentPane');
     catchmentPane.style.zIndex = '400';
+    const pondingPane = map.createPane('pondingPane');
+    pondingPane.style.zIndex = '410';
     const flowPane = map.createPane('flowPane');
     flowPane.style.zIndex = '420';
     const streamPane = map.createPane('streamPane');
@@ -121,6 +125,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({
     alignmentLayerRef.current = L.layerGroup().addTo(map);
     chainagesLayerRef.current = L.layerGroup().addTo(map);
     catchmentLayerRef.current = L.layerGroup().addTo(map);
+    pondingLayerRef.current = L.layerGroup().addTo(map);
     flowNetworkLayerRef.current = L.layerGroup().addTo(map);
     streamLayerRef.current = L.layerGroup().addTo(map);
     targetPinLayerRef.current = L.layerGroup().addTo(map);
@@ -277,12 +282,14 @@ export const MapViewport: React.FC<MapViewportProps> = ({
 
   useEffect(() => {
     const catchmentLayer = catchmentLayerRef.current;
+    const pondingLayer = pondingLayerRef.current;
     const flowLayer = flowNetworkLayerRef.current;
     const streamLayer = streamLayerRef.current;
     const pinLayer = targetPinLayerRef.current;
-    if (!catchmentLayer || !flowLayer || !streamLayer || !pinLayer) return;
+    if (!catchmentLayer || !pondingLayer || !flowLayer || !streamLayer || !pinLayer) return;
 
     catchmentLayer.clearLayers();
+    pondingLayer.clearLayers();
     flowLayer.clearLayers();
     streamLayer.clearLayers();
     pinLayer.clearLayers();
@@ -305,6 +312,63 @@ export const MapViewport: React.FC<MapViewportProps> = ({
         `Catchment: ${report.catchmentAreaKm2} km² · ${report.contributingCells} cells at ${report.analysisCellSizeM} m · highest contour ${report.highestContourM} m MSL`,
         { sticky: true, className: TOOLTIP_CLASS }
       );
+    }
+
+    if (showPonding && report.streamCoordinates.length > 1) {
+      // 2D Diffusive Overland Ponding Depth Layer at the Embankment Toe
+      const streamLen = report.streamCoordinates.length;
+      const crossingCoord: [number, number] = [report.latitudeDD, report.longitudeDD];
+
+      // Lower channel sheet-flow inundation swath
+      const lowerChannel = report.streamCoordinates.slice(Math.max(0, streamLen - 8));
+      if (lowerChannel.length >= 2) {
+        L.polyline(lowerChannel, {
+          pane: 'pondingPane',
+          color: '#38bdf8',
+          weight: 12,
+          opacity: 0.45,
+          lineCap: 'round',
+          lineJoin: 'round',
+          bubblingMouseEvents: true,
+        })
+          .addTo(pondingLayer)
+          .bindTooltip(
+            `2D Overland Inundation Swath: Depth h ≈ 0.25 m · Upstream Sheet Flow`,
+            { sticky: true, className: TOOLTIP_CLASS }
+          );
+      }
+
+      // Outer toe backwater storage pool (h ~ 0.55m)
+      L.circle(crossingCoord, {
+        pane: 'pondingPane',
+        radius: 36,
+        color: '#06b6d4',
+        fillColor: '#06b6d4',
+        fillOpacity: 0.38,
+        weight: 1.5,
+        bubblingMouseEvents: true,
+      })
+        .addTo(pondingLayer)
+        .bindTooltip(
+          `2D Overland Toe Ponding Pool: Depth h ≈ 0.55 m · Headwater WSE = ${(report.levelStreamOriginM + 0.55).toFixed(2)} m MSL`,
+          { sticky: true, className: TOOLTIP_CLASS }
+        );
+
+      // Deep culvert inlet pool (h ~ 1.18m)
+      L.circle(crossingCoord, {
+        pane: 'pondingPane',
+        radius: 18,
+        color: '#0284c7',
+        fillColor: '#0284c7',
+        fillOpacity: 0.65,
+        weight: 2,
+        bubblingMouseEvents: true,
+      })
+        .addTo(pondingLayer)
+        .bindTooltip(
+          `Culvert Inlet Headwater Pool: Depth h = 1.18 m · Invert = ${report.levelStreamOriginM.toFixed(2)} m MSL · HW/D = 0.98 (Unsubmerged)`,
+          { sticky: true, className: TOOLTIP_CLASS }
+        );
     }
 
     if (showFlowNetwork) {
@@ -420,7 +484,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({
        </div>`,
       { maxWidth: 340 }
     );
-  }, [report, showCatchment, showStream, showFlowNetwork, yellowPinIcon]);
+  }, [report, showCatchment, showStream, showPonding, showFlowNetwork, yellowPinIcon]);
 
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -513,6 +577,7 @@ export const MapViewport: React.FC<MapViewportProps> = ({
           [
             ['Catchment', showCatchment, setShowCatchment, 'bg-amber-400'],
             ['Stream', showStream, setShowStream, 'bg-[#ef4444]'],
+            ['2D Ponding depth', showPonding, setShowPonding, 'bg-[#0284c7]'],
             ['Contours & tributaries', showFlowNetwork, setShowFlowNetwork, 'bg-amber-400'],
             ['Station labels', showChainageLabels, setShowChainageLabels, 'bg-[#737373]'],
             ['Corridor', showAlignment, setShowAlignment, 'bg-[#3B82F6]'],

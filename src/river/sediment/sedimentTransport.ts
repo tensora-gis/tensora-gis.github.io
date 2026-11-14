@@ -265,5 +265,78 @@ export function stepSedimentTransport(
 
     sed.cumulativeScourVolumeM3 += stepScourVol;
     sed.cumulativeDepositionVolumeM3 += stepDepoVol;
+
+    // Apply Critical Angle-of-Repose Avalanching to prevent unphysical vertical cliffs
+    applyAngleOfReposeAvalanching(mesh, sed, hydro, 32.0);
   }
+}
+
+/**
+ * Bank Slumping & Critical Angle-of-Repose Avalanching (Eq. 4.5)
+ *
+ * Prevents unphysical vertical cliffs in pier scour holes and outer meander banks
+ * by redistributing excess sediment to downhill neighboring cells whenever
+ * the local bed slope exceeds tan(phi_submerged) (~30-33 deg).
+ * Strictly guarantees machine-precision mass conservation: sum(Delta z_b * Area) = 0.
+ */
+export function applyAngleOfReposeAvalanching(
+  mesh: RiverGridMesh,
+  sed: SedimentState,
+  hydro: HydrodynamicsState,
+  phiDeg: number = 32.0,
+  maxIterations: number = 2
+): { avalanchedCellsCount: number; volumeRedistributedM3: number } {
+  const tanPhi = Math.tan((phiDeg * Math.PI) / 180.0);
+  const numCells = mesh.cells.length;
+  let totalVolumeMovedM3 = 0.0;
+  const affectedCells = new Set<number>();
+
+  for (let iter = 0; iter < maxIterations; iter++) {
+    for (let c = 0; c < numCells; c++) {
+      const cell = mesh.cells[c];
+      const zC = cell.bedElevation;
+      const numFaces = cell.neighbors.length;
+
+      for (let f = 0; f < numFaces; f++) {
+        const nbr = cell.neighbors[f];
+        if (nbr < 0 || nbr >= numCells) continue;
+        const nbrCell = mesh.cells[nbr];
+        const zNbr = nbrCell.bedElevation;
+
+        if (zC <= zNbr) continue; // Only slump from higher to lower
+
+        const dist = Math.max(0.5, Math.hypot(nbrCell.centerX - cell.centerX, nbrCell.centerY - cell.centerY));
+        const slope = (zC - zNbr) / dist;
+
+        if (slope > tanPhi) {
+          // Bed slope exceeds critical angle of repose
+          const excessHeight = (slope - tanPhi) * dist;
+          const aC = cell.areaM2;
+          const aNbr = nbrCell.areaM2;
+
+          // Conservative mass redistribution: dz_C * aC + dz_Nbr * aNbr = 0
+          const dzC = -0.5 * excessHeight * (aNbr / (aC + aNbr));
+          const dzNbr = 0.5 * excessHeight * (aC / (aC + aNbr));
+
+          cell.bedElevation += dzC;
+          nbrCell.bedElevation += dzNbr;
+
+          sed.bedElevationChangeM[c] += dzC;
+          sed.bedElevationChangeM[nbr] += dzNbr;
+
+          hydro.depth[c] = Math.max(0.0, hydro.depth[c] - dzC);
+          hydro.depth[nbr] = Math.max(0.0, hydro.depth[nbr] - dzNbr);
+
+          totalVolumeMovedM3 += Math.abs(dzC * aC);
+          affectedCells.add(c);
+          affectedCells.add(nbr);
+        }
+      }
+    }
+  }
+
+  return {
+    avalanchedCellsCount: affectedCells.size,
+    volumeRedistributedM3: totalVolumeMovedM3,
+  };
 }

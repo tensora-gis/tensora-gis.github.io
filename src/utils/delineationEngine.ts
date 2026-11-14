@@ -290,7 +290,183 @@ export async function delineateCatchment(
       `${result.headDistanceM} m away at ${result.streamHeadElevationM} m MSL.${arrivalSide}`,
   };
 
-
   return { report, failure: null };
+}
+
+import {
+  GreenAmptSoilParameters,
+  USDA_SOIL_TEXTURE_PARAMETERS,
+  UsdaSoilTexture,
+} from './greenAmptInfiltration';
+import {
+  CulvertBarrelsDefinition,
+  solveCulvertRating,
+  solveCulvertDischargeForHeadwater,
+  CulvertRatingPoint,
+} from './culvertRatingHds5';
+import {
+  OverlandGridDefinition,
+  createInitialOverlandState,
+  stepOverlandDiffusiveSimulation,
+  OverlandSimulationState,
+} from './overlandDiffusiveSolver';
+
+export interface CatchmentHydrographOptions {
+  stormDurationHours: number;
+  peakRainfallIntensityMmPerHour: number;
+  soilTexture?: UsdaSoilTexture;
+  culvert?: CulvertBarrelsDefinition;
+}
+
+export interface CatchmentHydrographResult {
+  peakDischargeM3s: number;
+  timeToPeakMinutes: number;
+  maxHeadwaterElevM: number;
+  governingRegime: 'inlet-control' | 'outlet-control';
+  totalRainfallVolumeM3: number;
+  totalInfiltrationVolumeM3: number;
+  totalCulvertDischargedVolumeM3: number;
+  massConservationErrorPct: number;
+  timeSeries: {
+    timeMinutes: number;
+    rainfallIntensityMmPerHour: number;
+    culvertDischargeM3s: number;
+    headwaterElevM: number;
+    pondingDepthM: number;
+  }[];
+}
+
+/**
+ * Simulates transient rainfall-runoff on a delineated catchment using
+ * Green-Ampt infiltration, 2D diffusive-wave overland routing, and FHWA HDS-5 culvert rating.
+ */
+export function simulateCatchmentHydrographAndCulvertRating(
+  report: HydrologyReport,
+  options: CatchmentHydrographOptions
+): CatchmentHydrographResult {
+  const soilType: UsdaSoilTexture = options.soilTexture || 'Sandy Loam';
+  const soil = USDA_SOIL_TEXTURE_PARAMETERS[soilType];
+
+  const slopeMPerM = Math.max(0.002, (report.elevationDropM / Math.max(10, report.lengthOfStreamKm * 1000)));
+  const originElev = report.levelStreamOriginM;
+  const highestElev = report.highestContourM;
+
+  const culvert: CulvertBarrelsDefinition = options.culvert || {
+    shape: 'circular',
+    material: 'concrete-pipe',
+    diameterM: 1.2,
+    numberOfBarrels: 1,
+    lengthM: 24.0, // Across 12 m half-width formation
+    slopeMPerM,
+    invertInletElevM: originElev,
+    invertOutletElevM: originElev - 24.0 * slopeMPerM,
+  };
+
+  // Build a synthetic 15x15 representative overland catchment grid
+  const nx = 15;
+  const ny = 15;
+  const dxM = Math.max(10.0, Math.sqrt((report.catchmentAreaKm2 * 1e6) / (nx * ny)));
+  const dyM = dxM;
+
+  const bedElevation = new Float32Array(nx * ny);
+  const manningN = new Float32Array(nx * ny);
+  const soilParams: GreenAmptSoilParameters[] = [];
+  const initialMoisture = new Float32Array(nx * ny);
+
+  // Set slope towards center-bottom cell (culvert inlet)
+  const culvertCellIdx = Math.floor(nx / 2); // Center of bottom row
+  const inletElev = originElev;
+
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const idx = j * nx + i;
+      const distFromInlet = Math.hypot(i - (nx / 2), j);
+      const maxDist = Math.hypot(nx / 2, ny);
+      const frac = distFromInlet / maxDist;
+      bedElevation[idx] = inletElev + frac * Math.max(2.0, highestElev - inletElev);
+      manningN[idx] = soil.overlandManningN;
+      soilParams.push(soil);
+      initialMoisture[idx] = soil.residualThetaR + 0.1 * (soil.porosityThetaS - soil.residualThetaR);
+    }
+  }
+
+  const grid: OverlandGridDefinition = {
+    nx,
+    ny,
+    dxM,
+    dyM,
+    bedElevation,
+    manningN,
+    soilParameters: soilParams,
+    initialMoisture,
+    culvertLocation: {
+      cellIdx: culvertCellIdx,
+      culvert,
+      tailwaterDepthM: 0.3,
+    },
+  };
+
+  let state = createInitialOverlandState(grid);
+
+  const durationSec = options.stormDurationHours * 3600.0;
+  const simStepSec = 30.0;
+  const numSteps = Math.ceil(durationSec / simStepSec);
+
+  let peakQ = 0.0;
+  let timeToPeakSec = 0.0;
+  let maxHW = culvert.invertInletElevM;
+  let governingRegime: 'inlet-control' | 'outlet-control' = 'inlet-control';
+
+  const timeSeries: CatchmentHydrographResult['timeSeries'] = [];
+
+  for (let step = 0; step < numSteps; step++) {
+    const t = step * simStepSec;
+    // Triangular hyetograph peaking at 35% storm duration
+    const peakTimeSec = 0.35 * durationSec;
+    let rainIntensity: number;
+    if (t <= peakTimeSec) {
+      rainIntensity = options.peakRainfallIntensityMmPerHour * (t / Math.max(1, peakTimeSec));
+    } else {
+      rainIntensity = Math.max(0.0, options.peakRainfallIntensityMmPerHour * (1.0 - (t - peakTimeSec) / (durationSec - peakTimeSec)));
+    }
+
+    state = stepOverlandDiffusiveSimulation(grid, state, rainIntensity, simStepSec);
+
+    const culvertDepth = state.depthM[culvertCellIdx];
+    const headwaterElev = bedElevation[culvertCellIdx] + culvertDepth;
+    const rating = solveCulvertRating(culvert, Math.max(1e-4, (state.cumulativeCulvertDischargeM3 - (timeSeries.length > 0 ? timeSeries[timeSeries.length - 1].culvertDischargeM3s * simStepSec : 0)) / simStepSec), 0.3);
+
+    const instantaneousQ = solveCulvertDischargeForHeadwater(culvert, headwaterElev, 0.3);
+
+    if (instantaneousQ > peakQ) {
+      peakQ = instantaneousQ;
+      timeToPeakSec = t;
+      maxHW = headwaterElev;
+      governingRegime = rating.governingRegime;
+    }
+
+    // Sample every 2 minutes for output timeseries
+    if (step % 4 === 0) {
+      timeSeries.push({
+        timeMinutes: Math.round(t / 60.0),
+        rainfallIntensityMmPerHour: Math.round(rainIntensity * 10) / 10,
+        culvertDischargeM3s: Math.round(instantaneousQ * 1000) / 1000,
+        headwaterElevM: Math.round(headwaterElev * 100) / 100,
+        pondingDepthM: Math.round(culvertDepth * 100) / 100,
+      });
+    }
+  }
+
+  return {
+    peakDischargeM3s: peakQ,
+    timeToPeakMinutes: Math.round(timeToPeakSec / 60.0),
+    maxHeadwaterElevM: maxHW,
+    governingRegime,
+    totalRainfallVolumeM3: state.cumulativeRainfallVolumeM3,
+    totalInfiltrationVolumeM3: state.cumulativeInfiltratedVolumeM3,
+    totalCulvertDischargedVolumeM3: state.cumulativeCulvertDischargeM3,
+    massConservationErrorPct: state.massConservationErrorPct,
+    timeSeries,
+  };
 }
 

@@ -194,6 +194,8 @@ export interface HydrodynamicsState {
   froude: Float32Array; // Froude number
   shearStress: Float32Array; // Boundary shear stress tau (N/m^2)
   isWet: Uint8Array; // 1 = wet, 0 = dry
+  dynamicPressure?: Float32Array; // Dynamic non-hydrostatic pressure q (Pa)
+  ltsTier?: Uint8Array; // LTS sub-cycling tier k in {0, 1, 2, 3}
 }
 
 /**

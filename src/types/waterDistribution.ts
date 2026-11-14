@@ -101,6 +101,10 @@ export interface WaterPipe extends BaseElement {
   maxTransientHeadM?: number;
   /** Minimum transient surge head (m MSL) */
   minTransientHeadM?: number;
+  /** Transient cavitation risk rating */
+  cavitationRisk?: string;
+  /** Transient overpressure risk rating */
+  overpressureRisk?: string;
 }
 
 export interface WaterPump extends BaseElement {
@@ -257,6 +261,7 @@ export interface TransientSimulationSummary {
   pipeResults: TransientPipeResult[];
   timeHistory: TransientTimeHistoryPoint[];
   protectionDevices: TransientProtectionDevice[];
+  mocResult?: any;
 }
 
 export interface SimulationSummary {

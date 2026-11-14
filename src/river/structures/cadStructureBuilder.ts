@@ -571,7 +571,7 @@ export function findCellsInsidePolygon(
         closestIdx = c;
       }
     }
-    const maxAllowedD = Math.max(60.0, Math.sqrt(mesh.cells[closestIdx]?.areaM2 || 100.0) * 2.0);
+    const maxAllowedD = Math.max(80.0, Math.sqrt(mesh.cells[closestIdx]?.areaM2 || 100.0) * 2.5);
     if (minD <= maxAllowedD) {
       affected.add(closestIdx);
       bedElevSum = mesh.cells[closestIdx].bedElevation;
@@ -637,7 +637,7 @@ export function findCellsInsideCircle(
         nearestIdx = c;
       }
     }
-    const maxAllowedD = radiusM + Math.max(60.0, Math.sqrt(mesh.cells[nearestIdx]?.areaM2 || 100.0) * 2.0);
+    const maxAllowedD = radiusM + Math.max(80.0, Math.sqrt(mesh.cells[nearestIdx]?.areaM2 || 100.0) * 2.5);
     if (minD <= maxAllowedD) {
       affected.add(nearestIdx);
       bedElevSum = mesh.cells[nearestIdx].bedElevation;

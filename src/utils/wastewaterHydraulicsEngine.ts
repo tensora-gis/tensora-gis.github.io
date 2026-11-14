@@ -24,6 +24,11 @@ import {
   InflowInfiltrationResult,
   LiftStationCycleResult,
 } from '../types/wastewater';
+import {
+  runDynamicWaveSimulation,
+  getPreissmannSection,
+  DynamicWaveSimulationResult,
+} from './dynamicWaveSolver';
 
 const G = 9.80665; // m/s^2
 
@@ -731,6 +736,45 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
 
   const annualEnergyCostUsd = Math.round(dailyEnergyKwh * 365 * 0.12);
 
+  // 13. Deepened 1D Saint-Venant Dynamic Wave Preissmann Slot & Geyser Simulation
+  let dynamicWaveSimulationResult: DynamicWaveSimulationResult | undefined = undefined;
+  const geyserRiskManholeIds: string[] = [];
+
+  conduits.forEach((c) => {
+    const diaM = (c.diameterMm || 300) / 1000.0;
+    const aFull = (Math.PI * diaM * diaM) / 4.0;
+    c.preissmannSlotWidthM = Math.round(((G * aFull) / (15.0 * 15.0)) * 10000) / 10000;
+  });
+
+  if (conduits.length > 0 && manholes.length > 0) {
+    dynamicWaveSimulationResult = runDynamicWaveSimulation(network);
+    dynamicWaveSimulationResult.conduitResults.forEach((dyn, cid) => {
+      const c = conduits.find((cond) => cond.id === cid);
+      if (c) {
+        c.hadFlowReversal = dyn.hadFlowReversal;
+        if (dyn.isSurcharged && !surchargedConduitIds.includes(c.id)) {
+          c.isSurcharged = true;
+          surchargedConduitIds.push(c.id);
+        }
+      }
+    });
+
+    dynamicWaveSimulationResult.manholeResults.forEach((dyn, mid) => {
+      const m = manholes.find((mh) => mh.id === mid);
+      if (m) {
+        m.geyserRisk = dyn.geyserRisk;
+        m.peakAirPressureKPa = dyn.peakAirPressureKPa;
+        if (dyn.geyserRisk === 'Critical' || dyn.geyserRisk === 'Severe') {
+          if (!geyserRiskManholeIds.includes(m.id)) geyserRiskManholeIds.push(m.id);
+        }
+        if (dyn.isFlooded && !floodedManholeIds.includes(m.id)) {
+          m.isFlooding = true;
+          floodedManholeIds.push(m.id);
+        }
+      }
+    });
+  }
+
   const summary: WastewaterSimulationSummary = {
     converged: true,
     runTimestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
@@ -760,6 +804,8 @@ export function simulateWastewaterNetwork(network: WastewaterNetwork): {
     scourWarningConduitIds,
     reverseSlopeConduitIds,
     floodedManholeIds,
+    geyserRiskManholeIds,
+    dynamicWaveSimulationResult,
 
     // Advanced SWMM & Sewer Engineering Suite
     hourlySimulationPoints,

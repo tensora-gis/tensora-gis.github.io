@@ -192,6 +192,11 @@ console.log('\n[6] Testing Tractive Force, Drop Manholes & Auto-Design Sizing');
 // ---------------------------------------------------------------------------
 
 import { applyAutoDesignSizing } from '../src/utils/wastewaterHydraulicsEngine';
+import {
+  getPreissmannSection,
+  runDynamicWaveSimulation,
+  buildCsrFromTriplets,
+} from '../src/utils/dynamicWaveSolver';
 
 const testNet = createHillsideSteepSewerNetwork();
 const { updatedNetwork: solvedHillside, summary: hillsideSummary } = simulateWastewaterNetwork(testNet);
@@ -228,6 +233,99 @@ if (hillsideSummary.constraintDesignResults) {
     reSim.summary.converged === true
   );
 }
+
+// ---------------------------------------------------------------------------
+console.log('\n[7] Testing Deepened 1D Saint-Venant Dynamic Wave, Preissmann Slot & Geyser Physics');
+// ---------------------------------------------------------------------------
+
+// 7.1 Preissmann Slot Section Geometry
+const D = 0.40; // 400mm circular pipe
+const secOpen = getPreissmannSection(0.20, D, 15.0);
+check('Preissmann open-channel: depth 0.2m in 0.4m pipe is NOT surcharged', secOpen.isSurcharged === false);
+check('Preissmann open-channel: top width > 0.35m', secOpen.topWidthM > 0.35);
+
+const secSurcharged = getPreissmannSection(0.60, D, 15.0);
+check('Preissmann surcharged: depth 0.6m in 0.4m pipe IS surcharged', secSurcharged.isSurcharged === true);
+const aFull = (Math.PI * D * D) / 4.0;
+check('Preissmann surcharged: flow area > Afull', secSurcharged.areaM2 > aFull);
+const expectedSlotTs = (9.80665 * aFull) / (15.0 * 15.0);
+check(
+  `Preissmann slot width matches formula Ts = g*Afull/a^2 (${(secSurcharged.topWidthM * 1000).toFixed(2)}mm)`,
+  Math.abs(secSurcharged.topWidthM - expectedSlotTs) < 1e-4
+);
+
+// 7.2 CSR Sparse Matrix Assembly & BiCGSTAB Solver
+const csr = buildCsrFromTriplets(3, [
+  { row: 0, col: 0, val: 4.0 },
+  { row: 0, col: 1, val: 1.0 },
+  { row: 1, col: 0, val: 1.0 },
+  { row: 1, col: 1, val: 3.0 },
+  { row: 1, col: 2, val: 1.0 },
+  { row: 2, col: 1, val: 1.0 },
+  { row: 2, col: 2, val: 2.0 },
+]);
+const rhs = new Float64Array([5.0, 5.0, 3.0]);
+const sol = csr.solveBiCGSTAB(rhs, 50, 1e-8);
+const ax0 = 4.0 * sol[0] + 1.0 * sol[1];
+check('CSR BiCGSTAB iterative linear solve achieves exact residual parity', Math.abs(ax0 - 5.0) < 1e-4);
+
+// 7.3 Dynamic Wave Routing on Municipal Network
+const muniNet = createMunicipalWastewaterNetwork();
+const dynWaveResult = runDynamicWaveSimulation(muniNet, {
+  simulationDurationSec: 300,
+  dtSec: 5.0,
+  thetaWeight: 0.60,
+});
+
+check('1D Dynamic Wave Preissmann solver converged', dynWaveResult.converged === true);
+check(
+  `1D Dynamic Wave mass continuity error is < 0.1% (found ${dynWaveResult.continuityErrorPercent.toFixed(4)}%)`,
+  dynWaveResult.continuityErrorPercent < 0.10
+);
+check('1D Dynamic Wave produced multi-timestep history', dynWaveResult.timeSeries.length >= 10);
+
+// 7.4 Pressurized Surcharge & M1 Backwater Profile
+const surchargedNetwork: WastewaterNetwork = {
+  ...createMunicipalWastewaterNetwork(),
+  outfalls: [
+    {
+      id: 'OUTFALL-1',
+      label: 'Submerged High-Tide Outfall',
+      type: 'outfall',
+      lat: 27.2435,
+      lng: 77.8285,
+      invertElevation: 171.0,
+      receivingWaterElevation: 173.8, // Severely submerged outfall triggering M1 backwater
+    },
+  ],
+};
+
+const backwaterResult = runDynamicWaveSimulation(surchargedNetwork, {
+  simulationDurationSec: 300,
+  dtSec: 5.0,
+});
+
+check(
+  'Dynamic wave detects surcharged pipes under submerged outfall backwater',
+  backwaterResult.surchargedConduitIds.length > 0
+);
+
+// 7.5 Two-Phase Dropshaft Entrainment & Geyser Blowout Risk
+const steepDropNet = createHillsideSteepSewerNetwork();
+// Increase inflow to trigger drop manhole air pocket compression
+steepDropNet.manholes.forEach((m) => {
+  m.inflowInfiltrationLs = 25.0; // Heavy storm I&I
+});
+
+const geyserResult = runDynamicWaveSimulation(steepDropNet, {
+  simulationDurationSec: 300,
+  dtSec: 5.0,
+});
+
+const geyserEvaluated = Array.from(geyserResult.manholeResults.values()).some(
+  (mh) => mh.peakAirPressureKPa > 101.325 || mh.geyserRisk !== 'None'
+);
+check('Two-phase dropshaft air compression & geyser risk evaluated on drop structures', geyserEvaluated);
 
 // ---------------------------------------------------------------------------
 console.log('\n======================================================');

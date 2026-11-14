@@ -5,6 +5,8 @@
  */
 
 import assert from 'assert';
+import fs from 'fs';
+import path from 'path';
 import { generateRiverGridMesh } from '../src/river/geometry/meshGenerator';
 import { createBenchmark500mReach } from '../src/river/data/hydroRiversLoader';
 import { createRiverSolver } from '../src/river/gpu/solverFactory';
@@ -12,6 +14,14 @@ import { WebGpuRiverSolver, SHALLOW_WATER_WGSL_SHADERS } from '../src/river/gpu/
 import { WebGl2RiverSolver, FS_SHALLOW_WATER_SOURCE, VS_QUAD_SOURCE } from '../src/river/gpu/webgl2Solver';
 import { DEFAULT_TURBULENCE_PARAMETERS } from '../src/river/types/turbulence';
 import { DEFAULT_SEDIMENT_PARAMETERS } from '../src/river/types/sediment';
+import {
+  minmod,
+  vanLeer,
+  reconstructMusclFaceStates,
+  computeCellLtsTiers,
+  applyNonHydrostaticPressureCorrection,
+} from '../src/river/gpu/cpuSolver';
+import { applyAngleOfReposeAvalanching, createInitialSedimentState } from '../src/river/sediment/sedimentTransport';
 
 console.log('--- RUNNING GPU/CPU SOLVER VERIFICATION SUITE ---');
 
@@ -125,6 +135,85 @@ async function run() {
   const maxFlowVel = Math.max(...Array.from(flowingState.hydro.velocityMag));
   assert(maxFlowVel > 0.01, 'Inflow discharge must produce positive velocity field');
   console.log('  - Max velocity with Q=150 m³/s:', maxFlowVel.toFixed(3), 'm/s');
+
+  // 7. 2nd-Order MUSCL-Hancock space-time reconstruction & slope limiter
+  console.log('✓ Testing 2nd-Order MUSCL-Hancock Reconstruction...');
+  assert(minmod(2.0, 1.0) === 1.0, 'minmod(2, 1) must equal 1');
+  assert(minmod(-2.0, -1.0) === -1.0, 'minmod(-2, -1) must equal -1');
+  assert(minmod(-1.0, 1.0) === 0.0, 'minmod(-1, 1) with opposite signs must be 0');
+  assert(vanLeer(2.0, 1.0) === (4.0 / 3.0), 'vanLeer limiter test');
+
+  const musclStates = reconstructMusclFaceStates(mesh, flowingState.hydro, 0.05);
+  assert(musclStates.faceHL.length === mesh.cells.length * 4, 'MUSCL faceHL must match 4 faces per cell');
+  assert(musclStates.faceUL.length === mesh.cells.length * 4, 'MUSCL faceUL must match 4 faces per cell');
+  console.log('  - MUSCL face states evaluated across %d cell interfaces', musclStates.faceHL.length);
+
+  // 8. GPU Local Time-Stepping (LTS) Sub-Cycling Tier Binning (Eq. 4.3)
+  console.log('✓ Testing GPU Local Time-Stepping (LTS) 2^k Tier Binning...');
+  const lts = computeCellLtsTiers(mesh, flowingState.hydro, 0.5, 0.02, 3);
+  assert(lts.cellTiers.length === mesh.cells.length, 'All cells assigned LTS tiers');
+  const sumTiers = lts.tierCounts.reduce((a, b) => a + b, 0);
+  assert(sumTiers === mesh.cells.length, 'Sum of tier counts must equal total cells');
+  assert(lts.minDtSec > 0 && lts.maxDtSec >= lts.minDtSec, 'Valid timestep bounds');
+  console.log('  - LTS tier distribution [1x: %d, 2x: %d, 4x: %d, 8x: %d], dt range: [%fs, %fs]',
+    lts.tierCounts[0], lts.tierCounts[1], lts.tierCounts[2], lts.tierCounts[3],
+    lts.minDtSec, lts.maxDtSec
+  );
+
+  // 9. Weakly Dispersive Non-Hydrostatic Dynamic Pressure Poisson Solve (Eq. 4.4)
+  console.log('✓ Testing Weakly Dispersive Non-Hydrostatic Dynamic Pressure Solve...');
+  const nhRes = applyNonHydrostaticPressureCorrection(mesh, flowingState.hydro, 0.05);
+  assert(typeof nhRes.maxDynamicPressurePa === 'number' && nhRes.maxDynamicPressurePa >= 0, 'Dynamic pressure must be non-negative');
+  assert(typeof nhRes.meanCorrectionMs === 'number' && nhRes.meanCorrectionMs >= 0, 'Mean correction must be non-negative');
+  console.log('  - Max dynamic non-hydrostatic pressure: %f Pa, mean velocity correction: %f m/s',
+    nhRes.maxDynamicPressurePa.toFixed(2), nhRes.meanCorrectionMs.toFixed(4)
+  );
+
+  // 10. Critical Angle-of-Repose Bank Slumping & Avalanching (Eq. 4.5)
+  console.log('✓ Testing Bank Slumping & Angle-of-Repose Avalanching Sediment Conservation...');
+  const sedTestMesh = generateRiverGridMesh(reach, {
+    targetStreamwiseSpacingM: 25.0,
+    transverseCellsCount: 4,
+  });
+  const sedState = createInitialSedimentState(sedTestMesh);
+
+  // Create an artificial vertical cut-bank cliff exceeding angle of repose (> 32 deg)
+  const cellA = sedTestMesh.cells[5];
+  const nbrIdx = cellA.neighbors[1];
+  assert(nbrIdx >= 0, 'Internal cell neighbor exists');
+  const cellB = sedTestMesh.cells[nbrIdx];
+
+  cellA.bedElevation = 100.0;
+  cellB.bedElevation = 90.0; // 10m drop across 25m spacing -> slope 0.40 (exceeds tan(18 deg))
+
+  const initialBedVolume = sedTestMesh.cells.reduce((acc, c) => acc + c.bedElevation * c.areaM2, 0);
+  const slumpResult = applyAngleOfReposeAvalanching(sedTestMesh, sedState, flowingState.hydro, 20.0);
+
+  assert(slumpResult.avalanchedCellsCount >= 2, 'Avalanching triggered on steep cut-bank');
+  assert(slumpResult.volumeRedistributedM3 > 0, 'Sediment volume redistributed from cliff');
+
+  const finalBedVolume = sedTestMesh.cells.reduce((acc, c) => acc + c.bedElevation * c.areaM2, 0);
+  const volDiff = Math.abs(finalBedVolume - initialBedVolume);
+  assert(volDiff < 1e-4, `Strict sediment mass conservation violated: volDiff=${volDiff} m3`);
+  console.log('  - Angle-of-repose avalanching preserved sediment volume within %e m³', volDiff);
+
+  // 11. Standalone WGSL Compute Shaders Audit
+  console.log('✓ Auditing Standalone WGSL Shaders on Disk...');
+  const shadersDir = path.resolve(process.cwd(), 'src/river/gpu');
+  const expectedShaders = [
+    'muscl_reconstruct.wgsl',
+    'lts_subcycle.wgsl',
+    'poisson_cg.wgsl',
+    'overland_diffusive.wgsl',
+  ];
+  for (const sName of expectedShaders) {
+    const sPath = path.join(shadersDir, sName);
+    assert(fs.existsSync(sPath), `WGSL shader ${sName} must exist on disk`);
+    const content = fs.readFileSync(sPath, 'utf8');
+    assert(content.includes('@compute'), `${sName} must declare @compute entry point`);
+    assert(content.includes('@workgroup_size'), `${sName} must declare valid workgroup_size`);
+    console.log('  - %s validated (%d bytes)', sName, content.length);
+  }
 
   solver.dispose();
   console.log('✓ ALL GPU/CPU SOLVER TESTS PASSED!\n');

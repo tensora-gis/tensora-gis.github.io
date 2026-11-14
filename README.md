@@ -43,6 +43,9 @@ Designed specifically for road and railway corridor culvert design where traditi
 - **Physical Formation Modeling**: Models the embankment cross-section ($12\text{ m}$ formation half-width) and cuts the formation to simulate culvert invert placement at the true toe of slope, preventing artificial upstream pooling or false catchment truncation.
 - **Priority-Flood D8 Routing**: Resolves hydrological flow directions, accumulates upstream drainage areas, and extracts the primary channel draining directly into the target crossing.
 - **Dynamic Scope Expansion**: Automatically evaluates relief drop ($\Delta h$). If drop is under $5\text{ m}$, the analysis radius systematically scales ($500\text{ m} \to 1{,}000\text{ m} \to 2{,}000\text{ m}$) to locate the true hydrologic divide.
+- **Spatially Distributed Green-Ampt Infiltration Physics**: Full USDA 7-soil parameter classification table ($K_s$, $\psi$, $\theta_s$, $\theta_r$, $n$). Evaluates the time-to-ponding criterion $F_p = \frac{K_s \psi \Delta\theta}{i - K_s}$ and executes an implicit Newton-Raphson solver for cumulative infiltration depth $F(t)$ and Hortonian overland excess $i_{eff}(t)$ with tolerance $< 10^{-9}\text{ m}$.
+- **2D Semi-Implicit Diffusive-Wave Overland Routing**: 2D local inertial formulation (Bates et al., 2010) with adaptive CFL gravity-wave time-stepping, embankment toe ponding, culvert abstraction coupling, and WebGPU WGSL compute kernel acceleration (`src/river/gpu/overland_diffusive.wgsl`).
+- **FHWA HDS-5 Culvert Rating Hydraulics**: Inlet control (Form 1 unsubmerged / Form 2 submerged) with smooth transition blending, full-barrel and part-full outlet control energy balance ($H_L = (K_e + 19.63 n^2 L / R_h^{4/3} + 1) V^2 / 2g$), governing headwater rating curve $HW(Q)$, and inverse bisection rating solver $Q(HW)$.
 - **70%-Framed Catchment Snapshot**: Automatic North-up canvas rendering that frames the delineated catchment boundary and stream to cover 70% of the viewport width and height.
 - **Standardized Excel Export**: Generates a clean, single-sheet calculation summary workbook embedding the high-resolution delineation snapshot, target chainage coordinates, catchment area ($A$), stream length ($L$), stream origin elevation, and highest ridge contour.
 
@@ -56,12 +59,14 @@ Comprehensive pressurized pipeline network analysis based on the EPANET Global G
 - **Fire Flow Analysis**: Evaluates available fire-fighting flow capacities across all junctions subject to a mandatory residual pressure constraint (default $\ge 14\text{ m} / 20\text{ psi}$).
 - **Water Quality & Chlorine Decay**: Computes nodal water age (hours) and first-order disinfectant residual decay kinetics ($C(t) = C_0 \cdot e^{-k \cdot t}$).
 - **Automated Pipe Sizing Optimization**: Darwin-style genetic constraint optimization evaluating pipe velocity ($0.6 - 2.5\text{ m/s}$) and unit friction loss ($< 10\text{ m/km}$), recommending standardized nominal diameters ($100 - 600\text{ mm}$) with capital expenditure estimates.
+- **1D Method of Characteristics (MOC) Discretization**: Multi-pipe reach discretization with characteristic compatibility equations ($C^+, C^-$), characteristic impedance $B = \frac{a}{g A}$, and friction resistance $R = \frac{f \Delta x}{2 g D A^2}$. An adaptive common timestep search ($\Delta t$) strictly constrains wave-speed adjustments across all pipes to within $\pm 5\%$.
+- **Discrete Vapor Cavity Model (DVCM)**: Integrated tracking of local cavity volume when piezometric head drops to vapor pressure ($H \le -10\text{ m}$ gauge), capturing water column separation, cavity growth, and subsequent collapse impact shock pressure spikes.
+- **Dynamic Rotating Machinery & Surge Suppression**: Suter 4-quadrant pump trip rundown modeling rotational deceleration and transient downsurge rarefaction waves. Sizing and dynamic simulation of hydro-pneumatic air vessels with polytropic gas law $P_{abs} \forall_{air}^n = \text{const}$ and differential orifice throttling.
 - **Transient Surge & Water Hammer Physics**:
-  - Joukowsky instantaneous surge formulation: $\Delta H = \frac{a \cdot \Delta V}{g}$ for rapid pump trip ($t \le \frac{2L}{a}$).
+  - Joukowsky instantaneous surge formulation: $\Delta H = \frac{a \cdot \Delta V}{g}$ for rapid pump trip and fast valve closure ($t \le \frac{2L}{a}$).
   - Allievi slow-closure equation: $\Delta H = \frac{2 L V_0}{g \cdot T_c}$ for controlled closure ($t > \frac{2L}{a}$).
   - Material-specific acoustic wave speeds ($a$): DI ($1{,}050\text{ m/s}$), Steel ($1{,}150\text{ m/s}$), PVC ($400\text{ m/s}$), HDPE ($320\text{ m/s}$), Concrete ($950\text{ m/s}$).
   - Identifies pipes at risk of overpressure rupture vs. nominal pressure ratings ($\text{PN}$).
-  - Identifies vacuum cavitation risk ($\text{HGL} \le -5\text{ m}$) and sizes hydro-pneumatic air vessels ($\text{m}^3$) and vacuum relief air valves.
 - **EPANET Two-Way Interoperability**: Full `.INP` export and import round-trips.
 - **11-Worksheet Calculation Workbook**: Engineering export detailing Executive Summary, Junction Calculations, Pipe Hydraulics, Energy & Pumping, Control Valves, Sources & Storage, 24-Hr EPS, Fire Flow Register, Water Quality, Pipe Optimization, and Transient Surge Analysis.
 
@@ -70,6 +75,9 @@ Comprehensive pressurized pipeline network analysis based on the EPANET Global G
 Full dynamic sanitary and storm sewer modeling running on the EPA SWMM 5.2 computational engine with Bentley SewerGEMS-grade capabilities:
 
 - **Collection Network Topology**: Manholes, Gravity Conduits, Wet Wells, Lift Station Pumps, Force Mains, and Outfalls.
+- **Full 1D Saint-Venant Dynamic Wave Routing with Preissmann Virtual Slot**: Continuity and momentum PDE conservation laws with a narrow Preissmann slot ($T_s = \frac{g A_{full}}{a^2}$) appended along the pipe crown when depth exceeds barrel diameter ($y > D$). Unifies open-channel gravity Manning flow and pressurized pipe surcharging within a single continuous hyperbolic system without numerical switching.
+- **Preissmann 4-Point Implicit Scheme & CSR Sparse Matrix Solver**: Spatial/temporal weighting ($\theta \in [0.55, 1.0]$) coupled to nodal manhole continuity with surface overflow weir discharge. Assembles Compressed Sparse Row (CSR) Jacobian matrices solved via BiCGSTAB iteration to machine precision with mass continuity error $< 0.1\%$.
+- **Two-Phase Air Geysering Model**: Dropshaft air entrainment rate $Q_{air,ent} = 0.05 Q_{water} \sqrt{h_{drop} / D}$, trapped sewer air pocket polytropic compression ($P_{air} \forall_{air}^{1.4} = \text{const}$), manhole cover vent hole relief, and dropshaft geyser blowout risk classification ('None', 'Moderate', 'Severe', 'Critical').
 - **Partial-Flow Manning Hydraulics**: Exact circular pipe partial-depth calculation using Newton-Raphson normal depth solver, tracking depth ratio ($d/D$), hydraulic radius ($R_h$), velocity, and Froude number ($\text{Fr}$).
 - **Diurnal Sanitary Generation**: Peaking factors computed via Babbitt ($M = 5 / P^{0.2}$), Harmon ($M = 1 + \frac{14}{4 + \sqrt{P}}$), Ten-States, or custom diurnal curves.
 - **Self-Cleansing & Tractive Force Physics**: Evaluates boundary shear stress $\tau = \gamma R_h S \ge 2.0\text{ Pa}$ and self-cleansing velocity ($\ge 0.6\text{ m/s}$) to guarantee sediment transport, flagging scour risk ($> 3.0\text{ m/s}$).
@@ -78,7 +86,7 @@ Full dynamic sanitary and storm sewer modeling running on the EPA SWMM 5.2 compu
 - **Hydrogen Sulfide ($\text{H}_2\text{S}$) Corrosion Assessment**: Pomeroy-Parkhurst effective BOD ($EBOD$) and climatic temperature modeling predicting sulfide buildup rates ($\text{mg/L/hr}$) and crown corrosion risk.
 - **Inflow & Infiltration (I&I) Routing**: Groundwater baseline infiltration plus RTK unit hydrograph wet weather inflow calculations.
 - **Automated Pipe Sizing & Slope Sizing**: Automatically adjusts diameters and minimum gradients to eliminate surcharges while satisfying self-cleansing constraints.
-- **EPA SWMM Two-Way Interoperability**: Standard SWMM `.INP` export and import.
+- **EPA SWMM Two-Way Interoperability**: Full parsing and export of `[OPTIONS] FLOW_ROUTING DYNWAVE`, `INERTIAL_DAMPING`, and conduit surcharge attributes.
 - **10-Worksheet Calculation Workbook**: Multi-worksheet calculation register covering Network Overview, Manhole Register, Gravity Pipe Hydraulics, Pump Stations, Outfalls, 24-Hr Routing, Auto-Design, Corrosion, and I&I.
 
 ### 4. River Analysis & 2D Hydrodynamic CFD Modelling
@@ -89,6 +97,18 @@ Tensora GIS includes an in-browser two-dimensional depth-averaged Saint-Venant s
   - **Client-Side Hardware Execution**: Solves the 2D finite-volume shallow-water equations in real time using the client machine's integrated or discrete GPU via WebGPU compute shaders (`WGSL`).
   - **GPGPU & CPU Fallbacks**: Seamless fallback to WebGL2 floating-point render textures (`GLSL`) and a multi-threaded CPU reference solver in TypeScript.
   - **Live Telemetry**: Interactive simulation operating at up to 60 FPS with live computational throughput metrics (MegaCells/sec).
+- **2nd-Order MUSCL-Hancock Space-Time Reconstruction**:
+  - Piecewise linear spatial reconstruction with TVD Minmod and Van Leer limiters across curvilinear quad cells.
+  - Audusse well-balanced water surface elevation reconstruction ($\eta = h + z_b$) strictly preserving the Lake-at-Rest C-property ($< 10^{-7}\text{ m/s}$ spurious velocities over complex bathymetry).
+  - Half-step Hancock predictor at cell centroids eliminating numerical diffusion in vortex wakes and shear layers.
+- **GPU Local Time-Stepping (LTS) Sub-Cycling**:
+  - Anisotropic cell CFL evaluation partitioned into $2^k$ power-of-two tiers ($1\times, 2\times, 4\times, 8\times$) in WebGPU WGSL (`src/river/gpu/lts_subcycle.wgsl`).
+  - Interface flux accumulators preserve exact machine-precision mass conservation between cells of differing LTS tiers, accelerating wide overbank simulations by $3\times - 5\times$.
+- **Weakly Dispersive Non-Hydrostatic Dynamic Pressure Projection**:
+  - Decomposes total pressure into hydrostatic ($\rho g (\eta - z)$) plus depth-averaged dynamic non-hydrostatic pressure ($q$).
+  - Solves the 2D elliptic Poisson equation on GPU (`src/river/gpu/poisson_cg.wgsl`) and CPU via Jacobi / Conjugate Gradient iteration, projecting divergence-free velocities to capture vertical accelerations over submerged weirs and bridge decks.
+- **Bank Slumping & Critical Angle-of-Repose Avalanching**:
+  - Couples Exner morphodynamics with an angle-of-repose avalanching algorithm. When local bed slope exceeds $\phi_{submerged} \approx 30^\circ - 33^\circ$, excess sediment is redistributed laterally to downhill neighbors, guaranteeing exact volume conservation ($\sum \Delta z_b A_c = 0$) and preventing unphysical vertical cliffs.
 - **Solid Civil Hydraulic Structures & Flow Disruption (Coupled CFD)**:
   - Structures are **authentic 2D closed solid civil bodies with physical thickness**, not decorative lines or polylines.
   - **Physical Flow Disruption**: Water flow cannot penetrate solid structure cells ($h = 0$, $\mathbf{u} = 0$, strictly enforced via no-slip zero-flux reflective boundary walls). River currents strike the upstream face, creating dynamic stagnation pressure heads, backwater curves, and wake vortex recirculation zones downstream.
@@ -103,15 +123,18 @@ Tensora GIS includes an in-browser two-dimensional depth-averaged Saint-Venant s
     8. *Sluice & Radial Gates*: Underflow and free overflow orifice discharge with transition hydraulics.
     9. *Road Embankments*: Highway embankment weir overflow modeling overtopping lanes during extreme flood events.
     10. *Geometric Solid Obstacles*: Rotated rectangular caissons, circular cylinders/islands, and arbitrary multi-vertex solid polygons.
-- **Completely Modifiable Mesh Generation & Arbitrary Shaping**:
-  - Structured curvilinear 2D quad mesh generated along the river reach centerline.
-  - Full freedom to deform, elongate, or compress the mesh shape:
-    - *Streamwise Elongation & Compression (`streamwiseStretchRatio`)*: $0.1\times$ to $10.0\times$ (interactive UI slider $0.2\times$ to $3.0\times$ with `[-20% Compress]`, `[1.0x Reset]`, and `[+20% Elongate]` quick actions).
+- **Intelligent Full-River Reach Coverage & Centerline Mesh Generation**:
+  - **Full-River Reach Coverage by Default**: For all 30 global rivers in `GLOBAL_RIVER_DATABASE`, HydroRIVERS, and user-detected waterways, the computational mesh defaults to spanning 100% of the entire river reach from upstream inlet to downstream outlet with zero coordinate skew or geographic drift.
+  - **Adaptive 2D CFD Discretization**: Automatically determines optimal streamwise cell count ($n_x = 25 - 160$) and spacing ($\Delta x$) based on channel width $W_{\text{mean}}$ and reach length $L_{\text{reach}}$, synthesizing well-conditioned aspect ratios ($1.0 \le \Delta x / \Delta y \le 2.0$) and total cell counts ($300 - 1{,}300$ cells) that execute at a silky smooth 60 FPS in WebGPU WGSL and CPU solvers.
+  - **Intelligent Curvilinear Centerline Shortening**: Users can shorten the computational domain along the physical river path ($10\% - 100\%$ slider or quick $25\%, 50\%, 75\%, 100\%$ presets). Trimming evaluates exact Catmull-Rom arc-length stations ($[S_{\text{start}}, S_{\text{end}}]$) along the true river thalweg centerline, ensuring the shortened mesh stays 100% inside the natural riverbed through all curves and oxbow bends without Cartesian distortion.
+  - **Live Computational Mesh Wireframe Overlay**: Dedicated `[Grid]` wireframe toggle on the main simulation toolbar allowing engineers to inspect the boundary-conforming quad cells, outer bank limits, and dashed thalweg centerline in real time over satellite orthophotos.
+  - **Arbitrary Shaping & Longitudinal Deformation**:
+    - *Streamwise Stretch & Compression (`streamwiseStretchRatio`)*: $0.1\times$ to $10.0\times$ (interactive UI slider $0.2\times$ to $3.0\times$ with `[-20% Compress]`, `[1.0x Reset]`, and `[+20% Elongate]` quick actions).
     - *Longitudinal Channel Width Tapering (`longitudinalTaperRatio`)*: $0.2\times$ to $3.0\times$ (linear cross-channel tapering from upstream to downstream for converging gorges or expanding delta estuaries).
     - *Meander Curvature Scaling (`meanderCurvatureScale`)*: $0.0\times$ to $2.5\times$ ($0.0\times$ flattens bends into a straight hydraulic lab flume; $>1.0\times$ amplifies natural sinuous oxbow loops).
     - *Asymmetric Bank Skew (`asymmetricBankRatio`)*: $-1.0$ (left bank heavy) to $+1.0$ (right bank heavy) for cut-bank shear stress modeling.
     - *6 Rapid Shape Presets*: Natural Reach, Straight Flume, Convergent Gorge, Expanding Delta, S-Curve Meander, and Compressed Chute.
-    - *Discretization Control*: Full control over streamwise cells ($n_x = 15 - 150$), transverse cells ($n_y = 4 - 40$), channel width scaling ($0.5\times - 2.5\times$), lateral floodplain overbank width ($0 - 80\text{ m}$), and local boundary layer refinement around solid structures.
+    - *Discretization Control*: Full control over streamwise cells ($n_x = 15 - 180$), transverse cells ($n_y = 4 - 40$), channel width scaling ($0.5\times - 2.5\times$), lateral floodplain overbank width ($0 - 80\text{ m}$), and local boundary layer refinement around solid structures.
     - *Standalone Scaling*: Exported `scaleMesh(mesh, streamwiseScale, lateralScale)` utility for direct mesh reshaping with automatic cell area, normal, and geodetic bounds recalculation.
 - **Pure Direct Interactive Leaflet Drag-and-Drop (Zero UI Duplication)**:
   - Translate and rotate the computational mesh directly via interactive Leaflet map gizmos.
@@ -189,17 +212,17 @@ Tensora GIS utilizes a dual-mode hybrid architecture:
 tensora-gis/
 ├── .github/workflows/         # CI and GitHub Pages deployment pipelines
 ├── scripts/                   # Automated regression and physics self-test suites
-│   ├── engine-selftest.ts             # 65 offline hydrology delineation tests
+│   ├── engine-selftest.ts             # 77 offline hydrology, Green-Ampt, 2D diffusive & FHWA HDS-5 tests
 │   ├── verify-stormwater-excel.ts     # Excel export & 70% snapshot verification
-│   ├── wastewater-selftest.ts         # SWMM hydraulic engine stability & 10-run suite
-│   ├── water-transient-selftest.ts    # EPANET GGA, EPS, Fire Flow & Hammer physics
+│   ├── wastewater-selftest.ts         # SWMM 5.2 Dynamic Wave, Preissmann slot, CSR BiCGSTAB & geyser test suite
+│   ├── water-transient-selftest.ts    # EPANET GGA, EPS, Fire Flow, 1D MOC & DVCM column separation suite
 │   ├── river-cfd-selftest.ts          # 2D Shallow-Water Saint-Venant FVM solver tests
 │   ├── knowledge-graph-selftest.ts    # 8.5M Reach census & spatial shard loader
 │   ├── turbulence-selftest.ts         # Depth-averaged RANS (k-ε, k-ω SST) closure tests
 │   ├── sediment-selftest.ts           # Exner morphodynamics & sediment transport
 │   ├── openfoam-3d-selftest.ts        # OpenFOAM case directory (.zip) & blockMeshDict
 │   ├── autocad-cfd-paraview-selftest.ts # Solid CAD structures & ParaView VTK export
-│   ├── gpu-solver-selftest.ts         # WebGPU / WebGL2 / CPU solver parity & benchmarks
+│   ├── gpu-solver-selftest.ts         # WebGPU / WebGL2 / CPU parity, MUSCL-Hancock, LTS & avalanching benchmarks
 │   ├── solid-cfd-mesh-selftest.ts     # Solid structure footprinting & flow disruption
 │   ├── move-mesh-selftest.ts          # Pure drag & drop Leaflet interactive mesh alignment
 │   ├── lidar-accuracy-selftest.ts     # LiDAR IDW parsing, Audusse C-property & Toro S* HLLC

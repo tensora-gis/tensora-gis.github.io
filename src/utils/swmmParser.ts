@@ -29,6 +29,9 @@ export function exportToSwmmInp(network: WastewaterNetwork): string {
   lines.push('FLOW_UNITS           LPS');
   lines.push('INFILTRATION         CURVE_NUMBER');
   lines.push(`FLOW_ROUTING         ${network.routingMethod || 'DYNAMICWAVE'}`);
+  lines.push('INERTIAL_DAMPING     PARTIAL');
+  lines.push('NORMAL_FLOW_LIMITED  BOTH');
+  lines.push('SURCHARGE_METHOD     SLOT');
   lines.push('START_DATE           01/01/2026');
   lines.push('START_TIME           00:00:00');
   lines.push('REPORT_START_DATE    01/01/2026');

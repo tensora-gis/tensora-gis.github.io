@@ -651,10 +651,11 @@ export async function buildWaterExcelWorkbook(
     { header: 'Velocity (m/s)', key: 'v0', width: 16 },
     { header: 'Joukowsky Surge (m)', key: 'surge', width: 20 },
     { header: 'Steady Pressure (m)', key: 'steady', width: 18 },
-    { header: 'Max Head (m MSL)', key: 'hMax', width: 18 },
+    { header: 'MOC Max Head (m MSL)', key: 'hMax', width: 22 },
     { header: 'Max Pressure (bar)', key: 'pMax', width: 18 },
-    { header: 'Min Head (m MSL)', key: 'hMin', width: 18 },
+    { header: 'MOC Min Head (m MSL)', key: 'hMin', width: 22 },
     { header: 'Min Pressure (bar)', key: 'pMin', width: 18 },
+    { header: 'DVCM Max Cavity (L)', key: 'cavVol', width: 20 },
     { header: 'Rating PN (bar)', key: 'pn', width: 16 },
     { header: 'Overpressure Risk', key: 'overP', width: 24 },
     { header: 'Cavitation Risk', key: 'cav', width: 28 },
@@ -670,7 +671,28 @@ export async function buildWaterExcelWorkbook(
   });
 
   const tResults = summary.transientSurgeSummary?.pipeResults || [];
+  const moc = summary.transientSurgeSummary?.mocResult;
+
   tResults.forEach((t) => {
+    let mocHMax = t.maxTransientHeadM;
+    let mocHMin = t.minTransientHeadM;
+    let maxCavityL = 0.0;
+
+    if (moc) {
+      if (moc.envelopeMaxHeadM && typeof moc.envelopeMaxHeadM.get === 'function') {
+        const h = moc.envelopeMaxHeadM.get(t.pipeId);
+        if (h !== undefined) mocHMax = h;
+      }
+      if (moc.envelopeMinHeadM && typeof moc.envelopeMinHeadM.get === 'function') {
+        const h = moc.envelopeMinHeadM.get(t.pipeId);
+        if (h !== undefined) mocHMin = h;
+      }
+      if (moc.maxCavityVolM3 && typeof moc.maxCavityVolM3.get === 'function') {
+        const vol = moc.maxCavityVolM3.get(t.pipeId);
+        if (vol !== undefined) maxCavityL = vol * 1000.0;
+      }
+    }
+
     const row = surgeSheet.addRow({
       id: t.pipeId,
       mat: t.pipeMaterial,
@@ -679,10 +701,11 @@ export async function buildWaterExcelWorkbook(
       v0: t.initialVelocityMs.toFixed(2),
       surge: t.joukowskySurgeM.toFixed(1),
       steady: t.steadyPressureM.toFixed(1),
-      hMax: t.maxTransientHeadM.toFixed(1),
-      pMax: t.maxTransientPressureBar.toFixed(1),
-      hMin: t.minTransientHeadM.toFixed(1),
-      pMin: t.minTransientPressureBar.toFixed(1),
+      hMax: mocHMax.toFixed(2),
+      pMax: t.maxTransientPressureBar.toFixed(2),
+      hMin: mocHMin.toFixed(2),
+      pMin: t.minTransientPressureBar.toFixed(2),
+      cavVol: maxCavityL > 0 ? maxCavityL.toFixed(3) : '0.000',
       pn: t.pressureRatingPnBar,
       overP: t.overpressureRisk,
       cav: t.cavitationRisk,
@@ -700,6 +723,77 @@ export async function buildWaterExcelWorkbook(
       row.getCell('cav').font = { ...boldFont, color: { argb: 'FFDC2626' } };
     }
   });
+
+  // MOC Time-Domain Unsteady Waveforms Section
+  if (moc?.timeSeries && moc.timeSeries.length > 0) {
+    surgeSheet.addRow([]); // Blank spacer
+    const waveformTitleRow = surgeSheet.addRow([
+      '1D METHOD OF CHARACTERISTICS (MOC) UNSTEADY TIME-DOMAIN WAVEFORMS',
+    ]);
+    waveformTitleRow.getCell(1).font = { ...boldFont, color: { argb: 'FF1E40AF' } };
+
+    const waveHeaderRow = surgeSheet.addRow([
+      'Time (s)',
+      'Step',
+      'Valve Tau',
+      'Discharge (m³/s)',
+      'Max Transient Head (m MSL)',
+      'Min Transient Head (m MSL)',
+      'Cavity Vol (m³)',
+    ]);
+    waveHeaderRow.height = 20;
+    waveHeaderRow.eachCell((cell) => {
+      cell.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FFE0E7FF' },
+      };
+      cell.font = { ...boldFont, color: { argb: 'FF1E3A8A' } };
+      cell.border = thinBorder;
+    });
+
+    // Sample up to 100 points for compact Excel footprint
+    const stepSample = Math.max(1, Math.floor(moc.timeSeries.length / 100));
+    for (let i = 0; i < moc.timeSeries.length; i += stepSample) {
+      const pt = moc.timeSeries[i];
+      let maxH = -Infinity;
+      let minH = Infinity;
+      let qVal = 0;
+      let cavVol = 0;
+
+      if (pt.heads && typeof pt.heads.forEach === 'function') {
+        pt.heads.forEach((h: number) => {
+          if (h > maxH) maxH = h;
+          if (h < minH) minH = h;
+        });
+      }
+      if (pt.discharges && typeof pt.discharges.values === 'function') {
+        for (const q of pt.discharges.values()) {
+          qVal = q;
+          break;
+        }
+      }
+      if (pt.cavities && typeof pt.cavities.values === 'function') {
+        for (const c of pt.cavities.values()) {
+          cavVol += c;
+        }
+      }
+
+      const waveRow = surgeSheet.addRow([
+        pt.timeSec.toFixed(3),
+        pt.step,
+        pt.valveTau !== undefined ? pt.valveTau.toFixed(3) : '—',
+        qVal.toFixed(3),
+        isFinite(maxH) ? maxH.toFixed(2) : '—',
+        isFinite(minH) ? minH.toFixed(2) : '—',
+        cavVol.toFixed(5),
+      ]);
+      waveRow.eachCell((cell) => {
+        cell.font = regularFont;
+        cell.border = thinBorder;
+      });
+    }
+  }
 
   return workbook;
 }

@@ -82,3 +82,54 @@ export function interpolateIsoSegment(
   const t = (isoTarget - sA) / denom;
   return Math.max(0.0, Math.min(1.0, t));
 }
+
+/**
+ * Extracts scalar field value and metadata for thematic display in Ansys Fluent / OpenFOAM style
+ */
+export function extractCfdScalarValue(
+  field: string,
+  c: number,
+  hydro: { depth: Float32Array; velocityMag: Float32Array; wse: Float32Array; froude: Float32Array; shearStress: Float32Array; dynamicPressure?: Float32Array; ltsTier?: Uint8Array },
+  turb?: { k?: Float32Array; nuT?: Float32Array },
+  sed?: { concentrationKgM3?: Float32Array; bedElevationChangeM?: Float32Array }
+): { value: number; title: string; unit: string } {
+  switch (field) {
+    case 'depth':
+      return { value: hydro.depth[c] || 0.0, title: 'Water Depth (h)', unit: 'm' };
+    case 'velocity':
+      return { value: hydro.velocityMag[c] || 0.0, title: 'Velocity Magnitude |V|', unit: 'm/s' };
+    case 'pressure': {
+      const h = hydro.depth[c] || 0.0;
+      const v = hydro.velocityMag[c] || 0.0;
+      return { value: h + (v * v) / (2.0 * 9.80665), title: 'Total Dynamic Head (H)', unit: 'm' };
+    }
+    case 'dynamic-pressure':
+      return {
+        value: hydro.dynamicPressure ? Math.abs(hydro.dynamicPressure[c]) : 0.0,
+        title: 'Non-Hydrostatic Dynamic Pressure (q)',
+        unit: 'Pa',
+      };
+    case 'lts-tier':
+      return {
+        value: hydro.ltsTier ? hydro.ltsTier[c] : 0,
+        title: 'LTS Sub-Cycling Tier (k)',
+        unit: 'Tier',
+      };
+    case 'turbK':
+      return { value: turb?.k ? turb.k[c] : 0.0, title: 'Turbulent Kinetic Energy (k)', unit: 'm²/s²' };
+    case 'wse':
+      return { value: hydro.wse[c] || 0.0, title: 'Water Surface Elevation (WSE)', unit: 'm MSL' };
+    case 'froude':
+      return { value: hydro.froude[c] || 0.0, title: 'Froude Number (Fr)', unit: 'Fr' };
+    case 'shear':
+      return { value: hydro.shearStress[c] || 0.0, title: 'Bed Shear Stress (τ_b)', unit: 'N/m²' };
+    case 'nuT':
+      return { value: turb?.nuT ? turb.nuT[c] : 0.0, title: 'Eddy Viscosity (ν_t)', unit: 'm²/s' };
+    case 'sediment':
+      return { value: sed?.concentrationKgM3 ? sed.concentrationKgM3[c] : 0.0, title: 'Sediment Concentration', unit: 'kg/m³' };
+    case 'bedChange':
+      return { value: sed?.bedElevationChangeM ? sed.bedElevationChangeM[c] : 0.0, title: 'Bed Morphodynamics (Δz_b)', unit: 'm' };
+    default:
+      return { value: hydro.velocityMag[c] || 0.0, title: 'Velocity Magnitude', unit: 'm/s' };
+  }
+}

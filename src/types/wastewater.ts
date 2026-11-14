@@ -63,6 +63,10 @@ export interface WastewaterManhole extends BaseWastewaterElement {
   dropHeightM?: number;
   /** Tributary contributing catchment area (ha) for combined/I&I estimation */
   catchmentAreaHa?: number;
+  /** Dropshaft air entrainment geyser risk category */
+  geyserRisk?: 'None' | 'Moderate' | 'Severe' | 'Critical';
+  /** Peak air pocket compression pressure (kPa absolute) */
+  peakAirPressureKPa?: number;
 }
 
 /**
@@ -108,6 +112,10 @@ export interface WastewaterConduit extends BaseWastewaterElement {
   isDropInlet?: boolean;
   /** Drop distance into receiving structure (m) */
   dropHeightM?: number;
+  /** Preissmann virtual slot width Ts = g * Afull / a^2 for surcharged dynamic wave routing (m) */
+  preissmannSlotWidthM?: number;
+  /** Dynamic wave detected transient flow reversal (negative discharge) */
+  hadFlowReversal?: boolean;
 }
 
 /**
@@ -298,6 +306,8 @@ export interface WastewaterSimulationSummary {
   scourWarningConduitIds: string[]; // V > 3.0 m/s
   reverseSlopeConduitIds: string[];
   floodedManholeIds: string[];
+  geyserRiskManholeIds?: string[];
+  dynamicWaveSimulationResult?: any;
 
   // Advanced SWMM & Sewer Suite Modules
   hourlySimulationPoints?: HourlySewerSimulationPoint[];

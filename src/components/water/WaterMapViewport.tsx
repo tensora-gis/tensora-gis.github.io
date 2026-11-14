@@ -640,9 +640,21 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
       const isPending = pendingStartNode === j.id;
       const isDraggableJunction = isSelected && activeTool === 'select';
 
+      // Check for transient cavitation risk along connected pipes
+      const connectedPipes = network.pipes.filter(
+        (p) => p.startNodeId === j.id || p.endNodeId === j.id
+      );
+      const isCavitationAlert = connectedPipes.some(
+        (p) =>
+          (p.minTransientHeadM !== undefined && p.minTransientHeadM <= j.elevation - 10.0) ||
+          (p.cavitationRisk && p.cavitationRisk.toLowerCase().includes('severe'))
+      );
+
       // Thematic node color
       let nodeColor = '#3b82f6';
-      if (thematicDisplay === 'pressure' && j.pressure !== undefined) {
+      if (isCavitationAlert) {
+        nodeColor = '#dc2626';
+      } else if (thematicDisplay === 'pressure' && j.pressure !== undefined) {
         const p = j.pressure;
         if (p < 0) nodeColor = '#dc2626'; // Negative pressure warning!
         else if (p < 15) nodeColor = '#f59e0b'; // Low pressure
@@ -664,15 +676,22 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
         nodeColor = '#f59e0b';
       }
 
-      const size = isSelected || isPending ? 18 : 14;
+      const size = isSelected || isPending ? 18 : isCavitationAlert ? 16 : 14;
+      const haloStyle = isCavitationAlert
+        ? 'box-shadow: 0 0 16px rgba(236, 72, 153, 0.95); border: 2.5px solid #ec4899;'
+        : isSelected
+        ? 'box-shadow: 0 0 14px rgba(251, 191, 36, 0.8); border: 3px solid #fbbf24;'
+        : isPending
+        ? 'box-shadow: 0 2px 6px rgba(0,0,0,0.8); border: 2px solid #fbbf24;'
+        : 'box-shadow: 0 2px 6px rgba(0,0,0,0.8); border: 2px solid #ffffff;';
 
       const junctionIcon = L.divIcon({
         className: 'junction-marker',
         html: `
           <div style="
             width: ${size}px; height: ${size}px; border-radius: 50%;
-            background: ${nodeColor}; border: ${isSelected ? '3px solid #fbbf24' : isPending ? '2px solid #fbbf24' : '2px solid #ffffff'};
-            box-shadow: ${isSelected ? '0 0 14px rgba(251, 191, 36, 0.8)' : '0 2px 6px rgba(0,0,0,0.8)'};
+            background: ${nodeColor};
+            ${haloStyle}
             cursor: ${isDraggableJunction ? 'grab' : 'pointer'};
             transition: transform 0.1s ease;
           "></div>
@@ -710,6 +729,7 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
       marker.bindTooltip(
         `<div style="font-family: monospace; font-size: 11px;">
           <strong>Junction: ${j.label || j.id}</strong><br/>
+          ${isCavitationAlert ? '<span style="color:#ec4899; font-weight: bold;">⚠️ VAPOR CAVITATION ALERT (H_P ≤ -10m gauge)</span><br/>' : ''}
           Elevation: <strong>${j.elevation} m MSL</strong><br/>
           Demand: ${j.baseDemand} L/s<br/>
           ${j.head !== undefined ? `Head: ${j.head} m MSL<br/>` : ''}

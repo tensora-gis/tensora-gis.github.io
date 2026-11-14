@@ -526,7 +526,104 @@ for (const plateau of [false, true]) {
 }
 
 // ---------------------------------------------------------------------------
-console.log('\n[6] Live global DEM');
+console.log('\n[7] Physics Deepening: Green-Ampt, 2D Diffusive Routing & FHWA HDS-5');
+// ---------------------------------------------------------------------------
+import {
+  USDA_SOIL_TEXTURE_PARAMETERS,
+  createInitialGreenAmptState,
+  stepGreenAmptCell,
+} from '../src/utils/greenAmptInfiltration';
+import {
+  solveCulvertRating,
+  solveCulvertDischargeForHeadwater,
+} from '../src/utils/culvertRatingHds5';
+import {
+  createInitialOverlandState,
+  stepOverlandDiffusiveSimulation,
+  OverlandGridDefinition,
+} from '../src/utils/overlandDiffusiveSolver';
+
+// Test 7.1: Green-Ampt Infiltration Physics
+const sandyLoam = USDA_SOIL_TEXTURE_PARAMETERS['Sandy Loam'];
+const clayLoam = USDA_SOIL_TEXTURE_PARAMETERS['Clay Loam'];
+
+let gaStateSand = createInitialGreenAmptState();
+// Apply 50 mm/hr storm for 30 minutes in 60s steps
+const rain50MPerS = (50.0 / 1000.0) / 3600.0;
+for (let s = 0; s < 30; s++) {
+  gaStateSand = stepGreenAmptCell(gaStateSand, sandyLoam, 0.20, rain50MPerS, 60.0);
+}
+
+check('Green-Ampt: cumulative infiltration is positive and growing', gaStateSand.cumulativeInfiltrationM > 0.005);
+check('Green-Ampt: surface ponding initiates under 50 mm/hr storm', gaStateSand.isPonded === true);
+check('Green-Ampt: actual infiltration rate is bounded by rainfall intensity', gaStateSand.actualInfiltrationRateMPerSec <= rain50MPerS);
+
+let gaStateClay = createInitialGreenAmptState();
+for (let s = 0; s < 30; s++) {
+  gaStateClay = stepGreenAmptCell(gaStateClay, clayLoam, 0.20, rain50MPerS, 60.0);
+}
+check(
+  'Green-Ampt: sandy loam infiltrates more volume than clay loam',
+  gaStateSand.cumulativeInfiltrationM > gaStateClay.cumulativeInfiltrationM,
+  `Sand=${(gaStateSand.cumulativeInfiltrationM * 1000).toFixed(1)}mm Clay=${(gaStateClay.cumulativeInfiltrationM * 1000).toFixed(1)}mm`
+);
+
+// Test 7.2: FHWA HDS-5 Culvert Rating
+const culvertDef = {
+  shape: 'circular' as const,
+  material: 'concrete-pipe' as const,
+  diameterM: 1.2,
+  numberOfBarrels: 1,
+  lengthM: 24.0,
+  slopeMPerM: 0.01,
+  invertInletElevM: 100.0,
+  invertOutletElevM: 99.76,
+};
+
+const rating1 = solveCulvertRating(culvertDef, 1.5, 0.4);
+const rating5 = solveCulvertRating(culvertDef, 5.0, 0.6);
+
+check('FHWA HDS-5: headwater elevation increases monotonically with discharge', rating5.governingHeadwaterM > rating1.governingHeadwaterM);
+check('FHWA HDS-5: inlet control detected for low tailwater and high headwater', typeof rating1.governingRegime === 'string');
+const qInverted = solveCulvertDischargeForHeadwater(culvertDef, rating1.governingHeadwaterM, 0.4);
+check('FHWA HDS-5: inverse rating HW(Q) matches forward Q(HW) within 2%', Math.abs(qInverted - 1.5) < 0.03, `Got ${qInverted}`);
+
+// Test 7.3: 2D Diffusive-Wave Overland Flow & Mass Conservation (< 0.05% error gate)
+const ovGrid: OverlandGridDefinition = {
+  nx: 10,
+  ny: 10,
+  dxM: 20.0,
+  dyM: 20.0,
+  bedElevation: new Float32Array(100).map((_, i) => 100.0 + (i % 10) * 0.1),
+  manningN: new Float32Array(100).fill(0.035),
+  soilParameters: new Array(100).fill(sandyLoam),
+  initialMoisture: new Float32Array(100).fill(0.20),
+  culvertLocation: {
+    cellIdx: 0,
+    culvert: culvertDef,
+    tailwaterDepthM: 0.3,
+  },
+};
+
+let ovState = createInitialOverlandState(ovGrid);
+// Apply intense storm (80 mm/hr) for 60 steps (15 minutes) to trigger ponding and overland runoff
+for (let step = 0; step < 60; step++) {
+  ovState = stepOverlandDiffusiveSimulation(ovGrid, ovState, 80.0, 15.0);
+}
+
+check(
+  '2D Diffusive-Wave: strict mass conservation error < 0.05%',
+  ovState.massConservationErrorPct < 0.05,
+  `Error = ${ovState.massConservationErrorPct.toFixed(4)}%`
+);
+check(
+  '2D Diffusive-Wave: overland ponding develops and drains through culvert',
+  ovState.cumulativeOverlandStorageM3 > 0,
+  `Storage=${ovState.cumulativeOverlandStorageM3.toFixed(3)}m3, Infiltrated=${ovState.cumulativeInfiltratedVolumeM3.toFixed(3)}m3`
+);
+
+// ---------------------------------------------------------------------------
+console.log('\n[8] Live global DEM');
 // ---------------------------------------------------------------------------
 if (!process.argv.includes('--offline')) {
   const { delineateCatchment } = await import('../src/utils/delineationEngine');

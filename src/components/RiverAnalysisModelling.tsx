@@ -125,16 +125,16 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [thematicDisplay, setThematicDisplay] = useState<RiverThematicField>('velocity');
   const [showVectors, setShowVectors] = useState(true);
   const [showStreamlines, setShowStreamlines] = useState(true);
+  const [showMeshWireframe, setShowMeshWireframe] = useState(true);
   const [isMeshConfigModalOpen, setIsMeshConfigModalOpen] = useState(false);
   const [meshOptions, setMeshOptions] = useState<RiverMeshOptions>(() => ({
-    streamwiseCellsCount: 40,
-    transverseCellsCount: 12,
-    targetStreamwiseSpacingM: 10.0,
+    transverseCellsCount: 8,
     domainWidthMultiplier: 1.0,
     channelWidthScaling: 1.0,
     lateralFloodplainWidthM: 0.0,
     localRefinementRatio: 1.0,
     localRefinementRadiusM: 20.0,
+    shortenReachFraction: 1.0,
     streamwiseStretchRatio: 1.0,
     longitudinalTaperRatio: 1.0,
     meanderCurvatureScale: 1.0,
@@ -799,8 +799,24 @@ export const RiverAnalysisModelling: React.FC = () => {
   const handleSelectReach = async (newReach: RiverReachDefinition) => {
     isReinitializingSolverRef.current = true;
     setReach(newReach);
-    const newMesh = generateRiverGridMesh(newReach);
+
+    // Reset reach shortening fraction to 1.0 (100% full river reach)
+    // and let adaptive resolution compute optimal nx and aspect ratio along this river
+    const resetOptions: RiverMeshOptions = {
+      ...meshOptions,
+      shortenReachFraction: 1.0,
+      streamwiseStretchRatio: 1.0,
+      streamwiseCellsCount: undefined,
+      originOffsetXM: 0,
+      originOffsetYM: 0,
+      rotationAngleDeg: 0,
+    };
+    setMeshOptions(resetOptions);
+    setMeshShiftM({ x: 0, y: 0, rot: 0 });
+
+    const newMesh = generateRiverGridMesh(newReach, resetOptions);
     setMesh(newMesh);
+    meshRef.current = newMesh;
 
     // Calculate reach-appropriate downstream stage and initial water depth to avoid boundary shock
     const downstreamSlice = newMesh.cells.slice((newMesh.nx - 1) * newMesh.ny);
@@ -1842,6 +1858,8 @@ export const RiverAnalysisModelling: React.FC = () => {
                 <option value="nuT">Eddy Viscosity (ν_t) [m²/s]</option>
                 <option value="sediment">Sediment Concentration (C) [kg/m³]</option>
                 <option value="bedChange">Bed Morphodynamics (Δz_b) [m]</option>
+                <option value="dynamic-pressure">Non-Hydrostatic Dynamic Pressure (q) [Pa]</option>
+                <option value="lts-tier">LTS Sub-Cycling Tier (k)</option>
               </select>
 
               <div className="h-3.5 w-px bg-slate-800" />
@@ -1864,6 +1882,16 @@ export const RiverAnalysisModelling: React.FC = () => {
                 title="Toggle Velocity Direction Arrows"
               >
                 Vectors
+              </button>
+
+              <button
+                onClick={() => setShowMeshWireframe(!showMeshWireframe)}
+                className={`px-2 py-0.5 rounded text-[10px] font-medium border transition ${
+                  showMeshWireframe ? 'bg-cyan-950/70 border-cyan-500 text-cyan-300 shadow-sm' : 'bg-transparent border-slate-800 text-slate-500 hover:text-slate-400'
+                }`}
+                title="Toggle 2D CFD Computational Mesh Grid Wireframe"
+              >
+                Grid
               </button>
             </div>
 
@@ -1900,6 +1928,7 @@ export const RiverAnalysisModelling: React.FC = () => {
           thematicDisplay={thematicDisplay}
           showVelocityVectors={showVectors}
           showStreamlines={showStreamlines}
+          showMeshWireframe={showMeshWireframe}
           isSimulating={isSimulating}
           isMoveMeshMode={isMoveMeshMode}
           onSelectCell={(cell, idx) => setSelectedCell({ cell, idx })}
@@ -2438,19 +2467,117 @@ export const RiverAnalysisModelling: React.FC = () => {
 
             {/* Parameters Form */}
             <div className="space-y-4 text-xs">
-              {/* Row 1: nx and ny */}
-              <div className="grid grid-cols-2 gap-4 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+              {/* Primary: River Reach Coverage & Centerline Shortening */}
+              <div className="bg-slate-950/80 p-3.5 rounded-xl border border-cyan-800/60 shadow-inner space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <div>
+                    <span className="text-cyan-400 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                      <span>🌊</span> River Reach Coverage & Centerline Shortening
+                    </span>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">
+                      Full River Reach Length: <strong className="text-slate-200">{(reach.reachLengthM / 1000).toFixed(2)} km</strong> ({reach.reachLengthM.toLocaleString()} m)
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleRegenerateMesh({ shortenReachFraction: 1.0, streamwiseStretchRatio: 1.0 })}
+                      className={`px-2.5 py-1 rounded text-[10px] font-bold border transition ${
+                        (meshOptions.shortenReachFraction ?? 1.0) >= 0.99
+                          ? 'bg-emerald-950 border-emerald-500 text-emerald-300 shadow-sm'
+                          : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-emerald-500/60'
+                      }`}
+                      title="Simulate 100% full river reach from inlet to outlet"
+                    >
+                      ✓ Full River (100%)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRegenerateMesh({ shortenReachFraction: 0.75 })}
+                      className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 rounded text-[10px] font-semibold"
+                    >
+                      75%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRegenerateMesh({ shortenReachFraction: 0.50 })}
+                      className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 rounded text-[10px] font-semibold"
+                    >
+                      50%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRegenerateMesh({ shortenReachFraction: 0.25 })}
+                      className="px-2 py-1 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 rounded text-[10px] font-semibold"
+                    >
+                      25%
+                    </button>
+                  </div>
+                </div>
+
                 <div>
-                  <div className="flex justify-between text-slate-300 font-semibold mb-1">
-                    <span>Streamwise Cells (nx)</span>
-                    <span className="text-cyan-400 font-mono">
-                      {meshOptions.streamwiseCellsCount ?? mesh.nx}
+                  <div className="flex justify-between items-center text-slate-300 font-semibold mb-1">
+                    <span>Active Computational Mesh Span</span>
+                    <span className="font-mono text-cyan-300 text-xs">
+                      {((meshOptions.shortenReachFraction ?? 1.0) * 100).toFixed(0)}%
+                      <span className="text-slate-400 font-normal ml-1.5">
+                        ({(((reach.reachLengthM * (meshOptions.shortenReachFraction ?? 1.0))) / 1000).toFixed(2)} km of {(reach.reachLengthM / 1000).toFixed(2)} km)
+                      </span>
                     </span>
                   </div>
                   <input
                     type="range"
+                    min="10"
+                    max="100"
+                    step="5"
+                    value={Math.round((meshOptions.shortenReachFraction ?? 1.0) * 100)}
+                    onChange={(e) =>
+                      handleRegenerateMesh({ shortenReachFraction: parseInt(e.target.value) / 100.0 })
+                    }
+                    className="w-full accent-cyan-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                    <span>10% (Short Inlet Reach)</span>
+                    <span className="text-emerald-400 font-semibold">100% (Full River CFD)</span>
+                  </div>
+                  <p className="text-[10px] text-slate-400 mt-1.5 leading-relaxed">
+                    Intelligently draws and clips the 2D computational grid along the physical river centerline.
+                    The mesh conforms to all river bends and cross-sections without skewing away from the natural channel.
+                  </p>
+                </div>
+              </div>
+
+              {/* Row 1: nx and ny */}
+              <div className="grid grid-cols-2 gap-4 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+                <div>
+                  <div className="flex justify-between items-center text-slate-300 font-semibold mb-1">
+                    <div className="flex items-center gap-1.5">
+                      <span>Streamwise Cells (nx)</span>
+                      {meshOptions.streamwiseCellsCount === undefined && (
+                        <span className="px-1.5 py-0.2 bg-cyan-950 text-cyan-300 border border-cyan-700/60 rounded text-[9px] font-mono">
+                          Auto
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {meshOptions.streamwiseCellsCount !== undefined && (
+                        <button
+                          type="button"
+                          onClick={() => handleRegenerateMesh({ streamwiseCellsCount: undefined })}
+                          className="text-[10px] text-amber-400 hover:underline"
+                        >
+                          Auto
+                        </button>
+                      )}
+                      <span className="text-cyan-400 font-mono">
+                        {meshOptions.streamwiseCellsCount ?? mesh.nx}
+                      </span>
+                    </div>
+                  </div>
+                  <input
+                    type="range"
                     min="15"
-                    max="150"
+                    max="180"
                     step="1"
                     value={meshOptions.streamwiseCellsCount ?? mesh.nx}
                     onChange={(e) =>
@@ -2460,7 +2587,7 @@ export const RiverAnalysisModelling: React.FC = () => {
                   />
                   <div className="flex justify-between text-[10px] text-slate-500 mt-0.5">
                     <span>15 (Coarse)</span>
-                    <span>150 (Ultra-Fine)</span>
+                    <span>180 (Ultra-Fine)</span>
                   </div>
                 </div>
 
@@ -2740,12 +2867,13 @@ export const RiverAnalysisModelling: React.FC = () => {
                 type="button"
                 onClick={() =>
                   handleRegenerateMesh({
-                    streamwiseCellsCount: 40,
-                    transverseCellsCount: 12,
+                    streamwiseCellsCount: undefined,
+                    transverseCellsCount: 8,
                     channelWidthScaling: 1.0,
                     lateralFloodplainWidthM: 0.0,
                     localRefinementRatio: 1.0,
                     localRefinementRadiusM: 20.0,
+                    shortenReachFraction: 1.0,
                     streamwiseStretchRatio: 1.0,
                     longitudinalTaperRatio: 1.0,
                     meanderCurvatureScale: 1.0,
@@ -2754,7 +2882,7 @@ export const RiverAnalysisModelling: React.FC = () => {
                 }
                 className="text-xs text-amber-400 hover:underline font-semibold"
               >
-                Reset Default CFD Discretization & Shape
+                Reset Default Full River CFD Discretization & Shape
               </button>
 
               <button

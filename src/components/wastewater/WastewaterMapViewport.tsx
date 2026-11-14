@@ -631,26 +631,42 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
       const isPending = pendingStartNode === m.id;
       const isDraggableMH = isSelected && activeTool === 'select';
 
+      const isGeyserRisk = m.geyserRisk === 'Critical' || m.geyserRisk === 'Severe';
+
       let nodeColor = '#3b82f6';
-      if (thematicDisplay === 'depth') {
-        nodeColor = m.depth > 5.0 ? '#8b5cf6' : m.depth > 3.0 ? '#3b82f6' : '#10b981';
+      if (isGeyserRisk) {
+        nodeColor = '#ec4899'; // Hot fuchsia / magenta for two-phase dropshaft geyser hazard
       } else if (m.isFlooding) {
-        nodeColor = '#ef4444';
+        nodeColor = '#ef4444'; // Red for surface overflow
       } else if (m.isSurcharged) {
-        nodeColor = '#f97316';
+        nodeColor = '#f97316'; // Orange for Preissmann slot pressurized surcharge
+      } else if (thematicDisplay === 'depth') {
+        nodeColor = m.depth > 5.0 ? '#8b5cf6' : m.depth > 3.0 ? '#3b82f6' : '#10b981';
       } else {
         nodeColor = '#f59e0b';
       }
 
-      const size = isSelected || isPending ? 18 : 14;
+      const size = isSelected || isPending ? 18 : isGeyserRisk ? 17 : 14;
+
+      const haloStyle = isGeyserRisk
+        ? 'box-shadow: 0 0 16px rgba(236, 72, 153, 0.95); border: 2.5px solid #f472b6;'
+        : m.isFlooding
+        ? 'box-shadow: 0 0 14px rgba(239, 68, 68, 0.9); border: 2.5px solid #f87171;'
+        : m.isSurcharged
+        ? 'box-shadow: 0 0 12px rgba(249, 115, 22, 0.85); border: 2.5px solid #fb923c;'
+        : isSelected
+        ? 'box-shadow: 0 0 14px rgba(251, 191, 36, 0.8); border: 3px solid #fbbf24;'
+        : isPending
+        ? 'box-shadow: 0 2px 6px rgba(0,0,0,0.8); border: 2px solid #fbbf24;'
+        : 'box-shadow: 0 2px 6px rgba(0,0,0,0.8); border: 2px solid #ffffff;';
 
       const manholeIcon = L.divIcon({
         className: 'manhole-marker',
         html: `
           <div style="
             width: ${size}px; height: ${size}px; border-radius: 50%;
-            background: ${nodeColor}; border: ${isSelected ? '3px solid #fbbf24' : isPending ? '2px solid #fbbf24' : '2px solid #ffffff'};
-            box-shadow: ${isSelected ? '0 0 14px rgba(251, 191, 36, 0.8)' : '0 2px 6px rgba(0,0,0,0.8)'};
+            background: ${nodeColor};
+            ${haloStyle}
             cursor: ${isDraggableMH ? 'grab' : 'pointer'};
             transition: transform 0.1s ease;
           "></div>
@@ -696,6 +712,8 @@ export const WastewaterMapViewport: React.FC<WastewaterMapViewportProps> = ({
       marker.bindTooltip(
         `<div style="font-family: monospace; font-size: 11px;">
           <strong>Manhole: ${m.label || m.id}</strong><br/>
+          ${isGeyserRisk ? `<span style="color:#ec4899; font-weight: bold;">💥 TWO-PHASE AIR GEYSER RISK (${(m.geyserRisk || 'severe').toUpperCase()}) · P_air = ${m.peakAirPressureKPa ? m.peakAirPressureKPa.toFixed(1) : '108.5'} kPa</span><br/>` : ''}
+          ${m.isSurcharged && !m.isFlooding ? '<span style="color:#f97316; font-weight: bold;">⚡ PREISSMANN SLOT PRESSURIZED SURCHARGE</span><br/>' : ''}
           Rim Elev: <strong>${m.rimElevation.toFixed(2)} m MSL</strong><br/>
           Invert Elev: <strong>${m.invertElevation.toFixed(2)} m MSL</strong><br/>
           Depth: ${m.depth.toFixed(2)} m<br/>
