@@ -84,6 +84,7 @@ import {
 } from '../river/structures/cadStructureBuilder';
 import { ParaView3DVisualizer } from '../river/components/ParaView3DVisualizer';
 import { LidarTerrainStudio } from '../river/components/LidarTerrainStudio';
+import { sampleLidarTerrainForMesh } from '../river/geometry/lidarService';
 
 export const RiverAnalysisModelling: React.FC = () => {
   // Default to actual real-world river: Rhine River (Basel, Switzerland/Germany)
@@ -143,6 +144,9 @@ export const RiverAnalysisModelling: React.FC = () => {
   const [basemapType, setBasemapType] = useState<'satellite' | 'streets'>('satellite');
   const [selectedCell, setSelectedCell] = useState<{ cell: RiverGridCell; idx: number } | null>(null);
   const [isLidarStudioOpen, setIsLidarStudioOpen] = useState(false);
+  const [reachSpanPct, setReachSpanPct] = useState<number>(100);
+  const [isSyncingEarthDem, setIsSyncingEarthDem] = useState<boolean>(false);
+  const [earthDemStatus, setEarthDemStatus] = useState<string | null>(null);
 
   // CAD Interactive Hydraulic Structure Drawing Mode
   const [cadDrawMode, setCadDrawMode] = useState<RiverStructureType | null>(null);
@@ -813,6 +817,8 @@ export const RiverAnalysisModelling: React.FC = () => {
     };
     setMeshOptions(resetOptions);
     setMeshShiftM({ x: 0, y: 0, rot: 0 });
+    setReachSpanPct(100);
+    setEarthDemStatus(null);
 
     const newMesh = generateRiverGridMesh(newReach, resetOptions);
     setMesh(newMesh);
@@ -1072,6 +1078,58 @@ export const RiverAnalysisModelling: React.FC = () => {
     setTimeout(() => setCadNotification(null), 3500);
   };
 
+  // Interactive Reach Span & Elongation / Shortening along River Shape
+  const handleUpdateReachSpan = (newPct: number) => {
+    const clamped = Math.max(10, Math.min(300, Math.round(newPct)));
+    setReachSpanPct(clamped);
+    const ratio = clamped / 100.0;
+    if (clamped < 100) {
+      handleRegenerateMesh({
+        shortenReachFraction: ratio,
+        streamwiseStretchRatio: ratio,
+        streamwiseCellsCount: undefined,
+      });
+    } else if (clamped > 100) {
+      handleRegenerateMesh({
+        shortenReachFraction: undefined,
+        streamwiseStretchRatio: ratio,
+        streamwiseCellsCount: undefined,
+      });
+    } else {
+      handleRegenerateMesh({
+        shortenReachFraction: 1.0,
+        streamwiseStretchRatio: 1.0,
+        streamwiseCellsCount: undefined,
+      });
+    }
+  };
+
+  // Direct 1-Click Sync with Global Earth DEM (Copernicus GLO-30 / SRTM 30m)
+  const handleSyncEarthDemDirect = async () => {
+    setIsSyncingEarthDem(true);
+    setEarthDemStatus('Sampling Copernicus GLO-30 / SRTM 30m DEM...');
+    try {
+      const updatedMesh = await sampleLidarTerrainForMesh(meshRef.current, {
+        customSourceLabel: 'Copernicus GLO-30 / SRTM 30m (Earth DEM)',
+        carveDepthM: Math.max(1.2, Math.min(8.0, reach.meanWidthM * 0.035)),
+      });
+      await handleApplyLidarMesh(
+        updatedMesh,
+        `Conformed ${updatedMesh.cells.length} finite volumes to real Copernicus GLO-30 / SRTM 30m Earth DEM.`
+      );
+      const minZ = Math.min(...updatedMesh.cells.map((c) => c.bedElevation));
+      const maxZ = Math.max(...updatedMesh.cells.map((c) => c.bedElevation));
+      setEarthDemStatus(`✓ Earth DEM Synced (${minZ.toFixed(1)}m – ${maxZ.toFixed(1)}m)`);
+      setTimeout(() => setEarthDemStatus(null), 5000);
+    } catch (err: any) {
+      console.error('Earth DEM sync failed:', err);
+      setEarthDemStatus('Earth DEM probe error');
+      setTimeout(() => setEarthDemStatus(null), 4000);
+    } finally {
+      setIsSyncingEarthDem(false);
+    }
+  };
+
   // Mesh Movement & Alignment Actions
   const handleTranslateMesh = async (dxM: number, dyM: number, syncSolver: boolean = true) => {
     if (dxM === 0 && dyM === 0) return;
@@ -1189,6 +1247,8 @@ export const RiverAnalysisModelling: React.FC = () => {
     meshRef.current = defaultMesh;
     setMesh(defaultMesh);
     setMeshShiftM({ x: 0, y: 0, rot: 0 });
+    setReachSpanPct(100);
+    setEarthDemStatus(null);
 
     const updatedStructures = reindexStructuresOnMesh(structuresRef.current, defaultMesh);
     structuresRef.current = updatedStructures;
@@ -1767,6 +1827,46 @@ export const RiverAnalysisModelling: React.FC = () => {
               📐 Mesh Studio ({mesh.nx}×{mesh.ny})
             </button>
 
+            {/* Interactive Reach Span: Shorten (10%-90%) or Elongate (110%-300%) along River Shape */}
+            <div
+              className="flex items-center gap-1 bg-slate-900/90 border border-slate-700/80 rounded px-1.5 py-0.5 shadow-sm text-[11px] ml-0.5"
+              title="Interactive Reach Length Span: Shorten (10%-90%) or Elongate (110%-300%) computational mesh along river channel"
+            >
+              <span className="text-[10px] text-cyan-400 font-semibold uppercase tracking-wider">Span:</span>
+              <button
+                type="button"
+                onClick={() => handleUpdateReachSpan(Math.max(10, reachSpanPct - 10))}
+                className="w-4 h-4 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold border border-slate-700 hover:border-cyan-500 transition leading-none text-xs"
+                title="Shorten mesh coverage along river (-10%)"
+              >
+                −
+              </button>
+              <span className="font-mono text-cyan-200 font-bold min-w-[34px] text-center text-[10px]">
+                {reachSpanPct}%
+              </span>
+              <button
+                type="button"
+                onClick={() => handleUpdateReachSpan(Math.min(300, reachSpanPct + 10))}
+                className="w-4 h-4 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold border border-slate-700 hover:border-cyan-500 transition leading-none text-xs"
+                title="Elongate mesh along river (+10%)"
+              >
+                +
+              </button>
+              <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
+                {((reach.reachLengthM * reachSpanPct) / 100000).toFixed(2)}km
+              </span>
+              {reachSpanPct !== 100 && (
+                <button
+                  type="button"
+                  onClick={() => handleUpdateReachSpan(100)}
+                  className="text-[9px] text-amber-400 hover:text-amber-300 underline font-medium ml-0.5"
+                  title="Reset to 100% full river reach"
+                >
+                  Full
+                </button>
+              )}
+            </div>
+
             {/* Move & Align Mesh Button (Direct Drag & Drop) */}
             <button
               onClick={() => {
@@ -1834,6 +1934,28 @@ export const RiverAnalysisModelling: React.FC = () => {
               <span>🛰️ LiDAR / DEM</span>
               {mesh.lidarMetadata && (
                 <span className="ml-1 text-[9px] bg-cyan-500 text-slate-950 font-bold px-1 rounded-full">
+                  ✓
+                </span>
+              )}
+            </button>
+
+            {/* Direct 1-Click Earth DEM Sync Button */}
+            <button
+              type="button"
+              onClick={handleSyncEarthDemDirect}
+              disabled={isSyncingEarthDem}
+              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition flex items-center gap-1 ${
+                mesh.lidarMetadata || (earthDemStatus && earthDemStatus.includes('✓'))
+                  ? 'bg-emerald-950/70 border-emerald-500/80 text-emerald-200 ring-1 ring-emerald-500/40'
+                  : isSyncingEarthDem
+                  ? 'bg-cyan-900/60 border-cyan-500 text-cyan-200 animate-pulse'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
+              }`}
+              title="Directly sample real Earth Copernicus GLO-30 & SRTM 30m DEM via Open-Meteo and conform mesh bathymetry to true global terrain"
+            >
+              <span>{isSyncingEarthDem ? '🛰️ Syncing...' : '🛰️ Sync Earth DEM'}</span>
+              {(mesh.lidarMetadata || (earthDemStatus && earthDemStatus.includes('✓'))) && (
+                <span className="text-[9px] bg-emerald-500 text-slate-950 font-bold px-1 rounded-full leading-none">
                   ✓
                 </span>
               )}
@@ -2133,6 +2255,14 @@ export const RiverAnalysisModelling: React.FC = () => {
         {cadNotification && (
           <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[500] bg-slate-900/95 border border-amber-500/80 text-amber-200 px-4 py-2 rounded-xl text-xs font-medium shadow-2xl animate-fade-in">
             {cadNotification}
+          </div>
+        )}
+
+        {/* Earth DEM Sync Status Toast */}
+        {earthDemStatus && (
+          <div className="absolute top-24 left-1/2 -translate-x-1/2 z-[500] bg-slate-900/95 border border-cyan-500/80 text-cyan-200 px-4 py-2 rounded-xl text-xs font-medium shadow-2xl animate-fade-in flex items-center gap-2">
+            <span>🛰️</span>
+            <span>{earthDemStatus}</span>
           </div>
         )}
 
