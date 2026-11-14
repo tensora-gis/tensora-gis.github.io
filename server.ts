@@ -60,7 +60,8 @@ app.post('/api/export-excel', async (req, res) => {
       return res.status(400).json({ error: 'Invalid report request: missing or malformed coordinates.' });
     }
 
-    const params = req.body as SnapshotParams;
+    const params = req.body as SnapshotParams & { designStandard?: 'INDIAN_DPR' | 'INTERNATIONAL' };
+    const std = params.designStandard || 'INDIAN_DPR';
     let snapshotBuffer: Buffer | undefined;
     if (params.snapshotBase64 && typeof params.snapshotBase64 === 'string') {
       try {
@@ -69,13 +70,14 @@ app.post('/api/export-excel', async (req, res) => {
         console.warn('Could not decode snapshotBase64, using server-rendered snapshot:', e);
       }
     }
-    const buffer = await createHydrologyExcelWorkbook(params, snapshotBuffer);
+    const buffer = await createHydrologyExcelWorkbook(params, snapshotBuffer, { designStandard: std });
     const cleanCh =
       String(params.targetChainageFormatted ?? params.targetChainage ?? 'MAP_POINT').replace(
         /[^0-9.+a-zA-Z_-]/g,
         '_'
       ) || 'MAP_POINT';
-    const filename = `Hydrology_Report_CH_${cleanCh}.xlsx`;
+    const prefix = std === 'INTERNATIONAL' ? 'Cross_Drainage_Report_FHWA_CH_' : 'Cross_Drainage_DPR_IRC_CH_';
+    const filename = `${prefix}${cleanCh}.xlsx`;
 
     res.setHeader(
       'Content-Type',

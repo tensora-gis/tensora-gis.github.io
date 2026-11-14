@@ -1,6 +1,7 @@
 import { CorridorAlignment, HydrologyReport } from '../types/hydrology';
 import { generateClientHydrologySnapshot } from './stormwaterSnapshot';
 import { populateStormwaterDprWorkbook } from './stormwaterDprBuilder';
+import { getGlobalDesignStandard, DprDesignStandard, DprProjectMetadata } from './dprExcelBase';
 
 const LABEL_FILL = {
   type: 'pattern' as const,
@@ -340,9 +341,12 @@ export function downloadBlob(blob: Blob, filename: string): void {
  */
 export async function exportExcelReport(
   report: HydrologyReport,
-  alignment?: CorridorAlignment | null
+  alignment?: CorridorAlignment | null,
+  designStandard?: DprDesignStandard
 ): Promise<void> {
-  const filename = `Hydrology_Report_CH_${chainageTag(report.targetChainageFormatted)}.xlsx`;
+  const standard = designStandard || getGlobalDesignStandard();
+  const prefix = standard === 'INTERNATIONAL' ? 'Cross_Drainage_Report_FHWA_CH_' : 'Cross_Drainage_DPR_IRC_CH_';
+  const filename = `${prefix}${chainageTag(report.targetChainageFormatted)}.xlsx`;
 
   let clientSnapshotDataUrl: string | undefined;
   if (typeof document !== 'undefined') {
@@ -355,6 +359,7 @@ export async function exportExcelReport(
   }
 
   const payload: Record<string, unknown> = buildSnapshotPayload(report, alignment);
+  payload.designStandard = standard;
   if (clientSnapshotDataUrl) {
     payload.snapshotBase64 = clientSnapshotDataUrl.split(',')[1];
   }
@@ -375,24 +380,30 @@ export async function exportExcelReport(
   }
 
   // Client-side workbook generation fallback with embedded snapshot
-  const blob = await buildClientHydrologyWorkbook(report, alignment, clientSnapshotDataUrl);
+  const blob = await buildClientHydrologyWorkbook(report, alignment, clientSnapshotDataUrl, {
+    designStandard: standard,
+  });
   downloadBlob(blob, filename);
 }
 
 /**
  * Builds the 5-Worksheet Cross-Drainage (CD) Structure DPR Excel Package
  * compliant with IRC:SP:13-2022, IRC:SP:42-2014, IRC:78-2014, and IS 458:2021
- * directly on the client with ExcelJS, matching the server layout and embedding
- * the 70%-framed snapshot image.
+ * (or FHWA HDS-5 / AASHTO for INTERNATIONAL) directly on the client with ExcelJS,
+ * matching the server layout and embedding the 70%-framed snapshot image.
  */
 export async function buildClientHydrologyWorkbook(
   report: HydrologyReport,
   alignment?: CorridorAlignment | null,
-  clientSnapshotDataUrl?: string
+  clientSnapshotDataUrl?: string,
+  metadata?: DprProjectMetadata
 ): Promise<Blob> {
   const { default: ExcelJS } = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'Tensora GIS — Indian Codal DPR Engine (IRC:SP:13 / IRC:78)';
+  const standard = metadata?.designStandard || getGlobalDesignStandard();
+  workbook.creator = standard === 'INTERNATIONAL'
+    ? 'Tensora GIS — International Culvert Hydraulic Audit Engine (FHWA HDS-5 / AASHTO)'
+    : 'Tensora GIS — Indian Codal DPR Engine (IRC:SP:13 / IRC:78)';
   workbook.created = new Date();
 
   let snapshotDataUrl = clientSnapshotDataUrl;
@@ -405,7 +416,10 @@ export async function buildClientHydrologyWorkbook(
     }
   }
 
-  await populateStormwaterDprWorkbook(workbook, report, snapshotDataUrl);
+  await populateStormwaterDprWorkbook(workbook, report, snapshotDataUrl, {
+    ...metadata,
+    designStandard: standard,
+  });
 
   const out = await workbook.xlsx.writeBuffer();
   return new Blob([out], {

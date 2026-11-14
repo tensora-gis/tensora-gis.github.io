@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Compass, LogOut, Trash2, FileSpreadsheet, Menu, ShieldCheck } from 'lucide-react';
 import { AppUser } from '../auth/useGoogleAuth';
 import { ActiveModuleTab } from '../types/navigation';
 import {
   getGlobalDesignStandard,
   setGlobalDesignStandard,
+  subscribeDesignStandard,
   DprDesignStandard,
 } from '../utils/dprExcelBase';
 
@@ -39,6 +40,12 @@ export const Header: React.FC<HeaderProps> = ({
   const userName = user ? user.name : '';
   const userAvatar = user?.picture;
   const [std, setStd] = useState<DprDesignStandard>(getGlobalDesignStandard());
+
+  useEffect(() => {
+    return subscribeDesignStandard((newStd) => {
+      setStd(newStd);
+    });
+  }, []);
 
   return (
     <header className="h-14 bg-[#0a0a0a] border-b border-[#222] px-3 md:px-5 flex items-center justify-between shrink-0 z-30 select-none">

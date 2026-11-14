@@ -395,6 +395,79 @@ async function runVerification() {
   check('Client Sheet 03 has 0 #REF! errors', cF03.refErrors === 0);
   check('Client Sheet 03 has 0 #NAME? errors', cF03.nameErrors === 0);
 
+  console.log('\n--- 4. Testing International (FHWA HDS-5 / AASHTO) Standards Parity ---');
+
+  const intlBuf = await createHydrologyExcelWorkbook(
+    snapshotParams,
+    Buffer.from(snap.dataUrl.split(',')[1], 'base64'),
+    { designStandard: 'INTERNATIONAL' }
+  );
+  check('International Excel workbook generated', !!intlBuf && intlBuf.length > 5000);
+
+  const intlWb = new ExcelJS.Workbook();
+  await intlWb.xlsx.load(intlBuf as never);
+
+  const intlWs00 = intlWb.getWorksheet('00_Codal_Constants')!;
+  check('Intl 00_Codal_Constants exists', !!intlWs00);
+  check('Intl Sheet 00 C11 is Runoff Coeff C (0.50)', intlWs00.getCell('C11').value === 0.5);
+  check('Intl Sheet 00 C17 is USGS Regional a (18.50)', intlWs00.getCell('C17').value === 18.5);
+  check('Intl Sheet 00 C20 is USGS Exponent b (0.68)', intlWs00.getCell('C20').value === 0.68);
+  check('Intl Sheet 00 C34 is Min Velocity (0.90 m/s)', intlWs00.getCell('C34').value === 0.9);
+  check('Intl Sheet 00 C35 is Max Velocity (4.50 m/s)', intlWs00.getCell('C35').value === 4.5);
+  check('Intl Sheet 00 C36 is Max Backwater ha (0.15 m)', intlWs00.getCell('C36').value === 0.15);
+  check('Intl Sheet 00 C37 is Max HW/D ratio (1.50)', intlWs00.getCell('C37').value === 1.5);
+
+  const intlWs01 = intlWb.getWorksheet('01_CD_Executive_Summary')!;
+  check('Intl 01_CD_Executive_Summary exists', !!intlWs01);
+  const intlTitle = String(intlWs01.getCell('A1').value);
+  check('Intl Project Title references FHWA/AASHTO', intlTitle.includes('FHWA') || intlTitle.includes('AASHTO'), intlTitle);
+
+  const intlWs02 = intlWb.getWorksheet('02_Hydrology_Worked_Calcs')!;
+  check('Intl 02_Hydrology_Worked_Calcs exists', !!intlWs02);
+  const intlF02 = verifyFormulaIntegrity(intlWs02);
+  check('Intl Sheet 02 has 0 #REF! errors', intlF02.refErrors === 0);
+  check('Intl Sheet 02 has 0 #NAME? errors', intlF02.nameErrors === 0);
+  const step14Formula = String((intlWs02.getCell('E26').value as { formula?: string })?.formula || '');
+  check('Intl Step 1.4 uses AASHTO 0.00278 factor', step14Formula.includes('0.00278'), step14Formula);
+
+  const intlWs03 = intlWb.getWorksheet('03_Culvert_Hydraulics_Scour')!;
+  check('Intl 03_Culvert_Hydraulics_Scour exists', !!intlWs03);
+  const intlF03 = verifyFormulaIntegrity(intlWs03);
+  check('Intl Sheet 03 has 0 #REF! errors', intlF03.refErrors === 0);
+  check('Intl Sheet 03 has 0 #NAME? errors', intlF03.nameErrors === 0);
+  const step21Formula = String((intlWs03.getCell('E19').value as { formula?: string })?.formula || '');
+  check('Intl Step 2.1 uses FHWA 3.65 waterway multiplier', step21Formula.includes('3.65'), step21Formula);
+
+  // Client-side international workbook generation
+  const clientIntlBlob = await buildClientHydrologyWorkbook(
+    sampleReport,
+    {
+      name: 'Alignment',
+      coordinates: sampleTracks[0],
+      chainages: sampleStations,
+      totalLengthM: 400,
+      startChainage: 36900,
+      endChainage: 37300,
+    },
+    snap.dataUrl,
+    { designStandard: 'INTERNATIONAL' }
+  );
+  check('Client Intl workbook generated', clientIntlBlob && clientIntlBlob.size > 5000);
+
+  const clientIntlBuf = Buffer.from(await clientIntlBlob.arrayBuffer());
+  const clientIntlWb = new ExcelJS.Workbook();
+  await clientIntlWb.xlsx.load(clientIntlBuf as never);
+
+  const cIntlWs02 = clientIntlWb.getWorksheet('02_Hydrology_Worked_Calcs')!;
+  const cIntlF02 = verifyFormulaIntegrity(cIntlWs02);
+  check('Client Intl Sheet 02 has 0 #REF! errors', cIntlF02.refErrors === 0);
+  check('Client Intl Sheet 02 has 0 #NAME? errors', cIntlF02.nameErrors === 0);
+
+  const cIntlWs03 = clientIntlWb.getWorksheet('03_Culvert_Hydraulics_Scour')!;
+  const cIntlF03 = verifyFormulaIntegrity(cIntlWs03);
+  check('Client Intl Sheet 03 has 0 #REF! errors', cIntlF03.refErrors === 0);
+  check('Client Intl Sheet 03 has 0 #NAME? errors', cIntlF03.nameErrors === 0);
+
   console.log(`\n========================================`);
   console.log(`  VERIFICATION RESULT: ${passed} passed, ${failed} failed`);
   console.log(`========================================\n`);

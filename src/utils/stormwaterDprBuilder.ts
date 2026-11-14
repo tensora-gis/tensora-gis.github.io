@@ -38,11 +38,15 @@ export interface StormwaterDprData {
 
 /**
  * Builds the complete 5-Worksheet Cross-Drainage (CD) DPR Package:
- * 1. 00_Codal_Constants: Lookup tables for P, Cd, Cy, Inglis, Ksf, velocity & scour limits
+ * 1. 00_Codal_Constants: Lookup tables for P/C, Cd/USGS, Ksf/ASTM, velocity & scour limits
  * 2. 01_CD_Executive_Summary: Catchment & corridor coordinates, KPI scorecard, embedded 70% snapshot
- * 3. 02_Hydrology_Worked_Calcs: Full IRC:SP:13-2022 worked hydrology steps 1.1-1.6 with live formulas
- * 4. 03_Culvert_Hydraulics_Scour: Full IRC:SP:13 / IRC:78 worked culvert & scour steps 2.1-2.4 with live formulas
+ * 3. 02_Hydrology_Worked_Calcs: Full worked hydrology steps 1.1-1.6 with live formulas & CONCAT substitutions
+ * 4. 03_Culvert_Hydraulics_Scour: Full worked culvert & scour steps 2.1-2.4 with live formulas
  * 5. 04_Catchment_Hypsometry: Elevation-area distribution & main stream longitudinal profile
+ *
+ * Supports dual codal methodologies:
+ * - INDIAN_DPR: IRC:SP:13-2022, IRC:SP:42-2014, IRC:78-2014, IS 458:2021
+ * - INTERNATIONAL: FHWA HDS-5, AASHTO Drainage Manual, ASTM C76M, FHWA HEC-18
  */
 export async function populateStormwaterDprWorkbook(
   workbook: ExcelJS.Workbook,
@@ -50,14 +54,17 @@ export async function populateStormwaterDprWorkbook(
   snapshotImage?: Buffer | Uint8Array | string,
   metadata?: DprProjectMetadata
 ): Promise<void> {
+  const chosenStd = metadata?.designStandard || 'INDIAN_DPR';
   const meta: DprProjectMetadata = {
-    ...getDefaultDprMetadata('stormwater'),
+    ...getDefaultDprMetadata('stormwater', chosenStd),
     targetChainage: reportData.targetChainageFormatted || String(reportData.targetChainage),
     demProvenance: reportData.elevationSource || 'Copernicus GLO-30 (FABDEM 30m Global DEM)',
     timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC',
     ...metadata,
+    designStandard: chosenStd,
   };
 
+  const isIndian = meta.designStandard !== 'INTERNATIONAL';
   const chTag = reportData.targetChainageFormatted || String(reportData.targetChainage) || '0+000';
 
   // Create all 5 worksheets upfront in strict canonical DPR order:
@@ -76,8 +83,8 @@ export async function populateStormwaterDprWorkbook(
   // SHEET 1: 00_Codal_Constants
   // -------------------------------------------------------------------------
   ws00.columns = [
-    { width: 32 },
-    { width: 38 },
+    { width: 34 },
+    { width: 40 },
     { width: 18 },
     { width: 12 },
     { width: 28 },
@@ -86,12 +93,15 @@ export async function populateStormwaterDprWorkbook(
 
   buildTitleBanner(ws00, meta, 6);
 
-  // Section 1: Runoff Coefficients (IRC:SP:13-2022 Table 4.1)
-  buildSectionHeader(ws00, '1. RUNOFF COEFFICIENT (P) LOOKUP TABLE — IRC:SP:13-2022 TABLE 4.1', 6);
+  // Section 1: Runoff Coefficients (IRC:SP:13 Table 4.1 or AASHTO Table 4-1)
+  const sec1Title = isIndian
+    ? '1. RUNOFF COEFFICIENT (P) LOOKUP TABLE — IRC:SP:13-2022 TABLE 4.1'
+    : '1. AASHTO / ASCE RATIONAL METHOD RUNOFF COEFFICIENTS (C)';
+  buildSectionHeader(ws00, sec1Title, 6);
   const hRow1 = ws00.addRow([
-    'Catchment Type',
+    isIndian ? 'Catchment Type' : 'Drainage Basin Land Use',
     'Surface / Soil Description',
-    'Runoff Coeff (P)',
+    isIndian ? 'Runoff Coeff (P)' : 'Runoff Coeff (C)',
     'Unit',
     'Governing Standard',
     'Codal Reference',
@@ -99,12 +109,19 @@ export async function populateStormwaterDprWorkbook(
   hRow1.height = 22;
   formatTableHeaderRow(hRow1, 6);
 
-  const pRows: [string, string, number, string, string, string][] = [
-    ['Steep, bare rock', 'Steep mountainous terrain with bare rock surfaces', 0.9, '—', 'IRC:SP:13-2022', 'Table 4.1'],
-    ['Hilly, steep with vegetation', 'Steep hilly terrain covered with forest/brush', 0.75, '—', 'IRC:SP:13-2022', 'Table 4.1'],
-    ['Cultivated undulating / plains', 'Undulating agricultural ground (Design Default)', 0.5, '—', 'IRC:SP:13-2022', 'Table 4.1'], // Row 11: C11
-    ['Sandy, flat permeable soil', 'Flat sandy soil with high infiltration capacity', 0.35, '—', 'IRC:SP:13-2022', 'Table 4.1'],
-  ];
+  const pRows: [string, string, number, string, string, string][] = isIndian
+    ? [
+        ['Steep, bare rock', 'Steep mountainous terrain with bare rock surfaces', 0.9, '—', 'IRC:SP:13-2022', 'Table 4.1'],
+        ['Hilly, steep with vegetation', 'Steep hilly terrain covered with forest/brush', 0.75, '—', 'IRC:SP:13-2022', 'Table 4.1'],
+        ['Cultivated undulating / plains', 'Undulating agricultural ground (Design Default)', 0.5, '—', 'IRC:SP:13-2022', 'Table 4.1'], // Row 11: C11
+        ['Sandy, flat permeable soil', 'Flat sandy soil with high infiltration capacity', 0.35, '—', 'IRC:SP:13-2022', 'Table 4.1'],
+      ]
+    : [
+        ['Impervious / Paved Surfaces', 'Asphalt, concrete, and heavy roadway surfaces', 0.9, '—', 'AASHTO Drainage Manual', 'Table 4-1'],
+        ['Steep Bare Soil & Hardpack', 'Steep barren ground or heavy compacted clay', 0.75, '—', 'AASHTO Drainage Manual', 'Table 4-1'],
+        ['Cultivated Agricultural Plains', 'Undulating agricultural ground (Design Default)', 0.5, '—', 'AASHTO Drainage Manual', 'Table 4-1'], // Row 11: C11
+        ['Sandy Pasture & Open Woodland', 'Sandy permeable soil with woodland cover', 0.35, '—', 'AASHTO Drainage Manual', 'Table 4-1'],
+      ];
   for (const r of pRows) {
     const row = ws00.addRow(r);
     row.height = 20;
@@ -113,8 +130,11 @@ export async function populateStormwaterDprWorkbook(
 
   ws00.addRow([]);
 
-  // Section 2: Regional Flood Envelopes (IRC:SP:13-2022 Cl. 4.3)
-  buildSectionHeader(ws00, '2. REGIONAL EMPIRICAL FLOOD COEFFICIENTS — IRC:SP:13-2022 CL. 4.3', 6);
+  // Section 2: Regional Flood Envelopes (IRC:SP:13 Cl. 4.3 or USGS Regional Regression)
+  const sec2Title = isIndian
+    ? '2. REGIONAL EMPIRICAL FLOOD COEFFICIENTS — IRC:SP:13-2022 CL. 4.3'
+    : '2. USGS REGIONAL REGRESSION FLOOD PARAMETERS (Qp = a * A^b)';
+  buildSectionHeader(ws00, sec2Title, 6);
   const hRow2 = ws00.addRow([
     'Geographic Region / Zone',
     'Empirical Flood Parameter',
@@ -126,15 +146,25 @@ export async function populateStormwaterDprWorkbook(
   hRow2.height = 22;
   formatTableHeaderRow(hRow2, 6);
 
-  const empRows: [string, string, number, string, string, string][] = [
-    ['North Indian Plains', 'Dickens Empirical Coefficient (Cd)', 11.4, '—', 'IRC:SP:13-2022', 'Cl. 4.3.1'],
-    ['Central India / Hilly Catchments', 'Dickens Empirical Coefficient (Cd - Default)', 16.75, '—', 'IRC:SP:13-2022', 'Cl. 4.3.1'], // Row 17: C17
-    ['Western Ghats / Coastal Heavy', 'Dickens Empirical Coefficient (Cd)', 23.5, '—', 'IRC:SP:13-2022', 'Cl. 4.3.1'],
-    ['Coastal areas within 25 km of sea', 'Ryves Empirical Coefficient (Cy)', 6.8, '—', 'IRC:SP:13-2022', 'Cl. 4.3.2'],
-    ['25 km to 160 km from coast', 'Ryves Empirical Coefficient (Cy - Default)', 8.5, '—', 'IRC:SP:13-2022', 'Cl. 4.3.2'], // Row 20: C20
-    ['Limited hills / Deccan Plateau', 'Ryves Empirical Coefficient (Cy)', 10.2, '—', 'IRC:SP:13-2022', 'Cl. 4.3.2'],
-    ['Western Ghats / Deccan streams', 'Inglis Empirical Constant (Qi multiplier)', 124.0, '—', 'IRC:SP:13-2022', 'Cl. 4.3.3'],
-  ];
+  const empRows: [string, string, number, string, string, string][] = isIndian
+    ? [
+        ['North Indian Plains', 'Dickens Empirical Coefficient (Cd)', 11.4, '—', 'IRC:SP:13-2022', 'Cl. 4.3.1'],
+        ['Central India / Hilly Catchments', 'Dickens Empirical Coefficient (Cd - Default)', 16.75, '—', 'IRC:SP:13-2022', 'Cl. 4.3.1'], // Row 17: C17
+        ['Western Ghats / Coastal Heavy', 'Dickens Empirical Coefficient (Cd)', 23.5, '—', 'IRC:SP:13-2022', 'Cl. 4.3.1'],
+        ['Coastal areas within 25 km of sea', 'Ryves Empirical Coefficient (Cy)', 6.8, '—', 'IRC:SP:13-2022', 'Cl. 4.3.2'],
+        ['25 km to 160 km from coast', 'Ryves Empirical Coefficient (Cy - Default)', 8.5, '—', 'IRC:SP:13-2022', 'Cl. 4.3.2'], // Row 20: C20
+        ['Limited hills / Deccan Plateau', 'Ryves Empirical Coefficient (Cy)', 10.2, '—', 'IRC:SP:13-2022', 'Cl. 4.3.2'],
+        ['Western Ghats / Deccan streams', 'Inglis Empirical Constant (Qi multiplier)', 124.0, '—', 'IRC:SP:13-2022', 'Cl. 4.3.3'],
+      ]
+    : [
+        ['USGS Region 1 (Northeastern Humid)', 'Regional Regression Curve Coefficient (a)', 25.0, '—', 'USGS SIR 2014-5002', 'Eq. 4.1'],
+        ['USGS Region 2 (Midwest / Plains)', 'Regional Regression Curve Coefficient (a - Default)', 18.5, '—', 'USGS SIR 2014-5002', 'Eq. 4.2'], // Row 17: C17
+        ['USGS Region 3 (Semi-Arid / Mountain)', 'Regional Regression Curve Coefficient (a)', 12.0, '—', 'USGS SIR 2014-5002', 'Eq. 4.3'],
+        ['USGS Exponent b (Region 1 Humid)', 'Drainage Basin Area Exponent (b)', 0.7, '—', 'USGS SIR 2014-5002', 'Table 2'],
+        ['USGS Exponent b (Region 2 Midwest)', 'Drainage Basin Area Exponent (b - Default)', 0.68, '—', 'USGS SIR 2014-5002', 'Table 2'], // Row 20: C20
+        ['USGS Exponent b (Region 3 Semi-Arid)', 'Drainage Basin Area Exponent (b)', 0.65, '—', 'USGS SIR 2014-5002', 'Table 2'],
+        ['FHWA HDS-2 Rational SI Conversion Factor', 'Metric SI Rational Factor (1/360)', 0.00278, '—', 'FHWA HDS-2 / AASHTO', 'Sec. 5.1'], // Row 22: C22
+      ];
   for (const r of empRows) {
     const row = ws00.addRow(r);
     row.height = 20;
@@ -143,12 +173,15 @@ export async function populateStormwaterDprWorkbook(
 
   ws00.addRow([]);
 
-  // Section 3: Lacey Silt Factors (IRC:SP:13-2022 Table 7.1)
-  buildSectionHeader(ws00, "3. LACEY'S SILT FACTOR (Ksf = 1.76 * SQRT(d50)) — IRC:SP:13-2022 TABLE 7.1", 6);
+  // Section 3: Lacey Silt Factors or ASTM C76M Pipe / FHWA HEC-18 Scour
+  const sec3Title = isIndian
+    ? "3. LACEY'S SILT FACTOR (Ksf = 1.76 * SQRT(d50)) — IRC:SP:13-2022 TABLE 7.1"
+    : '3. ASTM C76M CONCRETE PIPE & FHWA HEC-18 SCOUR FACTORS';
+  buildSectionHeader(ws00, sec3Title, 6);
   const hRow3 = ws00.addRow([
-    'Bed Material Classification',
-    'Mean Diameter d50 Description',
-    'Silt Factor (Ksf)',
+    isIndian ? 'Bed Material Classification' : 'Culvert Pipe / Scour Parameter',
+    isIndian ? 'Mean Diameter d50 Description' : 'Engineering Specification Details',
+    isIndian ? 'Silt Factor (Ksf)' : 'Standard Factor',
     'Unit',
     'Governing Standard',
     'Codal Reference',
@@ -156,13 +189,21 @@ export async function populateStormwaterDprWorkbook(
   hRow3.height = 22;
   formatTableHeaderRow(hRow3, 6);
 
-  const siltRows: [string, string, number, string, string, string][] = [
-    ['Fine silt (d50 = 0.12 mm)', 'Fine alluvial silt channel bed', 0.6, '—', 'IRC:SP:13-2022', 'Table 7.1'],
-    ['Medium sand (d50 = 0.32 mm)', 'Standard medium river sand (Design Default)', 1.0, '—', 'IRC:SP:13-2022', 'Table 7.1'], // Row 27: C27
-    ['Coarse sand (d50 = 0.55 mm)', 'Coarse riverbed sand', 1.3, '—', 'IRC:SP:13-2022', 'Table 7.1'],
-    ['Bajri and small gravel (d50 = 1.00 mm)', 'Gravelly bed material and bajri', 1.75, '—', 'IRC:SP:13-2022', 'Table 7.1'],
-    ['Heavy boulders (d50 = 4.00 mm)', 'Mountainous boulder channel bed', 3.5, '—', 'IRC:SP:13-2022', 'Table 7.1'],
-  ];
+  const siltRows: [string, string, number, string, string, string][] = isIndian
+    ? [
+        ['Fine silt (d50 = 0.12 mm)', 'Fine alluvial silt channel bed', 0.6, '—', 'IRC:SP:13-2022', 'Table 7.1'],
+        ['Medium sand (d50 = 0.32 mm)', 'Standard medium river sand (Design Default)', 1.0, '—', 'IRC:SP:13-2022', 'Table 7.1'], // Row 27: C27
+        ['Coarse sand (d50 = 0.55 mm)', 'Coarse riverbed sand', 1.3, '—', 'IRC:SP:13-2022', 'Table 7.1'],
+        ['Bajri and small gravel (d50 = 1.00 mm)', 'Gravelly bed material and bajri', 1.75, '—', 'IRC:SP:13-2022', 'Table 7.1'],
+        ['Heavy boulders (d50 = 4.00 mm)', 'Mountainous boulder channel bed', 3.5, '—', 'IRC:SP:13-2022', 'Table 7.1'],
+      ]
+    : [
+        ['ASTM C76M Class III Pipe', 'Standard-strength reinforced concrete pipe', 65.0, 'kN/m/m', 'ASTM C76M-20', 'Table 3'],
+        ['ASTM C76M Class IV Pipe (Design Default)', 'Heavy-duty highway culvert pipe (Design Default)', 1.0, '—', 'ASTM C76M-20', 'Table 4'], // Row 27: C27
+        ['ASTM C76M Class V Pipe', 'Extra heavy-duty deep fill culvert pipe', 140.0, 'kN/m/m', 'ASTM C76M-20', 'Table 5'],
+        ['FHWA HEC-18 Contraction Scour Multiplier', 'Laursen clear-water contraction scour factor', 1.2, '—', 'FHWA HEC-18', 'Ch. 5'],
+        ['FHWA HEC-18 Abutment Scour Multiplier', 'Froehlich abutment scour safety factor', 1.5, '—', 'FHWA HEC-18', 'Ch. 7'],
+      ];
   for (const r of siltRows) {
     const row = ws00.addRow(r);
     row.height = 20;
@@ -172,7 +213,10 @@ export async function populateStormwaterDprWorkbook(
   ws00.addRow([]);
 
   // Section 4: Permissible Limits & Thresholds
-  buildSectionHeader(ws00, '4. PERMISSIBLE HYDRAULIC & FOUNDATION SCOUR LIMITS', 6);
+  const sec4Title = isIndian
+    ? '4. PERMISSIBLE HYDRAULIC & FOUNDATION SCOUR LIMITS — IRC:SP:13 & IRC:78'
+    : '4. FHWA HDS-5 & AASHTO PERMISSIBLE HYDRAULIC & SCOUR LIMITS';
+  buildSectionHeader(ws00, sec4Title, 6);
   const hRow4 = ws00.addRow([
     'Design Parameter',
     'Codal Purpose & Scrutiny Context',
@@ -184,15 +228,25 @@ export async function populateStormwaterDprWorkbook(
   hRow4.height = 22;
   formatTableHeaderRow(hRow4, 6);
 
-  const limitRows: [string, string, number, string, string, string][] = [
-    ['Minimum Self-Cleansing Velocity', 'Prevents silt deposition in barrel', 0.6, 'm/s', 'IRC:SP:13-2022', 'Cl. 5.3'], // Row 34: C34
-    ['Maximum Non-Scouring Velocity', 'Prevents abrasion of concrete pipe', 3.0, 'm/s', 'IRC:SP:13-2022', 'Cl. 5.3'], // Row 35: C35
-    ['Maximum Permissible Upstream Afflux (ha)', 'Permissible water head rise upstream', 0.3, 'm', 'IRC:SP:13-2022', 'Cl. 5.4'], // Row 36: C36
-    ['Maximum Allowable Headwater Ratio (HW/D)', 'Inlet control submergence limit', 1.2, '—', 'IRC:SP:13-2022', 'Cl. 5.4'], // Row 37: C37
-    ['Scour Multiplier (Straight Waterway)', 'Scour multiplier in straight regime reaches', 1.25, '—', 'IRC:78-2014', 'Cl. 703.2'],
-    ['Scour Multiplier (Severe Bends / Abutments)', 'Maximum scour factor at culvert abutment', 2.0, '—', 'IRC:78-2014', 'Cl. 703.2'], // Row 39: C39
-    ['Rainfall Areal Spread Reduction Factor (f)', 'Areal reduction factor for A < 25 km²', 1.0, '—', 'IRC:SP:13-2022', 'Cl. 4.4.1'], // Row 40: C40
-  ];
+  const limitRows: [string, string, number, string, string, string][] = isIndian
+    ? [
+        ['Minimum Self-Cleansing Velocity', 'Prevents silt deposition in barrel', 0.6, 'm/s', 'IRC:SP:13-2022', 'Cl. 5.3'], // Row 34: C34
+        ['Maximum Non-Scouring Velocity', 'Prevents abrasion of concrete pipe', 3.0, 'm/s', 'IRC:SP:13-2022', 'Cl. 5.3'], // Row 35: C35
+        ['Maximum Permissible Upstream Afflux (ha)', 'Permissible water head rise upstream', 0.3, 'm', 'IRC:SP:13-2022', 'Cl. 5.4'], // Row 36: C36
+        ['Maximum Allowable Headwater Ratio (HW/D)', 'Inlet control submergence limit', 1.2, '—', 'IRC:SP:13-2022', 'Cl. 5.4'], // Row 37: C37
+        ['Scour Multiplier (Straight Waterway)', 'Scour multiplier in straight regime reaches', 1.25, '—', 'IRC:78-2014', 'Cl. 703.2'],
+        ['Scour Multiplier (Severe Bends / Abutments)', 'Maximum scour factor at culvert abutment', 2.0, '—', 'IRC:78-2014', 'Cl. 703.2'], // Row 39: C39
+        ['Rainfall Areal Spread Reduction Factor (f)', 'Areal reduction factor for A < 25 km²', 1.0, '—', 'IRC:SP:13-2022', 'Cl. 4.4.1'], // Row 40: C40
+      ]
+    : [
+        ['Minimum Self-Cleansing Velocity', 'AASHTO minimum velocity to prevent siltation (3 fps)', 0.9, 'm/s', 'FHWA HDS-5', 'Sec. 3.4'], // Row 34: C34
+        ['Maximum Non-Erodible Velocity', 'AASHTO maximum non-abrasive velocity in concrete (15 fps)', 4.5, 'm/s', 'AASHTO Drainage Manual', 'Ch. 7'], // Row 35: C35
+        ['Maximum Allowable Upstream Backwater (ha)', 'FHWA permissible backwater afflux increase (0.5 ft)', 0.15, 'm', 'FHWA HDS-5', 'Sec. 3.2'], // Row 36: C36
+        ['Maximum Allowable Headwater Ratio (HW/D)', 'FHWA design flood headwater submergence limit', 1.5, '—', 'FHWA HDS-5', 'Sec. 3.2'], // Row 37: C37
+        ['FHWA HEC-18 Abutment Safety Scour Multiplier', 'Safety factor for bridge/culvert abutment grip', 1.5, '—', 'FHWA HEC-18', 'Eq. 7.1'],
+        ['FHWA Design Storm Return Period', 'AASHTO primary highway design flood frequency', 50.0, 'years', 'AASHTO Drainage Manual', 'Ch. 4'], // Row 39: C39
+        ['Rainfall Areal Spread Reduction Factor (f)', 'AASHTO point rainfall reduction for small basins', 1.0, '—', 'FHWA HDS-2', 'Sec. 4.2'], // Row 40: C40
+      ];
   for (const r of limitRows) {
     const row = ws00.addRow(r);
     row.height = 20;
@@ -217,7 +271,10 @@ export async function populateStormwaterDprWorkbook(
   buildTitleBanner(ws02, meta, 9);
 
   // Section A: Inputs
-  buildSectionHeader(ws02, 'A. CATCHMENT PHYSIOGRAPHY & DESIGN STORM INPUT PARAMETERS', 9);
+  const inTitle = isIndian
+    ? 'A. CATCHMENT PHYSIOGRAPHY & DESIGN STORM INPUT PARAMETERS'
+    : 'A. DRAINAGE BASIN PHYSIOGRAPHY & DESIGN STORM INPUTS (FHWA / AASHTO)';
+  buildSectionHeader(ws02, inTitle, 9);
   const inHeader = ws02.addRow([
     'Code',
     'Physiographic / Storm Input Parameter',
@@ -245,12 +302,40 @@ export async function populateStormwaterDprWorkbook(
     ['L_stream', 'Main Stream Watercourse Length', 'L', L_km, 'km', 'Delineated Hydraulic Flow Path'], // Row 11: D11
     ['A_catchment', 'Catchment Contributing Area', 'A_km2', A_km2, 'km2', 'D8 Contributing Watershed Area'], // Row 12: D12
     ['A_hectares', 'Catchment Contributing Area in Hectares', 'A_ha', { formula: 'D12*100', result: A_km2 * 100 }, 'ha', 'Calculated (A_km2 * 100)'], // Row 13: D13
-    ['F_rainfall', '24-Hour Design Storm Rainfall Depth', 'F', F_rain, 'mm', 'IMD / IRC 50-Year Return Storm'], // Row 14: D14
-    ['T_duration', 'Design Storm Duration', 'T', T_storm, 'hr', 'IRC Standard 1-Hour Duration'], // Row 15: D15
-    ['P_coeff', 'Runoff Coefficient (IRC Table 4.1)', 'P', { formula: "'00_Codal_Constants'!C11", result: 0.5 }, '—', 'IRC:SP:13-2022 Table 4.1 Lookup'], // Row 16: D16
-    ['f_spread', 'Areal Rainfall Spread Reduction Factor', 'f', { formula: "'00_Codal_Constants'!C40", result: 1.0 }, '—', 'IRC:SP:13-2022 Cl. 4.4.1 (A < 25 km2)'], // Row 17: D17
-    ['C_dickens', 'Regional Dickens Flood Coefficient', 'Cd', { formula: "'00_Codal_Constants'!C17", result: 16.75 }, '—', 'IRC:SP:13-2022 Cl. 4.3.1 Lookup'], // Row 18: D18
-    ['C_ryves', 'Regional Ryves Flood Coefficient', 'Cy', { formula: "'00_Codal_Constants'!C20", result: 8.5 }, '—', 'IRC:SP:13-2022 Cl. 4.3.2 Lookup'], // Row 19: D19
+    ['F_rainfall', '24-Hour Design Storm Rainfall Depth', 'F', F_rain, 'mm', isIndian ? 'IMD / IRC 50-Year Return Storm' : 'NOAA Atlas 14 50-Year Rainfall'], // Row 14: D14
+    ['T_duration', 'Design Storm Duration', 'T', T_storm, 'hr', 'Standard 1-Hour Duration'], // Row 15: D15
+    [
+      isIndian ? 'P_coeff' : 'C_coeff',
+      isIndian ? 'Runoff Coefficient (IRC Table 4.1)' : 'Runoff Coefficient (AASHTO Table 4-1)',
+      isIndian ? 'P' : 'C',
+      { formula: "'00_Codal_Constants'!C11", result: 0.5 },
+      '—',
+      isIndian ? 'IRC:SP:13-2022 Table 4.1 Lookup' : 'AASHTO Rational Method Table 4-1',
+    ], // Row 16: D16
+    [
+      isIndian ? 'f_spread' : 'C_unit',
+      isIndian ? 'Areal Rainfall Spread Reduction Factor' : 'AASHTO Rational SI Unit Conversion Factor',
+      isIndian ? 'f' : 'Cu',
+      { formula: isIndian ? "'00_Codal_Constants'!C40" : "'00_Codal_Constants'!C22", result: isIndian ? 1.0 : 0.00278 },
+      '—',
+      isIndian ? 'IRC:SP:13-2022 Cl. 4.4.1 (A < 25 km2)' : 'Metric SI Rational Factor (1/360)',
+    ], // Row 17: D17
+    [
+      isIndian ? 'C_dickens' : 'a_usgs',
+      isIndian ? 'Regional Dickens Flood Coefficient' : 'USGS Regional Regression Parameter a',
+      isIndian ? 'Cd' : 'a',
+      { formula: "'00_Codal_Constants'!C17", result: isIndian ? 16.75 : 18.5 },
+      '—',
+      isIndian ? 'IRC:SP:13-2022 Cl. 4.3.1 Lookup' : 'USGS Regional Regression Lookup',
+    ], // Row 18: D18
+    [
+      isIndian ? 'C_ryves' : 'b_usgs',
+      isIndian ? 'Regional Ryves Flood Coefficient' : 'USGS Drainage Area Exponent b',
+      isIndian ? 'Cy' : 'b',
+      { formula: "'00_Codal_Constants'!C20", result: isIndian ? 8.5 : 0.68 },
+      '—',
+      isIndian ? 'IRC:SP:13-2022 Cl. 4.3.2 Lookup' : 'USGS Regional Regression Lookup',
+    ], // Row 19: D19
   ];
 
   for (const item of inputDefs) {
@@ -262,7 +347,10 @@ export async function populateStormwaterDprWorkbook(
   ws02.addRow([]);
 
   // Section B: Worked Calculations (Rows 23-30)
-  buildSectionHeader(ws02, 'B. WORKED HYDROLOGY CALCULATIONS — IRC:SP:13-2022 LINE-BY-LINE AUDIT', 9);
+  const secBTitle = isIndian
+    ? 'B. WORKED HYDROLOGY CALCULATIONS — IRC:SP:13-2022 LINE-BY-LINE AUDIT'
+    : 'B. WORKED HYDROLOGY CALCULATIONS — FHWA / AASHTO LINE-BY-LINE AUDIT';
+  buildSectionHeader(ws02, secBTitle, 9);
   const calcHeader = ws02.addRow([
     'Step No.',
     'Design Parameter',
@@ -270,7 +358,7 @@ export async function populateStormwaterDprWorkbook(
     'Numerical Substitution',
     'Computed Value',
     'Unit',
-    'Indian Code & Clause',
+    isIndian ? 'Indian Code & Clause' : 'Governing Standard & Method',
     'Permissible Limit',
     'Compliance Status',
   ]);
@@ -281,10 +369,12 @@ export async function populateStormwaterDprWorkbook(
   const deltaH_val = Math.max(0.1, H_ridge - H_origin);
   const tc_val = 0.87 * Math.pow(Math.pow(L_km, 3) / deltaH_val, 0.385);
   const Ic_val = (F_rain / T_storm) * ((T_storm + 1) / (tc_val + 1));
-  const Qr_val = 0.028 * 0.5 * 1.0 * (A_km2 * 100) * Ic_val;
-  const Qd_val = 16.75 * Math.pow(A_km2, 0.75);
-  const Qy_val = 8.5 * Math.pow(A_km2, 2 / 3);
-  const Qi_val = (124 * A_km2) / Math.sqrt(A_km2 + 10.4);
+  const Qr_val = isIndian
+    ? 0.028 * 0.5 * 1.0 * (A_km2 * 100) * Ic_val
+    : 0.00278 * 0.5 * (A_km2 * 100) * Ic_val;
+  const Qd_val = isIndian ? 16.75 * Math.pow(A_km2, 0.75) : 18.5 * Math.pow(A_km2, 0.68);
+  const Qy_val = isIndian ? 8.5 * Math.pow(A_km2, 2 / 3) : 25.0 * Math.pow(A_km2, 0.7);
+  const Qi_val = isIndian ? (124 * A_km2) / Math.sqrt(A_km2 + 10.4) : 12.0 * Math.pow(A_km2, 0.65);
   const Qdesign_val = Math.max(Qr_val, Qd_val, Qy_val);
 
   // Step 1.1: ΔH (Row 23)
@@ -296,7 +386,7 @@ export async function populateStormwaterDprWorkbook(
     computedFormula: 'D9-D10',
     computedResult: deltaH_val,
     unit: 'm',
-    codalClause: 'IRC:SP:13-2022 Cl. 4.4.2',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 4.4.2' : 'FHWA HDS-2 Terrain Relief',
     permissibleLimit: 'ΔH >= 5.0 m (Defined Relief)',
     complianceFormula: 'IF(E23>=5.0, "PASS", "MARGINAL")',
     complianceResult: deltaH_val >= 5.0 ? 'PASS' : 'MARGINAL',
@@ -312,7 +402,7 @@ export async function populateStormwaterDprWorkbook(
     computedFormula: '0.87*POWER((POWER(D11,3)/MAX(0.01,E23)),0.385)',
     computedResult: tc_val,
     unit: 'hr',
-    codalClause: 'IRC:SP:13-2022 Cl. 4.4.2',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 4.4.2' : 'FHWA HDS-2 / Kirpich Equation',
     permissibleLimit: 'tc >= 0.10 hr (Min 6 mins)',
     complianceFormula: 'IF(E24>=0.10, "PASS", "MARGINAL")',
     complianceResult: tc_val >= 0.1 ? 'PASS' : 'MARGINAL',
@@ -328,7 +418,7 @@ export async function populateStormwaterDprWorkbook(
     computedFormula: '(D14/D15)*((D15+1)/(E24+1))',
     computedResult: Ic_val,
     unit: 'mm/hr',
-    codalClause: 'IRC:SP:13-2022 Cl. 4.4.3',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 4.4.3' : 'AASHTO Drainage Manual IDF Curve',
     permissibleLimit: 'Ic >= 10.0 mm/hr',
     complianceFormula: 'IF(E25>=10.0, "PASS", "PASS")',
     complianceResult: 'PASS',
@@ -338,62 +428,70 @@ export async function populateStormwaterDprWorkbook(
   // Step 1.4: Qr (Row 26)
   appendWorkedCalculationRow(ws02, {
     stepNo: 'Step 1.4',
-    parameter: 'Rational Peak Discharge (Qr)',
-    formulaSymbolic: 'Qr = 0.028 * P * f * A_ha * Ic',
-    substitutionFormula: 'CONCAT("0.028 * ", TEXT(D16,"0.00"), " * ", TEXT(D17,"0.00"), " * ", TEXT(D13,"0.00"), " * ", TEXT(E25,"0.00"))',
-    computedFormula: '0.028*D16*D17*D13*E25',
+    parameter: isIndian ? 'Rational Peak Discharge (Qr)' : 'AASHTO Rational Peak Discharge (Q)',
+    formulaSymbolic: isIndian ? 'Qr = 0.028 * P * f * A_ha * Ic' : 'Q = 0.00278 * C * A_ha * Ic',
+    substitutionFormula: isIndian
+      ? 'CONCAT("0.028 * ", TEXT(D16,"0.00"), " * ", TEXT(D17,"0.00"), " * ", TEXT(D13,"0.00"), " * ", TEXT(E25,"0.00"))'
+      : 'CONCAT("0.00278 * ", TEXT(D16,"0.00"), " * ", TEXT(D13,"0.00"), " * ", TEXT(E25,"0.00"))',
+    computedFormula: isIndian ? '0.028*D16*D17*D13*E25' : '0.00278*D16*D13*E25',
     computedResult: Qr_val,
     unit: 'm3/s',
-    codalClause: 'IRC:SP:13-2022 Cl. 4.4.1',
-    permissibleLimit: 'Qr > 0 m3/s',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 4.4.1' : 'AASHTO / FHWA Rational Method',
+    permissibleLimit: 'Q > 0 m3/s',
     complianceFormula: 'IF(E26>0, "PASS", "FAIL")',
     complianceResult: 'PASS',
     numFmt: '#,##0.00',
   });
 
-  // Step 1.5a: Qd (Row 27)
+  // Step 1.5a: Qd or USGS 1 (Row 27)
   appendWorkedCalculationRow(ws02, {
     stepNo: 'Step 1.5a',
-    parameter: 'Dickens Peak Discharge (Qd)',
-    formulaSymbolic: 'Qd = Cd * (A_km2)^0.75',
-    substitutionFormula: 'CONCAT(TEXT(D18,"0.00"), " * (", TEXT(D12,"0.000"), ")^0.75")',
-    computedFormula: 'D18*POWER(D12,0.75)',
+    parameter: isIndian ? 'Dickens Peak Discharge (Qd)' : 'USGS Regional Regression Curve (Qp1)',
+    formulaSymbolic: isIndian ? 'Qd = Cd * (A_km2)^0.75' : 'Qp1 = a * (A_km2)^b',
+    substitutionFormula: isIndian
+      ? 'CONCAT(TEXT(D18,"0.00"), " * (", TEXT(D12,"0.000"), ")^0.75")'
+      : 'CONCAT(TEXT(D18,"0.00"), " * (", TEXT(D12,"0.000"), ")^", TEXT(D19,"0.00"))',
+    computedFormula: isIndian ? 'D18*POWER(D12,0.75)' : 'D18*POWER(D12,D19)',
     computedResult: Qd_val,
     unit: 'm3/s',
-    codalClause: 'IRC:SP:13-2022 Cl. 4.3.1',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 4.3.1' : 'USGS SIR 2014-5002 Eq. 4.2',
     permissibleLimit: 'Empirical verification envelope',
     complianceFormula: 'IF(E27>0, "PASS", "PASS")',
     complianceResult: 'PASS',
     numFmt: '#,##0.00',
   });
 
-  // Step 1.5b: Qy (Row 28)
+  // Step 1.5b: Qy or USGS 2 (Row 28)
   appendWorkedCalculationRow(ws02, {
     stepNo: 'Step 1.5b',
-    parameter: 'Ryves Peak Discharge (Qy)',
-    formulaSymbolic: 'Qy = Cy * (A_km2)^(2/3)',
-    substitutionFormula: 'CONCAT(TEXT(D19,"0.00"), " * (", TEXT(D12,"0.000"), ")^(2/3)")',
-    computedFormula: 'D19*POWER(D12,2/3)',
+    parameter: isIndian ? 'Ryves Peak Discharge (Qy)' : 'USGS Humid Region Curve (Qp2)',
+    formulaSymbolic: isIndian ? 'Qy = Cy * (A_km2)^(2/3)' : 'Qp2 = 25.0 * (A_km2)^0.70',
+    substitutionFormula: isIndian
+      ? 'CONCAT(TEXT(D19,"0.00"), " * (", TEXT(D12,"0.000"), ")^(2/3)")'
+      : 'CONCAT("25.0 * (", TEXT(D12,"0.000"), ")^0.70")',
+    computedFormula: isIndian ? 'D19*POWER(D12,2/3)' : '25.0*POWER(D12,0.70)',
     computedResult: Qy_val,
     unit: 'm3/s',
-    codalClause: 'IRC:SP:13-2022 Cl. 4.3.2',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 4.3.2' : 'USGS High-Runoff Regression Curve',
     permissibleLimit: 'Empirical verification envelope',
     complianceFormula: 'IF(E28>0, "PASS", "PASS")',
     complianceResult: 'PASS',
     numFmt: '#,##0.00',
   });
 
-  // Step 1.5c: Qi (Row 29)
+  // Step 1.5c: Qi or USGS 3 (Row 29)
   appendWorkedCalculationRow(ws02, {
     stepNo: 'Step 1.5c',
-    parameter: 'Inglis Peak Discharge (Qi)',
-    formulaSymbolic: 'Qi = (124 * A_km2) / SQRT(A_km2 + 10.4)',
-    substitutionFormula: 'CONCAT("(124 * ", TEXT(D12,"0.000"), ") / SQRT(", TEXT(D12,"0.000"), " + 10.4)")',
-    computedFormula: '(124*D12)/SQRT(D12+10.4)',
+    parameter: isIndian ? 'Inglis Peak Discharge (Qi)' : 'USGS Foothill / Arid Curve (Qp3)',
+    formulaSymbolic: isIndian ? 'Qi = (124 * A_km2) / SQRT(A_km2 + 10.4)' : 'Qp3 = 12.0 * (A_km2)^0.65',
+    substitutionFormula: isIndian
+      ? 'CONCAT("(124 * ", TEXT(D12,"0.000"), ") / SQRT(", TEXT(D12,"0.000"), " + 10.4)")'
+      : 'CONCAT("12.0 * (", TEXT(D12,"0.000"), ")^0.65")',
+    computedFormula: isIndian ? '(124*D12)/SQRT(D12+10.4)' : '12.0*POWER(D12,0.65)',
     computedResult: Qi_val,
     unit: 'm3/s',
-    codalClause: 'IRC:SP:13-2022 Cl. 4.3.3',
-    permissibleLimit: 'Western Ghats / Deccan envelope',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 4.3.3' : 'USGS Semi-Arid Regression Curve',
+    permissibleLimit: isIndian ? 'Western Ghats / Deccan envelope' : 'USGS Regression Check',
     complianceFormula: 'IF(E29>0, "PASS", "PASS")',
     complianceResult: 'PASS',
     numFmt: '#,##0.00',
@@ -403,15 +501,15 @@ export async function populateStormwaterDprWorkbook(
   appendWorkedCalculationRow(ws02, {
     stepNo: 'Step 1.6',
     parameter: 'Governing Design Discharge (Q_design)',
-    formulaSymbolic: 'Q_design = MAX(Qr, Qd, Qy)',
+    formulaSymbolic: isIndian ? 'Q_design = MAX(Qr, Qd, Qy)' : 'Q_design = MAX(Q, Qp1, Qp2)',
     substitutionFormula: 'CONCAT("MAX(", TEXT(E26,"0.00"), ", ", TEXT(E27,"0.00"), ", ", TEXT(E28,"0.00"), ")")',
     computedFormula: 'MAX(E26,E27,E28)',
     computedResult: Qdesign_val,
     unit: 'm3/s',
-    codalClause: 'IRC:SP:13-2022 Cl. 4.2',
-    permissibleLimit: 'Max empirical <= 1.5 * Rational Qr',
-    complianceFormula: 'IF(MAX(E27,E28)>1.5*E26, "MARGINAL", "PASS")',
-    complianceResult: Math.max(Qd_val, Qy_val) > 1.5 * Qr_val ? 'MARGINAL' : 'PASS',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 4.2' : 'FHWA HDS-5 / AASHTO Design Flood',
+    permissibleLimit: isIndian ? 'Max empirical <= 1.5 * Rational Qr' : 'Peak Design Envelope Check',
+    complianceFormula: isIndian ? 'IF(MAX(E27,E28)>1.5*E26, "MARGINAL", "PASS")' : 'IF(E30>0, "PASS", "PASS")',
+    complianceResult: isIndian ? (Math.max(Qd_val, Qy_val) > 1.5 * Qr_val ? 'MARGINAL' : 'PASS') : 'PASS',
     numFmt: '#,##0.00',
   });
 
@@ -435,7 +533,10 @@ export async function populateStormwaterDprWorkbook(
   buildTitleBanner(ws03, meta, 9);
 
   // Section A: Structure Dimensions
-  buildSectionHeader(ws03, 'A. CULVERT STRUCTURAL SPECIFICATIONS & WATERWAY ATTRIBUTES', 9);
+  const secATitle = isIndian
+    ? 'A. CULVERT STRUCTURAL SPECIFICATIONS & WATERWAY ATTRIBUTES'
+    : 'A. CULVERT STRUCTURAL SPECIFICATIONS & WATERWAY ATTRIBUTES (FHWA / ASTM)';
+  buildSectionHeader(ws03, secATitle, 9);
   const culvertHeader = ws03.addRow([
     'Code',
     'Culvert Structural Parameter',
@@ -455,16 +556,51 @@ export async function populateStormwaterDprWorkbook(
   const nBarrels = Math.max(1, Math.min(6, Math.ceil(Qdesign_val / (2.5 * singleAw))));
   const barrelSlope = Math.max(0.002, deltaH_val / Math.max(10, L_km * 1000));
   const barrelLength = 24.0;
-  const manningN = 0.015;
+  const manningN = isIndian ? 0.015 : 0.013; // IS 458 concrete vs ASTM C76M smooth concrete
 
   const culvertInputs: [string, string, string, any, string, string][] = [
     ['N_barrels', 'Number of Precast Culvert Barrels', 'N', nBarrels, 'nos', 'Design Barrel Sizing'], // Row 9: D9
-    ['D_barrel', 'Internal Pipe Diameter / Span', 'D', culvertDia, 'm', 'IS 458:2021 Class NP4 Pipe'], // Row 10: D10
+    [
+      'D_barrel',
+      'Internal Pipe Diameter / Span',
+      'D',
+      culvertDia,
+      'm',
+      isIndian ? 'IS 458:2021 Class NP4 Pipe' : 'ASTM C76M Class IV Concrete Pipe',
+    ], // Row 10: D10
     ['L_barrel', 'Culvert Barrel Embankment Length', 'L_barrel', barrelLength, 'm', 'Highway Embankment Profile'], // Row 11: D11
-    ['S_0', 'Longitudinal Invert Bed Slope', 'S0', { formula: "MAX(0.002, '02_Hydrology_Worked_Calcs'!E23/MAX(10, '02_Hydrology_Worked_Calcs'!D11*1000))", result: barrelSlope }, 'm/m', 'Natural Bed Slope / Min 0.2%'], // Row 12: D12
-    ['n_manning', 'Manning Roughness Coefficient', 'n', manningN, '—', 'IS 458 Concrete Pipe (n=0.015)'], // Row 13: D13
-    ['K_sf', 'Lacey Silt Factor for Foundation Bed', 'Ksf', { formula: "'00_Codal_Constants'!C27", result: 1.0 }, '—', 'IRC:SP:13-2022 Table 7.1 Lookup'], // Row 14: D14
-    ['Q_design', 'Governing Design Flood Discharge', 'Q_design', { formula: "'02_Hydrology_Worked_Calcs'!E30", result: Qdesign_val }, 'm3/s', 'IRC:SP:13-2022 Cl. 4.2 Pull'], // Row 15: D15
+    [
+      'S_0',
+      'Longitudinal Invert Bed Slope',
+      'S0',
+      { formula: "MAX(0.002, '02_Hydrology_Worked_Calcs'!E23/MAX(10, '02_Hydrology_Worked_Calcs'!D11*1000))", result: barrelSlope },
+      'm/m',
+      'Natural Bed Slope / Min 0.2%',
+    ], // Row 12: D12
+    [
+      'n_manning',
+      'Manning Roughness Coefficient',
+      'n',
+      manningN,
+      '—',
+      isIndian ? 'IS 458 Concrete Pipe (n=0.015)' : 'ASTM C76M Concrete Pipe (n=0.013)',
+    ], // Row 13: D13
+    [
+      'K_sf',
+      isIndian ? 'Lacey Silt Factor for Foundation Bed' : 'FHWA HEC-18 Scour Multiplier',
+      'Ksf',
+      { formula: "'00_Codal_Constants'!C27", result: 1.0 },
+      '—',
+      isIndian ? 'IRC:SP:13-2022 Table 7.1 Lookup' : 'ASTM C76M / FHWA HEC-18 Reference',
+    ], // Row 14: D14
+    [
+      'Q_design',
+      'Governing Design Flood Discharge',
+      'Q_design',
+      { formula: "'02_Hydrology_Worked_Calcs'!E30", result: Qdesign_val },
+      'm3/s',
+      isIndian ? 'IRC:SP:13-2022 Cl. 4.2 Pull' : 'FHWA HDS-5 Design Flood Pull',
+    ], // Row 15: D15
   ];
 
   for (const item of culvertInputs) {
@@ -476,7 +612,10 @@ export async function populateStormwaterDprWorkbook(
   ws03.addRow([]);
 
   // Section B: Worked Calculations (Rows 19-26)
-  buildSectionHeader(ws03, 'B. WORKED HYDRAULIC & SCOUR AUDIT — IRC:SP:13-2022 & IRC:78-2014', 9);
+  const secB2Title = isIndian
+    ? 'B. WORKED HYDRAULIC & SCOUR AUDIT — IRC:SP:13-2022 & IRC:78-2014'
+    : 'B. WORKED HYDRAULIC & SCOUR AUDIT — FHWA HDS-5 & FHWA HEC-18';
+  buildSectionHeader(ws03, secB2Title, 9);
   const scourHeader = ws03.addRow([
     'Step No.',
     'Design Parameter',
@@ -484,7 +623,7 @@ export async function populateStormwaterDprWorkbook(
     'Numerical Substitution',
     'Computed Value',
     'Unit',
-    'Indian Code & Clause',
+    isIndian ? 'Indian Code & Clause' : 'Governing Standard & Clause',
     'Permissible Limit',
     'Compliance Status',
   ]);
@@ -492,26 +631,31 @@ export async function populateStormwaterDprWorkbook(
   formatTableHeaderRow(scourHeader, 9);
 
   // Precomputed values for culvert calculations
-  const W_regime = 4.825 * Math.sqrt(Qdesign_val);
+  const waterwayFactor = isIndian ? 4.825 : 3.65;
+  const W_regime = waterwayFactor * Math.sqrt(Qdesign_val);
   const Aw_total = nBarrels * singleAw;
   const Qfull_val = (1 / manningN) * singleAw * Math.pow(culvertDia / 4, 2 / 3) * Math.sqrt(barrelSlope) * nBarrels;
   const V_barrel = Qdesign_val / Aw_total;
   const ha_afflux = (Math.pow(V_barrel, 2) / 19.62) * 1.1;
   const hw_ratio = (culvertDia + ha_afflux) / culvertDia;
   const Db_val = Qdesign_val / Math.max(1.0, W_regime);
-  const dsm_val = 1.34 * Math.pow(Math.pow(Db_val, 2) / 1.0, 1 / 3);
-  const dmax_val = 2.0 * dsm_val;
+  const scourBaseFactor = isIndian ? 1.34 : 1.2;
+  const dsm_val = scourBaseFactor * Math.pow(Math.pow(Db_val, 2) / 1.0, 1 / 3);
+  const scourMultiplier = isIndian ? 2.0 : 1.5;
+  const dmax_val = scourMultiplier * dsm_val;
 
   // Step 2.1: W (Row 19)
   appendWorkedCalculationRow(ws03, {
     stepNo: 'Step 2.1',
-    parameter: 'Lacey Linear Regime Waterway (W)',
-    formulaSymbolic: 'W = 4.825 * SQRT(Q_design)',
-    substitutionFormula: 'CONCAT("4.825 * SQRT(", TEXT(D15,"0.00"), ")")',
-    computedFormula: '4.825*SQRT(D15)',
+    parameter: isIndian ? 'Lacey Linear Regime Waterway (W)' : 'FHWA Regime Channel Waterway (W)',
+    formulaSymbolic: isIndian ? 'W = 4.825 * SQRT(Q_design)' : 'W = 3.650 * SQRT(Q_design)',
+    substitutionFormula: isIndian
+      ? 'CONCAT("4.825 * SQRT(", TEXT(D15,"0.00"), ")")'
+      : 'CONCAT("3.650 * SQRT(", TEXT(D15,"0.00"), ")")',
+    computedFormula: isIndian ? '4.825*SQRT(D15)' : '3.65*SQRT(D15)',
     computedResult: W_regime,
     unit: 'm',
-    codalClause: 'IRC:SP:13-2022 Cl. 5.2',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 5.2' : 'FHWA HDS-5 Channel Waterway',
     permissibleLimit: 'Minimum stable regime width',
     complianceFormula: 'IF(E19>0, "PASS", "PASS")',
     complianceResult: 'PASS',
@@ -527,7 +671,7 @@ export async function populateStormwaterDprWorkbook(
     computedFormula: 'PI()*POWER(D10/2,2)',
     computedResult: singleAw,
     unit: 'm2',
-    codalClause: 'IS 458:2021 / IRC:SP:13',
+    codalClause: isIndian ? 'IS 458:2021 / IRC:SP:13' : 'ASTM C76M Pipe Section',
     permissibleLimit: 'Aw > 0 m2',
     complianceFormula: 'IF(E20>0, "PASS", "PASS")',
     complianceResult: 'PASS',
@@ -543,7 +687,7 @@ export async function populateStormwaterDprWorkbook(
     computedFormula: '(1/D13)*E20*POWER(D10/4,2/3)*SQRT(D12)*D9',
     computedResult: Qfull_val,
     unit: 'm3/s',
-    codalClause: 'IRC:SP:13-2022 Cl. 5.3',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 5.3' : 'FHWA HDS-5 Manning Capacity',
     permissibleLimit: 'Q_full >= Q_design',
     complianceFormula: 'IF(E21>=D15, "PASS", "MARGINAL")',
     complianceResult: Qfull_val >= Qdesign_val ? 'PASS' : 'MARGINAL',
@@ -559,26 +703,28 @@ export async function populateStormwaterDprWorkbook(
     computedFormula: 'D15/(D9*E20)',
     computedResult: V_barrel,
     unit: 'm/s',
-    codalClause: 'IRC:SP:13-2022 Cl. 5.3 & IRC:SP:50',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 5.3 & IRC:SP:50' : 'FHWA HDS-5 Sec. 3.4 / AASHTO',
     permissibleLimit: "CONCAT(TEXT('00_Codal_Constants'!C34,\"0.00\"), \" m/s <= V <= \", TEXT('00_Codal_Constants'!C35,\"0.00\"), \" m/s\")",
     complianceFormula: "IF(AND(E22>='00_Codal_Constants'!C34, E22<='00_Codal_Constants'!C35), \"PASS\", IF(E22<'00_Codal_Constants'!C34, \"MARGINAL\", \"FAIL\"))",
-    complianceResult: V_barrel >= 0.6 && V_barrel <= 3.0 ? 'PASS' : V_barrel < 0.6 ? 'MARGINAL' : 'FAIL',
+    complianceResult: isIndian
+      ? (V_barrel >= 0.6 && V_barrel <= 3.0 ? 'PASS' : V_barrel < 0.6 ? 'MARGINAL' : 'FAIL')
+      : (V_barrel >= 0.9 && V_barrel <= 4.5 ? 'PASS' : V_barrel < 0.9 ? 'MARGINAL' : 'FAIL'),
     numFmt: '#,##0.00',
   });
 
   // Step 2.3a: ha (Row 23)
   appendWorkedCalculationRow(ws03, {
     stepNo: 'Step 2.3a',
-    parameter: 'Upstream Afflux (ha)',
+    parameter: isIndian ? 'Upstream Afflux (ha)' : 'Upstream Backwater Afflux (ha)',
     formulaSymbolic: 'ha = (V^2 / 19.62) * 1.1',
     substitutionFormula: 'CONCAT("(", TEXT(E22,"0.00"), "^2 / 19.62) * 1.1")',
     computedFormula: '(POWER(E22,2)/19.62)*1.1',
     computedResult: ha_afflux,
     unit: 'm',
-    codalClause: 'IRC:SP:13-2022 Cl. 5.4',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 5.4' : 'FHWA HDS-5 / AASHTO Backwater',
     permissibleLimit: "CONCAT(\"ha <= \", TEXT('00_Codal_Constants'!C36,\"0.00\"), \" m\")",
     complianceFormula: "IF(E23<='00_Codal_Constants'!C36, \"PASS\", \"FAIL\")",
-    complianceResult: ha_afflux <= 0.3 ? 'PASS' : 'FAIL',
+    complianceResult: isIndian ? (ha_afflux <= 0.3 ? 'PASS' : 'FAIL') : (ha_afflux <= 0.15 ? 'PASS' : 'FAIL'),
     numFmt: '#,##0.00',
   });
 
@@ -591,24 +737,30 @@ export async function populateStormwaterDprWorkbook(
     computedFormula: '(D10+E23)/D10',
     computedResult: hw_ratio,
     unit: '—',
-    codalClause: 'IRC:SP:13-2022 Cl. 5.4',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 5.4' : 'FHWA HDS-5 Sec. 3.2 Headwater',
     permissibleLimit: "CONCAT(\"HW/D <= \", TEXT('00_Codal_Constants'!C37,\"0.00\"))",
     complianceFormula: "IF(E24<='00_Codal_Constants'!C37, \"PASS\", \"FAIL\")",
-    complianceResult: hw_ratio <= 1.2 ? 'PASS' : 'FAIL',
+    complianceResult: isIndian ? (hw_ratio <= 1.2 ? 'PASS' : 'FAIL') : (hw_ratio <= 1.5 ? 'PASS' : 'FAIL'),
     numFmt: '#,##0.00',
   });
 
   // Step 2.4a: dsm (Row 25)
   appendWorkedCalculationRow(ws03, {
     stepNo: 'Step 2.4a',
-    parameter: 'Mean Regime Scour Depth (d_sm)',
-    formulaSymbolic: 'd_sm = 1.34 * ((Q_design / MAX(1.0, W))^2 / Ksf)^(1/3)',
-    substitutionFormula: 'CONCAT("1.34 * ((", TEXT(D15/MAX(1.0,E19),"0.00"), "^2 / ", TEXT(D14,"0.00"), ")^(1/3))")',
-    computedFormula: '1.34*POWER((POWER(D15/MAX(1.0,E19),2)/D14),1/3)',
+    parameter: isIndian ? 'Mean Regime Scour Depth (d_sm)' : 'FHWA Contraction Scour Depth (y_s)',
+    formulaSymbolic: isIndian
+      ? 'd_sm = 1.34 * ((Q_design / MAX(1.0, W))^2 / Ksf)^(1/3)'
+      : 'y_s = 1.20 * ((Q_design / MAX(1.0, W))^2 / Ksf)^(1/3)',
+    substitutionFormula: isIndian
+      ? 'CONCAT("1.34 * ((", TEXT(D15/MAX(1.0,E19),"0.00"), "^2 / ", TEXT(D14,"0.00"), ")^(1/3))")'
+      : 'CONCAT("1.20 * ((", TEXT(D15/MAX(1.0,E19),"0.00"), "^2 / ", TEXT(D14,"0.00"), ")^(1/3))")',
+    computedFormula: isIndian
+      ? '1.34*POWER((POWER(D15/MAX(1.0,E19),2)/D14),1/3)'
+      : '1.20*POWER((POWER(D15/MAX(1.0,E19),2)/D14),1/3)',
     computedResult: dsm_val,
     unit: 'm',
-    codalClause: 'IRC:SP:13-2022 Cl. 7.2',
-    permissibleLimit: 'Mean regime scour below design HFL',
+    codalClause: isIndian ? 'IRC:SP:13-2022 Cl. 7.2' : 'FHWA HEC-18 Contraction Scour',
+    permissibleLimit: 'Contraction scour below design flood level',
     complianceFormula: 'IF(E25>0, "PASS", "PASS")',
     complianceResult: 'PASS',
     numFmt: '#,##0.00',
@@ -617,14 +769,16 @@ export async function populateStormwaterDprWorkbook(
   // Step 2.4b: dmax (Row 26)
   appendWorkedCalculationRow(ws03, {
     stepNo: 'Step 2.4b',
-    parameter: 'Maximum Abutment Scour Depth (d_max)',
-    formulaSymbolic: 'd_max = Scour_Factor * d_sm',
-    substitutionFormula: 'CONCAT(TEXT(\'00_Codal_Constants\'!C39,"0.00"), " * ", TEXT(E25,"0.00"))',
-    computedFormula: "'00_Codal_Constants'!C39*E25",
+    parameter: isIndian ? 'Maximum Abutment Scour Depth (d_max)' : 'Maximum Total Abutment Scour (y_max)',
+    formulaSymbolic: isIndian ? 'd_max = Scour_Factor * d_sm' : 'y_max = Safety_Factor * y_s',
+    substitutionFormula: isIndian
+      ? 'CONCAT(TEXT(\'00_Codal_Constants\'!C39,"0.00"), " * ", TEXT(E25,"0.00"))'
+      : 'CONCAT("1.50 * ", TEXT(E25,"0.00"))',
+    computedFormula: isIndian ? "'00_Codal_Constants'!C39*E25" : "1.50*E25",
     computedResult: dmax_val,
     unit: 'm',
-    codalClause: 'IRC:78-2014 Cl. 703.2 & IRC:SP:13 Cl. 7.2',
-    permissibleLimit: 'Foundation grip level = HFL - d_max',
+    codalClause: isIndian ? 'IRC:78-2014 Cl. 703.2 & IRC:SP:13 Cl. 7.2' : 'FHWA HEC-18 Abutment Scour',
+    permissibleLimit: 'Foundation grip level threshold',
     complianceFormula: 'IF(E26>0, "PASS", "PASS")',
     complianceResult: 'PASS',
     numFmt: '#,##0.00',
@@ -665,11 +819,17 @@ export async function populateStormwaterDprWorkbook(
     ['LENGTH OF STREAM (L):', reportData.lengthOfStreamKm, 'km', 'Longest Overland Flow Path', 'PASS'], // Row 12
     ['LEVEL STREAM ORIGIN:', reportData.levelStreamOriginM, 'm', 'Crossing Invert Level (DEM / Survey)', 'PASS'], // Row 13
     ['HIGHEST CONTOUR:', reportData.highestContourM, 'm', 'Watershed Divide Highest Contour', 'PASS'], // Row 14
-    ['ELEVATION DROP (Δh):', reportData.elevationDropM, 'm', 'IRC:SP:13-2022 Cl. 4.4.2 Measured Relief', reportData.meetsReliefThreshold ? 'PASS' : 'MARGINAL'], // Row 15
+    [
+      'ELEVATION DROP (Δh):',
+      reportData.elevationDropM,
+      'm',
+      isIndian ? 'IRC:SP:13-2022 Cl. 4.4.2 Measured Relief' : 'AASHTO Drainage Basin Relief',
+      reportData.meetsReliefThreshold ? 'PASS' : 'MARGINAL',
+    ], // Row 15
     ['TARGET CHAINAGE:', reportData.targetChainageFormatted ?? String(reportData.targetChainage), 'm', 'Corridor Route Centerline Station', 'VERIFIED'], // Row 16
     ['ANALYSIS SCOPE:', scopeM, reportData.scopeExpandedDueToFlatRelief ? 'm (expanded: relief < 5m)' : 'm', 'Terrain Grid Analysis Scope', 'PASS'], // Row 17
     ['RELIEF IN SCOPE:', reportData.reliefWithinScopeM !== undefined ? reportData.reliefWithinScopeM : '—', 'm', 'Relief within applied analysis scope', 'PASS'], // Row 18
-    ['MEETS 5 m THRESHOLD:', reportData.meetsReliefThreshold === undefined ? '—' : reportData.meetsReliefThreshold ? 'Yes' : 'No', '—', 'IRC:SP:13 In-Catchment Relief Threshold', reportData.meetsReliefThreshold ? 'PASS' : 'MARGINAL'], // Row 19
+    ['MEETS 5 m THRESHOLD:', reportData.meetsReliefThreshold === undefined ? '—' : reportData.meetsReliefThreshold ? 'Yes' : 'No', '—', 'Relief Design Threshold', reportData.meetsReliefThreshold ? 'PASS' : 'MARGINAL'], // Row 19
     ['ELEVATION SOURCE:', reportData.elevationSource ?? 'Copernicus GLO-30', '—', 'Satellite DEM Provenance Provider', 'PASS'], // Row 20
     ['ORIGIN DATUM:', reportData.elevationOriginKind === 'survey' ? 'Uploaded survey sheet' : 'Sampled from DEM', '—', 'Crossing Invert Level Origin', 'PASS'], // Row 21
     ['DEM COVERAGE:', reportData.demCoverage !== undefined ? Number((reportData.demCoverage * 100).toFixed(1)) : 100, '%', 'Grid Valid Sample Completeness', 'PASS'], // Row 22
@@ -684,7 +844,10 @@ export async function populateStormwaterDprWorkbook(
   ws01.addRow([]);
 
   // Section 2: CD Design KPI Scorecard (Linked formulas to Sheets 02 and 03)
-  buildSectionHeader(ws01, '2. CD DESIGN KPI SCORECARD (GOVERNING HYDRAULIC & SCOUR SCRUTINY)', 5);
+  const sec2TitleScore = isIndian
+    ? '2. CD DESIGN KPI SCORECARD (GOVERNING HYDRAULIC & SCOUR SCRUTINY — IRC STANDARDS)'
+    : '2. CD DESIGN KPI SCORECARD (GOVERNING HYDRAULIC & SCOUR SCRUTINY — FHWA / AASHTO)';
+  buildSectionHeader(ws01, sec2TitleScore, 5);
   const kpiHeader = ws01.addRow([
     'Governing Design Metric',
     'Governed Codal Formula / Source',
@@ -704,7 +867,7 @@ export async function populateStormwaterDprWorkbook(
       { formula: "'02_Hydrology_Worked_Calcs'!I30", result: 'PASS' },
     ],
     [
-      'Lacey Regime Linear Waterway (W)',
+      isIndian ? 'Lacey Regime Linear Waterway (W)' : 'FHWA Regime Channel Waterway (W)',
       { formula: "'03_Culvert_Hydraulics_Scour'!C19" },
       { formula: "'03_Culvert_Hydraulics_Scour'!E19", result: W_regime },
       'm',
@@ -712,7 +875,7 @@ export async function populateStormwaterDprWorkbook(
     ],
     [
       'Proposed Culvert Structure Size',
-      'IS 458:2021 Class NP4 Pipe Culvert',
+      isIndian ? 'IS 458:2021 Class NP4 Pipe Culvert' : 'ASTM C76M Class IV Reinforced Concrete Pipe',
       `${nBarrels} x ${culvertDia.toFixed(2)} m dia`,
       'nos x m',
       'PASS',
@@ -732,28 +895,28 @@ export async function populateStormwaterDprWorkbook(
       { formula: "'03_Culvert_Hydraulics_Scour'!I22", result: 'PASS' },
     ],
     [
-      'Upstream Backwater Afflux (ha)',
+      isIndian ? 'Upstream Backwater Afflux (ha)' : 'Upstream Backwater Afflux (ha <= 0.15m)',
       { formula: "'03_Culvert_Hydraulics_Scour'!C23" },
       { formula: "'03_Culvert_Hydraulics_Scour'!E23", result: ha_afflux },
       'm',
       { formula: "'03_Culvert_Hydraulics_Scour'!I23", result: 'PASS' },
     ],
     [
-      'Headwater Depth Ratio (HW/D)',
+      isIndian ? 'Headwater Depth Ratio (HW/D <= 1.20)' : 'Headwater Depth Ratio (HW/D <= 1.50)',
       { formula: "'03_Culvert_Hydraulics_Scour'!C24" },
       { formula: "'03_Culvert_Hydraulics_Scour'!E24", result: hw_ratio },
       '—',
       { formula: "'03_Culvert_Hydraulics_Scour'!I24", result: 'PASS' },
     ],
     [
-      'Mean Regime Scour Depth (d_sm)',
+      isIndian ? 'Mean Regime Scour Depth (d_sm)' : 'FHWA Contraction Scour Depth (y_s)',
       { formula: "'03_Culvert_Hydraulics_Scour'!C25" },
       { formula: "'03_Culvert_Hydraulics_Scour'!E25", result: dsm_val },
       'm',
       { formula: "'03_Culvert_Hydraulics_Scour'!I25", result: 'PASS' },
     ],
     [
-      'Maximum Foundation Scour Depth (d_max)',
+      isIndian ? 'Maximum Foundation Scour Depth (d_max)' : 'Maximum Abutment Scour (y_max)',
       { formula: "'03_Culvert_Hydraulics_Scour'!C26" },
       { formula: "'03_Culvert_Hydraulics_Scour'!E26", result: dmax_val },
       'm',
@@ -761,8 +924,8 @@ export async function populateStormwaterDprWorkbook(
     ],
     [
       'Overall Cross-Drainage Codal Compliance',
-      'IRC:SP:13-2022 & IRC:78-2014 Criteria',
-      'IRC Codal Compliant',
+      isIndian ? 'IRC:SP:13-2022 & IRC:78-2014 Criteria' : 'FHWA HDS-5 & AASHTO Criteria',
+      isIndian ? 'IRC Codal Compliant' : 'FHWA/AASHTO Compliant',
       '—',
       {
         formula: "IF(AND('02_Hydrology_Worked_Calcs'!I30<>\"FAIL\",'03_Culvert_Hydraulics_Scour'!I22=\"PASS\",'03_Culvert_Hydraulics_Scour'!I23=\"PASS\"), \"PASS\", \"MARGINAL\")",

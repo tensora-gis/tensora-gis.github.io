@@ -21,33 +21,51 @@ export interface DprProjectMetadata {
 }
 
 let activeGlobalStandard: DprDesignStandard = 'INDIAN_DPR';
+type StandardChangeListener = (standard: DprDesignStandard) => void;
+const standardListeners = new Set<StandardChangeListener>();
 
 export function getGlobalDesignStandard(): DprDesignStandard {
   return activeGlobalStandard;
 }
 
+export function subscribeDesignStandard(listener: StandardChangeListener): () => void {
+  standardListeners.add(listener);
+  return () => {
+    standardListeners.delete(listener);
+  };
+}
+
 export function setGlobalDesignStandard(standard: DprDesignStandard): void {
   activeGlobalStandard = standard;
+  standardListeners.forEach((fn) => {
+    try {
+      fn(standard);
+    } catch (e) {
+      console.warn('Error in designStandard listener:', e);
+    }
+  });
 }
 
 export function getDefaultDprMetadata(
-  moduleKey: 'stormwater' | 'water' | 'wastewater' | 'river'
+  moduleKey: 'stormwater' | 'water' | 'wastewater' | 'river',
+  overrideStandard?: DprDesignStandard
 ): DprProjectMetadata {
-  const isIndian = activeGlobalStandard === 'INDIAN_DPR';
+  const std = overrideStandard || activeGlobalStandard;
+  const isIndian = std === 'INDIAN_DPR';
   const defaults: Record<string, DprProjectMetadata> = {
     stormwater: {
-      designStandard: activeGlobalStandard,
+      designStandard: std,
       projectTitle: isIndian
         ? 'DETAILED PROJECT REPORT (DPR) — STORMWATER CROSS-DRAINAGE STRUCTURE'
-        : 'STORMWATER DRAINAGE & CULVERT HYDRAULIC DESIGN REPORT',
-      packageNo: 'PKG-01 / CD-WORKS',
+        : 'CROSS-DRAINAGE HYDRAULIC DESIGN AUDIT — FHWA HDS-5 & AASHTO STANDARDS',
+      packageNo: isIndian ? 'PKG-01 / CD-WORKS' : 'DOT-HWY-01 / CD-CULVERT',
       clientAuthority: isIndian
         ? 'National Highways Authority of India (NHAI) / MoRTH'
-        : 'Department of Transportation & Public Works',
+        : 'Department of Transportation (DOT) / Federal Highway Administration (FHWA)',
       consultantName: 'Tensora GIS Engineering Consultancy',
       designCodeStandard: isIndian
         ? 'IRC:SP:13-2022 / IRC:SP:42-2014 / IRC:78-2014 / IS 458:2021'
-        : 'FHWA HDS-5 / AASHTO Culvert Design Manual',
+        : 'FHWA HDS-5 / AASHTO Drainage Manual / ASTM C76M / FHWA HEC-18',
       designReturnPeriodYears: 50,
       demProvenance: 'Copernicus GLO-30 (FABDEM 30m Global DEM)',
     },

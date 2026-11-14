@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { HydrologyReport, CorridorAlignment } from '../types/hydrology';
 import { exportKML, exportExcelReport } from '../utils/exportUtils';
 import {
@@ -9,6 +9,7 @@ import { UsdaSoilTexture, USDA_SOIL_TEXTURE_PARAMETERS } from '../utils/greenAmp
 import {
   getGlobalDesignStandard,
   setGlobalDesignStandard,
+  subscribeDesignStandard,
   DprDesignStandard,
 } from '../utils/dprExcelBase';
 import {
@@ -25,6 +26,10 @@ import {
   Gauge,
   ShieldCheck,
   ShieldAlert,
+  CheckCircle2,
+  XCircle,
+  HelpCircle,
+  Sparkles,
 } from 'lucide-react';
 
 interface ReportCardProps {
@@ -46,10 +51,17 @@ export const ReportCard: React.FC<ReportCardProps> = ({
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibOrigin, setCalibOrigin] = useState('');
   const [calibHighest, setCalibHighest] = useState('');
-  const [activeTab, setActiveTab] = useState<'table' | 'profile' | 'hydrograph'>('table');
+  const [activeTab, setActiveTab] = useState<'table' | 'profile' | 'hydrograph' | 'codal'>('table');
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [designStandard, setDesignStandard] = useState<DprDesignStandard>(getGlobalDesignStandard());
+  const isIndian = designStandard === 'INDIAN_DPR';
+
+  useEffect(() => {
+    return subscribeDesignStandard((std) => {
+      setDesignStandard(std);
+    });
+  }, []);
 
   // Hydrograph & Culvert Rating state
   const [soilTexture, setSoilTexture] = useState<UsdaSoilTexture>('Sandy Loam');
@@ -133,6 +145,112 @@ export const ReportCard: React.FC<ReportCardProps> = ({
     }
   }, [report, stormDurationHours, stormIntensityMmHr, soilTexture, culvertDiameterM]);
 
+  // Codal Provisions Hydrology & Regional Flood Metrics
+  const codalMetrics = useMemo(() => {
+    if (!report) return null;
+    const A = Math.max(0.001, report.catchmentAreaKm2);
+    const L = Math.max(0.05, report.lengthOfStreamKm);
+    const H = Math.max(0.1, report.elevationDropM);
+    // Kirpich time of concentration in hours
+    const tc =
+      report.timeOfConcentrationHours ??
+      Math.round(Math.pow((0.87 * Math.pow(L, 3)) / H, 0.385) * 100) / 100;
+    // Critical rainfall intensity Ic (mm/h) for 50-year frequency (IRC Cl. 4.4.3: Ic = 50 / (tc + 0.5)^0.75)
+    const Ic = Math.round((50 / Math.pow(Math.max(0.1, tc) + 0.5, 0.75)) * 100) / 100;
+
+    // 1. Rational Peak Discharge
+    // IRC:SP:13: Qr = 0.028 * P * f * A * Ic (P = 0.50, f = 1.0)
+    const Qr_irc = Math.round(0.028 * 0.5 * 1.0 * A * Ic * 100) / 100;
+    // AASHTO / FHWA: Qr = 0.00278 * C * A * Ic (C = 0.50)
+    const Qr_fhwa = Math.round(0.00278 * 0.5 * A * Ic * 100) / 100;
+
+    // 2. Regional Flood Estimates
+    // Indian: Dickens, Ryves, Inglis
+    const Qd_dickens = Math.round(16.75 * Math.pow(A, 0.75) * 100) / 100;
+    const Qy_ryves = Math.round(8.5 * Math.pow(A, 2 / 3) * 100) / 100;
+    const Qi_inglis = Math.round(((124 * A) / Math.sqrt(A + 10.4)) * 100) / 100;
+    const Q_emp_irc_max = Math.max(Qd_dickens, Qy_ryves, Qi_inglis);
+
+    // FHWA / USGS Regional Regression: Qp = a * A^b (a = 18.5, b = 0.68)
+    const Q_usgs = Math.round(18.5 * Math.pow(A, 0.68) * 100) / 100;
+
+    // 3. Design Flood Discharge
+    const Q_design = isIndian ? Math.max(Qr_irc, Q_emp_irc_max) : Math.max(Qr_fhwa, Q_usgs);
+
+    // 4. Regime Waterway Width
+    // IRC Lacey: W = 4.825 * sqrt(Q)
+    const W_lacey = Math.round(4.825 * Math.sqrt(Math.max(0.01, Q_design)) * 100) / 100;
+    // FHWA Envelope: W = 3.65 * sqrt(Q)
+    const W_fhwa = Math.round(3.65 * Math.sqrt(Math.max(0.01, Q_design)) * 100) / 100;
+
+    // 5. Permissible Threshold Limits
+    const vMin = isIndian ? 0.6 : 0.9;
+    const vMax = isIndian ? 3.0 : 4.5;
+    const haMax = isIndian ? 0.3 : 0.15;
+    const hwDMax = isIndian ? 1.2 : 1.5;
+
+    return {
+      A,
+      L,
+      H,
+      tc,
+      Ic,
+      Qr_irc,
+      Qr_fhwa,
+      Qr_active: isIndian ? Qr_irc : Qr_fhwa,
+      Qd_dickens,
+      Qy_ryves,
+      Qi_inglis,
+      Q_emp_irc_max,
+      Q_usgs,
+      Q_emp_active: isIndian ? Q_emp_irc_max : Q_usgs,
+      Q_design,
+      W_lacey,
+      W_fhwa,
+      W_active: isIndian ? W_lacey : W_fhwa,
+      vMin,
+      vMax,
+      haMax,
+      hwDMax,
+    };
+  }, [report, isIndian]);
+
+  // Culvert Rating & Codal Hydraulic Compliance Metrics
+  const culvertMetrics = useMemo(() => {
+    if (!report || !catchmentHydrograph) return null;
+    const barrelArea = Math.PI * Math.pow(culvertDiameterM / 2, 2);
+    const peakQ = catchmentHydrograph.peakDischargeM3s;
+    const velocity = barrelArea > 0 ? Math.round((peakQ / barrelArea) * 100) / 100 : 0;
+    const afflux = Math.round((Math.pow(velocity, 2) / 19.62) * 1000) / 1000;
+    const hwDepth = Math.max(0, catchmentHydrograph.maxHeadwaterElevM - report.levelStreamOriginM);
+    const hwRatio = culvertDiameterM > 0 ? Math.round((hwDepth / culvertDiameterM) * 100) / 100 : 0;
+
+    const vMin = isIndian ? 0.6 : 0.9;
+    const vMax = isIndian ? 3.0 : 4.5;
+    const haMax = isIndian ? 0.3 : 0.15;
+    const hwDMax = isIndian ? 1.2 : 1.5;
+
+    const isVelocityCompliant = velocity >= vMin && velocity <= vMax;
+    const isAffluxCompliant = afflux <= haMax;
+    const isHwCompliant = hwRatio <= hwDMax;
+
+    return {
+      barrelArea,
+      peakQ,
+      velocity,
+      afflux,
+      hwDepth,
+      hwRatio,
+      vMin,
+      vMax,
+      haMax,
+      hwDMax,
+      isVelocityCompliant,
+      isAffluxCompliant,
+      isHwCompliant,
+    };
+  }, [report, catchmentHydrograph, culvertDiameterM, isIndian]);
+
   if (isLoading) {
     return (
       <div className="bg-[#111] border border-[#222] rounded-lg p-6 flex flex-col items-center justify-center min-h-[300px] text-center">
@@ -170,7 +288,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
     setIsExportingExcel(true);
     setExportError(null);
     try {
-      await exportExcelReport(report, alignment || undefined);
+      await exportExcelReport(report, alignment || undefined, designStandard);
     } catch (err) {
       console.error('Excel export failed:', err);
       setExportError(
@@ -351,12 +469,54 @@ export const ReportCard: React.FC<ReportCardProps> = ({
         </form>
       )}
 
-      <div className="px-4 pt-3 flex gap-2 border-b border-[#222]/80 bg-[#0a0a0a] text-xs font-tech">
+      {/* Active Codal Provision Banner */}
+      <div className="px-4 py-2.5 bg-[#121212] border-b border-[#222] flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs font-tech">
+        <div className="flex items-start gap-2.5 min-w-0">
+          <ShieldCheck className={`w-4 h-4 mt-0.5 shrink-0 ${isIndian ? 'text-amber-400' : 'text-cyan-400'}`} />
+          <div className="flex flex-col min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] text-[#737373] uppercase tracking-wider font-semibold">Active Design Standard:</span>
+              <span className={`font-bold text-xs ${isIndian ? 'text-amber-300' : 'text-cyan-300'}`}>
+                {isIndian ? 'IRC:SP:13-2022 / IRC:78-2014 / IS 458' : 'FHWA HDS-5 / AASHTO LRFD / ASTM C76M'}
+              </span>
+              <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wide ${
+                isIndian ? 'bg-amber-950/70 text-amber-300 border border-amber-800' : 'bg-cyan-950/70 text-cyan-300 border border-cyan-800'
+              }`}>
+                {isIndian ? 'MoRTH / NHAI Standard' : 'USDOT / International'}
+              </span>
+            </div>
+            <div className="text-[10px] text-[#888] truncate mt-0.5">
+              {isIndian
+                ? 'Rational: Q = 0.028·P·f·A·Ic · Dickens & Ryves · Lacey Waterway: W = 4.825√Q · IS 458 concrete'
+                : 'AASHTO Rational: Q = 0.00278·C·A·Ic · USGS Regional Curves · FHWA Waterway: W = 3.65√Q · ASTM C76M'}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-auto bg-[#171717] border border-[#2a2a2a] rounded p-1">
+          <span className="text-[10px] text-[#888] pl-1">Standard:</span>
+          <select
+            value={designStandard}
+            onChange={(e) => {
+              const next = e.target.value as DprDesignStandard;
+              setDesignStandard(next);
+              setGlobalDesignStandard(next);
+            }}
+            className="bg-[#0f0f0f] border border-[#333] text-amber-300 font-semibold rounded px-2 py-0.5 text-[11px] font-tech focus:outline-none focus:border-amber-500 cursor-pointer"
+          >
+            <option value="INDIAN_DPR">Indian DPR (IRC / IS)</option>
+            <option value="INTERNATIONAL">International (FHWA / AASHTO)</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="px-4 pt-3 flex gap-2 border-b border-[#222]/80 bg-[#0a0a0a] text-xs font-tech overflow-x-auto">
         {(
           [
             ['table', 'Hydrology Table', Layers],
             ['profile', 'Elevation Profile', Activity],
             ['hydrograph', 'Hydrograph & Culvert Rating', Waves],
+            ['codal', isIndian ? 'IRC Codal Scrutiny' : 'FHWA/AASHTO Scrutiny', ShieldCheck],
           ] as const
         ).map(([value, label, Icon]) => (
           <button
@@ -364,7 +524,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
             type="button"
             onClick={() => setActiveTab(value)}
             aria-pressed={activeTab === value}
-            className={`pb-2 px-1 font-semibold transition-colors flex items-center gap-1.5 border-b-2 ${
+            className={`pb-2 px-1 font-semibold transition-colors flex items-center gap-1.5 border-b-2 whitespace-nowrap ${
               activeTab === value
                 ? 'border-amber-500 text-amber-300'
                 : 'border-transparent text-[#737373] hover:text-[#e5e7eb]'
@@ -441,6 +601,54 @@ export const ReportCard: React.FC<ReportCardProps> = ({
               </tbody>
             </table>
           </div>
+
+          {codalMetrics && (
+            <div className="mt-3 bg-[#111] border border-[#222] rounded p-3 font-tech">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-1.5">
+                  <ShieldCheck className={`w-3.5 h-3.5 ${isIndian ? 'text-amber-400' : 'text-cyan-400'}`} />
+                  <span className={`text-[11px] font-bold uppercase tracking-wide ${isIndian ? 'text-amber-300' : 'text-cyan-300'}`}>
+                    {isIndian ? 'IRC:SP:13-2022 Hydrology & Waterway' : 'FHWA HDS-5 / AASHTO Hydrology & Waterway'}
+                  </span>
+                </div>
+                <span className="text-[10px] text-[#737373]">
+                  {isIndian ? 'IS 458 Concrete Standards' : 'ASTM C76M Concrete Standards'}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                <div className="p-2 rounded bg-[#161616] border border-[#2a2a2a] flex flex-col">
+                  <span className="text-[10px] text-[#888]">Rational Peak Qr</span>
+                  <span className="text-white font-bold text-sm mt-0.5">{codalMetrics.Qr_active.toFixed(2)} m³/s</span>
+                  <span className="text-[9px] text-[#737373] mt-0.5">
+                    {isIndian ? '0.028 · P · f · A · Ic' : '0.00278 · C · A · Ic'}
+                  </span>
+                </div>
+                <div className="p-2 rounded bg-[#161616] border border-[#2a2a2a] flex flex-col">
+                  <span className="text-[10px] text-[#888]">
+                    {isIndian ? 'Empirical Peak Q_emp' : 'USGS Regional Qp'}
+                  </span>
+                  <span className="text-white font-bold text-sm mt-0.5">{codalMetrics.Q_emp_active.toFixed(2)} m³/s</span>
+                  <span className="text-[9px] text-[#737373] mt-0.5">
+                    {isIndian ? 'Max(Dickens, Ryves, Inglis)' : '18.50 · A^0.68'}
+                  </span>
+                </div>
+                <div className="p-2 rounded bg-[#161616] border border-[#2a2a2a] flex flex-col">
+                  <span className="text-[10px] text-[#888]">Governing Design Q</span>
+                  <span className="text-cyan-300 font-bold text-sm mt-0.5">{codalMetrics.Q_design.toFixed(2)} m³/s</span>
+                  <span className="text-[9px] text-[#737373] mt-0.5">
+                    {isIndian ? 'Max(Rational, Empirical)' : 'Max(Rational, USGS)'}
+                  </span>
+                </div>
+                <div className="p-2 rounded bg-[#161616] border border-[#2a2a2a] flex flex-col">
+                  <span className="text-[10px] text-[#888]">Waterway Width W</span>
+                  <span className="text-amber-400 font-bold text-sm mt-0.5">{codalMetrics.W_active.toFixed(2)} m</span>
+                  <span className="text-[9px] text-[#737373] mt-0.5">
+                    {isIndian ? '4.825 · √Q (Lacey Regime)' : '3.65 · √Q (FHWA Envelope)'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -571,14 +779,17 @@ export const ReportCard: React.FC<ReportCardProps> = ({
             <>
               {/* Key Hydrograph & Culvert KPIs */}
               {(() => {
-                const hwRatio =
-                  (catchmentHydrograph.maxHeadwaterElevM - report.levelStreamOriginM) /
-                  culvertDiameterM;
-                const isSubmerged = hwRatio > 1.2;
-                const isCaution = hwRatio > 1.0 && hwRatio <= 1.2;
+                const hwLimit = isIndian ? 1.2 : 1.5;
+                const hwRatio = culvertMetrics?.hwRatio ?? 0;
+                const isSubmerged = hwRatio > hwLimit;
+                const isCaution = hwRatio > hwLimit * 0.833 && hwRatio <= hwLimit;
+                const v = culvertMetrics?.velocity ?? 0;
+                const isVelOk = culvertMetrics?.isVelocityCompliant ?? true;
+                const ha = culvertMetrics?.afflux ?? 0;
+                const isAffluxOk = culvertMetrics?.isAffluxCompliant ?? true;
 
                 return (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-xs">
                     <div className="p-2 rounded bg-[#111] border border-[#222] flex flex-col">
                       <span className="text-[10px] text-[#737373] uppercase">Peak Discharge</span>
                       <span className="text-cyan-300 font-bold text-sm">
@@ -626,19 +837,69 @@ export const ReportCard: React.FC<ReportCardProps> = ({
                         </span>
                       </div>
                       <span className="text-[9px] text-[#888]">
-                        Limit: HW/D ≤ 1.20
+                        Limit: HW/D ≤ {hwLimit.toFixed(2)} ({isIndian ? 'IRC:SP:13' : 'FHWA'})
+                      </span>
+                    </div>
+
+                    <div className="p-2 rounded bg-[#111] border border-[#222] flex flex-col">
+                      <span className="text-[10px] text-[#737373] uppercase">Barrel Velocity</span>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`font-bold text-sm ${
+                            isVelOk ? 'text-emerald-300' : 'text-rose-400'
+                          }`}
+                        >
+                          {v.toFixed(2)} m/s
+                        </span>
+                        <span
+                          className={`text-[9px] px-1 py-0.5 rounded font-semibold uppercase ${
+                            isVelOk
+                              ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'
+                              : 'bg-rose-950/80 text-rose-300 border border-rose-800'
+                          }`}
+                        >
+                          {isVelOk ? 'Pass' : 'Check'}
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-[#888]">
+                        {isIndian ? '0.60–3.00 m/s (IS 458)' : '0.90–4.50 m/s (ASTM)'}
+                      </span>
+                    </div>
+
+                    <div className="p-2 rounded bg-[#111] border border-[#222] flex flex-col">
+                      <span className="text-[10px] text-[#737373] uppercase">Afflux (ha)</span>
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={`font-bold text-sm ${
+                            isAffluxOk ? 'text-emerald-300' : 'text-rose-400'
+                          }`}
+                        >
+                          {ha.toFixed(3)} m
+                        </span>
+                        <span
+                          className={`text-[9px] px-1 py-0.5 rounded font-semibold uppercase ${
+                            isAffluxOk
+                              ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800'
+                              : 'bg-rose-950/80 text-rose-300 border border-rose-800'
+                          }`}
+                        >
+                          {isAffluxOk ? 'Pass' : 'High'}
+                        </span>
+                      </div>
+                      <span className="text-[9px] text-[#888]">
+                        Limit: ≤ {isIndian ? '0.30 m (IRC)' : '0.15 m (FHWA)'}
                       </span>
                     </div>
 
                     <div className="p-2 rounded bg-[#111] border border-[#222] flex flex-col">
                       <span className="text-[10px] text-[#737373] uppercase">Governing Regime</span>
-                      <span className="text-emerald-300 font-bold text-xs uppercase mt-0.5">
+                      <span className="text-emerald-300 font-bold text-xs uppercase mt-0.5 truncate">
                         {catchmentHydrograph.governingRegime === 'inlet-control'
-                          ? 'Inlet Control (HDS-5)'
-                          : 'Outlet Control (Full)'}
+                          ? 'Inlet Control'
+                          : 'Outlet Control'}
                       </span>
                       <span className="text-[9px] text-[#888]">
-                        Continuity err: {catchmentHydrograph.massConservationErrorPct.toFixed(3)}%
+                        Err: {catchmentHydrograph.massConservationErrorPct.toFixed(2)}%
                       </span>
                     </div>
                   </div>
@@ -814,6 +1075,297 @@ export const ReportCard: React.FC<ReportCardProps> = ({
         </div>
       )}
 
+      {activeTab === 'codal' && (
+        <div className="p-4 bg-[#0a0a0a] flex flex-col gap-3 font-tech">
+          <div className="p-3 bg-[#111] border border-[#222] rounded flex flex-col gap-1">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className={`w-4 h-4 ${isIndian ? 'text-amber-400' : 'text-cyan-400'}`} />
+                <span className={`text-xs font-bold uppercase tracking-wider ${isIndian ? 'text-amber-300' : 'text-cyan-300'}`}>
+                  {isIndian ? 'IRC & MoRTH Codal Provisions & Scrutiny' : 'FHWA HDS-5 & AASHTO Hydraulic Audit'}
+                </span>
+              </div>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-[#1c1c1c] border border-[#333] text-[#aaa]">
+                50-Year Design Frequency
+              </span>
+            </div>
+            <p className="text-[10px] text-[#737373] leading-relaxed">
+              {isIndian
+                ? 'Hydraulic scrutiny compliant with IRC:SP:13-2022 (Guidelines for Design of Small Bridges & Culverts), IRC:78-2014 (Foundations & Substructure Scour), and IS 458:2021 (Precast Concrete Pipes).'
+                : 'Hydraulic audit compliant with FHWA HDS-5 (Hydraulic Design of Highway Culverts), AASHTO Drainage Manual, ASTM C76M (Reinforced Concrete Culvert Pipe), and FHWA HEC-18 (Bridge Scour).'}
+            </p>
+          </div>
+
+          <div className="border border-[#222] rounded overflow-hidden bg-[#111]/80 text-xs">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="border-b border-[#222] bg-[#161616] text-[10px] uppercase tracking-wider text-[#888]">
+                  <th className="py-2 px-3 font-mono font-bold border-r border-[#222] w-1/4">Parameter / Check</th>
+                  <th className="py-2 px-3 font-mono font-bold border-r border-[#222] w-1/3">Governing Formulation &amp; Limit</th>
+                  <th className="py-2 px-3 font-mono font-bold border-r border-[#222] w-1/4">Simulated Design Value</th>
+                  <th className="py-2 px-3 font-mono font-bold w-1/6">Compliance Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#222]">
+                {/* 1. Rational Runoff Discharge */}
+                <tr className="hover:bg-[#171717]/40">
+                  <td className="py-2.5 px-3 font-mono font-semibold text-[11px] text-[#e5e7eb] border-r border-[#222]">
+                    Rational Peak Runoff (Qr)
+                  </td>
+                  <td className="py-2.5 px-3 text-[11px] text-[#aaa] border-r border-[#222]">
+                    {isIndian ? (
+                      <div>
+                        <div className="font-mono text-amber-300">Qr = 0.028 · P · f · A · Ic</div>
+                        <div className="text-[10px] text-[#737373]">IRC:SP:13 Cl. 4.4.2 (P=0.50, f=1.00)</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="font-mono text-cyan-300">Q = 0.00278 · C · A · Ic</div>
+                        <div className="text-[10px] text-[#737373]">AASHTO / FHWA HDS-2 SI Eq. (C=0.50)</div>
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-2.5 px-3 font-mono font-bold text-white border-r border-[#222]">
+                    {codalMetrics?.Qr_active.toFixed(2)} m³/s
+                  </td>
+                  <td className="py-2.5 px-3">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-emerald-950/80 text-emerald-300 border border-emerald-800">
+                      Evaluated
+                    </span>
+                  </td>
+                </tr>
+
+                {/* 2. Regional Flood Check */}
+                <tr className="hover:bg-[#171717]/40">
+                  <td className="py-2.5 px-3 font-mono font-semibold text-[11px] text-[#e5e7eb] border-r border-[#222]">
+                    Regional Flood Envelopes
+                  </td>
+                  <td className="py-2.5 px-3 text-[11px] text-[#aaa] border-r border-[#222]">
+                    {isIndian ? (
+                      <div>
+                        <div className="font-mono text-amber-300">Dickens: 16.75·A^0.75 | Ryves: 8.5·A^(2/3)</div>
+                        <div className="text-[10px] text-[#737373]">IRC:SP:13 Cl. 4.3 (Central/Hilly defaults)</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="font-mono text-cyan-300">USGS Curve: Qp = 18.50 · A^0.68</div>
+                        <div className="text-[10px] text-[#737373]">USGS SIR 2014-5002 Regional Regression</div>
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-2.5 px-3 font-mono font-bold text-white border-r border-[#222]">
+                    {codalMetrics?.Q_emp_active.toFixed(2)} m³/s
+                  </td>
+                  <td className="py-2.5 px-3">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-emerald-950/80 text-emerald-300 border border-emerald-800">
+                      Governing Q: {codalMetrics?.Q_design.toFixed(2)}
+                    </span>
+                  </td>
+                </tr>
+
+                {/* 3. Regime Waterway */}
+                <tr className="hover:bg-[#171717]/40">
+                  <td className="py-2.5 px-3 font-mono font-semibold text-[11px] text-[#e5e7eb] border-r border-[#222]">
+                    Regime Waterway Sizing (W)
+                  </td>
+                  <td className="py-2.5 px-3 text-[11px] text-[#aaa] border-r border-[#222]">
+                    {isIndian ? (
+                      <div>
+                        <div className="font-mono text-amber-300">W = 4.825 · √Q (Lacey Regime)</div>
+                        <div className="text-[10px] text-[#737373]">IRC:SP:13 Cl. 6.2 linear waterway</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="font-mono text-cyan-300">W = 3.65 · √Q (FHWA Waterway)</div>
+                        <div className="text-[10px] text-[#737373]">FHWA HDS-5 standard waterway envelope</div>
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-2.5 px-3 font-mono font-bold text-amber-400 border-r border-[#222]">
+                    {codalMetrics?.W_active.toFixed(2)} m
+                  </td>
+                  <td className="py-2.5 px-3">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-cyan-950/80 text-cyan-300 border border-cyan-800">
+                      Required
+                    </span>
+                  </td>
+                </tr>
+
+                {/* 4. Barrel Velocity */}
+                <tr className="hover:bg-[#171717]/40">
+                  <td className="py-2.5 px-3 font-mono font-semibold text-[11px] text-[#e5e7eb] border-r border-[#222]">
+                    Barrel Velocity (V)
+                  </td>
+                  <td className="py-2.5 px-3 text-[11px] text-[#aaa] border-r border-[#222]">
+                    {isIndian ? (
+                      <div>
+                        <div>0.60 m/s ≤ V ≤ 3.00 m/s</div>
+                        <div className="text-[10px] text-[#737373]">IS 458: Non-silting (≥0.6) &amp; non-scouring (≤3.0)</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div>0.90 m/s ≤ V ≤ 4.50 m/s</div>
+                        <div className="text-[10px] text-[#737373]">ASTM C76M: AASHTO allowable range (3–15 fps)</div>
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-2.5 px-3 font-mono font-bold text-white border-r border-[#222]">
+                    {culvertMetrics ? `${culvertMetrics.velocity.toFixed(2)} m/s` : 'Simulate in hydrograph'}
+                  </td>
+                  <td className="py-2.5 px-3">
+                    {culvertMetrics ? (
+                      culvertMetrics.isVelocityCompliant ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-emerald-950/80 text-emerald-300 border border-emerald-800 flex items-center gap-1 w-fit">
+                          <CheckCircle2 className="w-3 h-3" /> Pass
+                        </span>
+                      ) : (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-rose-950/80 text-rose-300 border border-rose-800 flex items-center gap-1 w-fit">
+                          <XCircle className="w-3 h-3" /> Check
+                        </span>
+                      )
+                    ) : (
+                      <span className="text-[9px] text-[#737373]">—</span>
+                    )}
+                  </td>
+                </tr>
+
+                {/* 5. Afflux / Backwater */}
+                <tr className="hover:bg-[#171717]/40">
+                  <td className="py-2.5 px-3 font-mono font-semibold text-[11px] text-[#e5e7eb] border-r border-[#222]">
+                    Upstream Heading-Up / Afflux (ha)
+                  </td>
+                  <td className="py-2.5 px-3 text-[11px] text-[#aaa] border-r border-[#222]">
+                    {isIndian ? (
+                      <div>
+                        <div>ha ≤ 0.30 m maximum heading-up</div>
+                        <div className="text-[10px] text-[#737373]">IRC:SP:13 Cl. 5.4 Molesworth formula limit</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div>ha ≤ 0.15 m allowable backwater rise</div>
+                        <div className="text-[10px] text-[#737373]">FHWA HDS-5 Sec. 3.2 0.5-ft backwater threshold</div>
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-2.5 px-3 font-mono font-bold text-white border-r border-[#222]">
+                    {culvertMetrics ? `${culvertMetrics.afflux.toFixed(3)} m` : 'Simulate in hydrograph'}
+                  </td>
+                  <td className="py-2.5 px-3">
+                    {culvertMetrics ? (
+                      culvertMetrics.isAffluxCompliant ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-emerald-950/80 text-emerald-300 border border-emerald-800 flex items-center gap-1 w-fit">
+                          <CheckCircle2 className="w-3 h-3" /> Pass
+                        </span>
+                      ) : (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-rose-950/80 text-rose-300 border border-rose-800 flex items-center gap-1 w-fit">
+                          <XCircle className="w-3 h-3" /> Exceeds
+                        </span>
+                      )
+                    ) : (
+                      <span className="text-[9px] text-[#737373]">—</span>
+                    )}
+                  </td>
+                </tr>
+
+                {/* 6. Headwater HW/D Submergence */}
+                <tr className="hover:bg-[#171717]/40">
+                  <td className="py-2.5 px-3 font-mono font-semibold text-[11px] text-[#e5e7eb] border-r border-[#222]">
+                    Inlet Headwater Submergence (HW/D)
+                  </td>
+                  <td className="py-2.5 px-3 text-[11px] text-[#aaa] border-r border-[#222]">
+                    {isIndian ? (
+                      <div>
+                        <div>HW/D ≤ 1.20 (Non-submerged inlet criteria)</div>
+                        <div className="text-[10px] text-[#737373]">IRC:SP:13 Cl. 5.4 freeboard preservation</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div>HW/D ≤ 1.50 (Design flood submergence limit)</div>
+                        <div className="text-[10px] text-[#737373]">FHWA HDS-5 Sec. 3.2 roadway embankment protection</div>
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-2.5 px-3 font-mono font-bold text-white border-r border-[#222]">
+                    {culvertMetrics ? `${culvertMetrics.hwRatio.toFixed(2)}` : 'Simulate in hydrograph'}
+                  </td>
+                  <td className="py-2.5 px-3">
+                    {culvertMetrics ? (
+                      culvertMetrics.isHwCompliant ? (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-emerald-950/80 text-emerald-300 border border-emerald-800 flex items-center gap-1 w-fit">
+                          <CheckCircle2 className="w-3 h-3" /> Pass
+                        </span>
+                      ) : (
+                        <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-rose-950/80 text-rose-300 border border-rose-800 flex items-center gap-1 w-fit">
+                          <XCircle className="w-3 h-3" /> Submerged
+                        </span>
+                      )
+                    ) : (
+                      <span className="text-[9px] text-[#737373]">—</span>
+                    )}
+                  </td>
+                </tr>
+
+                {/* 7. Foundation Scour */}
+                <tr className="hover:bg-[#171717]/40">
+                  <td className="py-2.5 px-3 font-mono font-semibold text-[11px] text-[#e5e7eb] border-r border-[#222]">
+                    Foundation &amp; Bed Scour Depth
+                  </td>
+                  <td className="py-2.5 px-3 text-[11px] text-[#aaa] border-r border-[#222]">
+                    {isIndian ? (
+                      <div>
+                        <div className="font-mono text-amber-300">R = 1.34 · (q²/f)^(1/3) | dmax = 2.00 · R</div>
+                        <div className="text-[10px] text-[#737373]">IRC:78-2014 Cl. 703 Lacey Regime with Ksf=1.00</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="font-mono text-cyan-300">HEC-18 Contraction &amp; Abutment Multipliers</div>
+                        <div className="text-[10px] text-[#737373]">FHWA HEC-18 Laursen Clear-Water / Froehlich</div>
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-2.5 px-3 font-mono text-xs text-[#ccc] border-r border-[#222]">
+                    {isIndian ? 'Lacey Ksf = 1.00' : 'HEC-18 SF = 1.50'}
+                  </td>
+                  <td className="py-2.5 px-3">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-emerald-950/80 text-emerald-300 border border-emerald-800">
+                      Standard
+                    </span>
+                  </td>
+                </tr>
+
+                {/* 8. Structural Pipe Spec */}
+                <tr className="hover:bg-[#171717]/40">
+                  <td className="py-2.5 px-3 font-mono font-semibold text-[11px] text-[#e5e7eb] border-r border-[#222]">
+                    Culvert Pipe Specification
+                  </td>
+                  <td className="py-2.5 px-3 text-[11px] text-[#aaa] border-r border-[#222]">
+                    {isIndian ? (
+                      <div>
+                        <div>IS 458:2021 Class NP3 / NP4 Reinforced Concrete</div>
+                        <div className="text-[10px] text-[#737373]">Heavy-duty highway crossing under IRC Live Load</div>
+                      </div>
+                    ) : (
+                      <div>
+                        <div>ASTM C76M Class IV Reinforced Concrete Pipe</div>
+                        <div className="text-[10px] text-[#737373]">AASHTO M170M highway fill loading specifications</div>
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-2.5 px-3 font-mono text-xs text-white border-r border-[#222]">
+                    Ø {Math.round(culvertDiameterM * 1000)} mm
+                  </td>
+                  <td className="py-2.5 px-3">
+                    <span className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase bg-emerald-950/80 text-emerald-300 border border-emerald-800">
+                      Specified
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className="px-4 pb-3 grid grid-cols-3 gap-2 text-[11px] tabular-nums text-[#737373] font-tech">
         <div className="p-2 rounded bg-[#111] border border-[#222] flex flex-col">
           <span className="text-[10px] text-[#737373] uppercase">Thalweg slope</span>
@@ -899,14 +1451,24 @@ export const ReportCard: React.FC<ReportCardProps> = ({
           disabled={isExportingExcel}
           onClick={() => void handleExportExcel()}
           className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-[#10b981]/10 hover:bg-[#10b981]/20 border border-[#10b981]/40 hover:border-[#10b981] text-[#86efac] rounded text-xs font-semibold transition-all shadow-sm group disabled:opacity-50 font-tech"
-          title="Download 5-Worksheet Cross-Drainage (CD) DPR Package compliant with IRC:SP:13-2022, IRC:SP:42-2014, IRC:78-2014, and IS 458:2021"
+          title={
+            isIndian
+              ? 'Download 5-Worksheet Cross-Drainage (CD) DPR Package compliant with IRC:SP:13-2022, IRC:SP:42-2014, IRC:78-2014, and IS 458:2021'
+              : 'Download 5-Worksheet Cross-Drainage Culvert Audit Package compliant with FHWA HDS-5, AASHTO Drainage Manual, ASTM C76M, and FHWA HEC-18'
+          }
         >
           <FileSpreadsheet
             className={`w-3.5 h-3.5 text-[#10b981] ${
               isExportingExcel ? 'animate-pulse' : 'group-hover:scale-105'
             } transition-transform`}
           />
-          <span>{isExportingExcel ? 'Building DPR Package...' : 'Export DPR Excel (.xlsx)'}</span>
+          <span>
+            {isExportingExcel
+              ? 'Building DPR Package...'
+              : isIndian
+              ? 'Export IRC DPR Excel (.xlsx)'
+              : 'Export FHWA/AASHTO Excel (.xlsx)'}
+          </span>
         </button>
       </div>
     </div>
