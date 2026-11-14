@@ -260,15 +260,7 @@ ${alignmentPlacemark}
 
 /** Downloads a string as a file in the browser. */
 function downloadFile(content: string, filename: string, mimeType: string): void {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  downloadBlob(new Blob([content], { type: mimeType }), filename);
 }
 
 /** Exports the single-chainage Google Earth KML. */
@@ -323,14 +315,20 @@ export function buildSnapshotPayload(
 
 /** Triggers a browser download for a generated blob. */
 export function downloadBlob(blob: Blob, filename: string): void {
+  if (typeof window === 'undefined') return;
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
+  link.style.display = 'none';
   document.body.appendChild(link);
   link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    try {
+      if (link.parentNode) link.parentNode.removeChild(link);
+    } catch {}
+    URL.revokeObjectURL(url);
+  }, 10000);
 }
 
 /**

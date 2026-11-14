@@ -964,9 +964,12 @@ export async function populateStormwaterDprWorkbook(
     if (typeof snapshotImage === 'string') {
       const base64Data = snapshotImage.includes(',') ? snapshotImage.split(',')[1] : snapshotImage;
       imgId = workbook.addImage({ base64: base64Data, extension: 'png' });
-    } else {
-      const buf = Buffer.isBuffer(snapshotImage) ? snapshotImage : Buffer.from(snapshotImage);
-      imgId = workbook.addImage({ buffer: buf as never, extension: 'png' });
+    } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer(snapshotImage)) {
+      imgId = workbook.addImage({ buffer: snapshotImage as never, extension: 'png' });
+    } else if (snapshotImage instanceof Uint8Array) {
+      imgId = workbook.addImage({ buffer: snapshotImage.buffer as never, extension: 'png' });
+    } else if ((snapshotImage as any) instanceof ArrayBuffer) {
+      imgId = workbook.addImage({ buffer: snapshotImage as never, extension: 'png' });
     }
 
     if (imgId !== undefined) {

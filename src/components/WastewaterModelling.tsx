@@ -740,8 +740,15 @@ export const WastewaterModelling: React.FC = () => {
     const a = document.createElement('a');
     a.href = url;
     a.download = `${network.name.replace(/\s+/g, '_')}.inp`;
+    a.style.display = 'none';
+    document.body.appendChild(a);
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => {
+      try {
+        if (a.parentNode) a.parentNode.removeChild(a);
+      } catch {}
+      URL.revokeObjectURL(url);
+    }, 10000);
   }, [network]);
 
   // EPA SWMM / Sewer INP Import

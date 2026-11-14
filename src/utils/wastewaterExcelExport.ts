@@ -665,12 +665,18 @@ export async function downloadWastewaterExcel(
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const filename = `Wastewater_Hydraulic_Calculation_${cleanName}_${timestamp}.xlsx`;
 
+  if (typeof window === 'undefined') return;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.style.display = 'none';
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    try {
+      if (a.parentNode) a.parentNode.removeChild(a);
+    } catch {}
+    URL.revokeObjectURL(url);
+  }, 10000);
 }
