@@ -1,7 +1,12 @@
-import React from 'react';
-import { Compass, LogOut, Trash2, FileSpreadsheet, Menu } from 'lucide-react';
+import React, { useState } from 'react';
+import { Compass, LogOut, Trash2, FileSpreadsheet, Menu, ShieldCheck } from 'lucide-react';
 import { AppUser } from '../auth/useGoogleAuth';
 import { ActiveModuleTab } from '../types/navigation';
+import {
+  getGlobalDesignStandard,
+  setGlobalDesignStandard,
+  DprDesignStandard,
+} from '../utils/dprExcelBase';
 
 interface HeaderProps {
   onClearData: () => void;
@@ -33,6 +38,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const userName = user ? user.name : '';
   const userAvatar = user?.picture;
+  const [std, setStd] = useState<DprDesignStandard>(getGlobalDesignStandard());
 
   return (
     <header className="h-14 bg-[#0a0a0a] border-b border-[#222] px-3 md:px-5 flex items-center justify-between shrink-0 z-30 select-none">
@@ -114,6 +120,25 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Zone 3: Primary Action & Tools */}
       <div className="flex items-center gap-2">
+        {/* Codal Design Standard Selector */}
+        <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 bg-[#111] border border-[#222] rounded text-xs font-tech">
+          <ShieldCheck className="w-3.5 h-3.5 text-amber-500" />
+          <span className="text-[#737373]">Standard:</span>
+          <select
+            value={std}
+            onChange={(e) => {
+              const next = e.target.value as DprDesignStandard;
+              setGlobalDesignStandard(next);
+              setStd(next);
+            }}
+            className="bg-transparent text-amber-400 font-semibold focus:outline-none cursor-pointer"
+            title="Toggle DPR Engineering Design Standard (IRC / CPHEEO vs International)"
+          >
+            <option value="INDIAN_DPR" className="bg-[#111] text-amber-400">Indian DPR (IRC / CPHEEO)</option>
+            <option value="INTERNATIONAL" className="bg-[#111] text-white">International (AASHTO / EPA)</option>
+          </select>
+        </div>
+
         {/* Signed-in account chip */}
         {user && (
           <>

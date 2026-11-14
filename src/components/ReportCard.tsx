@@ -7,6 +7,11 @@ import {
 } from '../utils/delineationEngine';
 import { UsdaSoilTexture, USDA_SOIL_TEXTURE_PARAMETERS } from '../utils/greenAmpt';
 import {
+  getGlobalDesignStandard,
+  setGlobalDesignStandard,
+  DprDesignStandard,
+} from '../utils/dprExcelBase';
+import {
   Download,
   FileSpreadsheet,
   Waves,
@@ -44,6 +49,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
   const [activeTab, setActiveTab] = useState<'table' | 'profile' | 'hydrograph'>('table');
   const [isExportingExcel, setIsExportingExcel] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [designStandard, setDesignStandard] = useState<DprDesignStandard>(getGlobalDesignStandard());
 
   // Hydrograph & Culvert Rating state
   const [soilTexture, setSoilTexture] = useState<UsdaSoilTexture>('Sandy Loam');
@@ -860,6 +866,25 @@ export const ReportCard: React.FC<ReportCardProps> = ({
         </div>
       )}
 
+      <div className="px-4 py-2 bg-[#0d0d0d] border-t border-[#222] flex items-center justify-between gap-2 text-[11px] font-tech text-[#888]">
+        <div className="flex items-center gap-1.5">
+          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+          <span className="text-[#bbb]">DPR Standard:</span>
+        </div>
+        <select
+          value={designStandard}
+          onChange={(e) => {
+            const next = e.target.value as DprDesignStandard;
+            setDesignStandard(next);
+            setGlobalDesignStandard(next);
+          }}
+          className="bg-[#171717] border border-[#333] text-[#e5e7eb] rounded px-2 py-0.5 text-[11px] font-tech focus:outline-none focus:border-amber-500 cursor-pointer"
+        >
+          <option value="INDIAN_DPR">IRC:SP:13 / IRC:78 (Indian DPR)</option>
+          <option value="INTERNATIONAL">FHWA / AASHTO (International)</option>
+        </select>
+      </div>
+
       <div className="p-4 pt-1 bg-[#0a0a0a] flex flex-col sm:flex-row gap-2 border-t border-[#222]/80">
         <button
           onClick={handleExportKml}
@@ -874,14 +899,14 @@ export const ReportCard: React.FC<ReportCardProps> = ({
           disabled={isExportingExcel}
           onClick={() => void handleExportExcel()}
           className="flex-1 flex items-center justify-center gap-2 py-2.5 px-3 bg-[#10b981]/10 hover:bg-[#10b981]/20 border border-[#10b981]/40 hover:border-[#10b981] text-[#86efac] rounded text-xs font-semibold transition-all shadow-sm group disabled:opacity-50 font-tech"
-          title="Download a three-sheet workbook: hydrology summary, complete chainage register, and catchment boundary vertices"
+          title="Download 5-Worksheet Cross-Drainage (CD) DPR Package compliant with IRC:SP:13-2022, IRC:SP:42-2014, IRC:78-2014, and IS 458:2021"
         >
           <FileSpreadsheet
             className={`w-3.5 h-3.5 text-[#10b981] ${
               isExportingExcel ? 'animate-pulse' : 'group-hover:scale-105'
             } transition-transform`}
           />
-          <span>{isExportingExcel ? 'Building...' : 'Export Excel (.xlsx)'}</span>
+          <span>{isExportingExcel ? 'Building DPR Package...' : 'Export DPR Excel (.xlsx)'}</span>
         </button>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { CorridorAlignment, HydrologyReport } from '../types/hydrology';
 import { generateClientHydrologySnapshot } from './stormwaterSnapshot';
+import { populateStormwaterDprWorkbook } from './stormwaterDprBuilder';
 
 const LABEL_FILL = {
   type: 'pattern' as const,
@@ -379,8 +380,10 @@ export async function exportExcelReport(
 }
 
 /**
- * Builds the Excel workbook directly on the client with ExcelJS,
- * matching the server layout and embedding the 70%-framed snapshot image.
+ * Builds the 5-Worksheet Cross-Drainage (CD) Structure DPR Excel Package
+ * compliant with IRC:SP:13-2022, IRC:SP:42-2014, IRC:78-2014, and IS 458:2021
+ * directly on the client with ExcelJS, matching the server layout and embedding
+ * the 70%-framed snapshot image.
  */
 export async function buildClientHydrologyWorkbook(
   report: HydrologyReport,
@@ -389,86 +392,9 @@ export async function buildClientHydrologyWorkbook(
 ): Promise<Blob> {
   const { default: ExcelJS } = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'Tensora GIS - Hydrology Catchment Engine';
+  workbook.creator = 'Tensora GIS — Indian Codal DPR Engine (IRC:SP:13 / IRC:78)';
   workbook.created = new Date();
 
-  const nameBase = (report.targetChainageFormatted || 'Report')
-    .replace(/[\\/*?:[\]]/g, '_')
-    .slice(0, 31);
-  const summary = workbook.addWorksheet(nameBase, {
-    views: [{ showGridLines: true }],
-  });
-  summary.columns = [{ width: 28 }, { width: 20 }, { width: 14 }];
-
-  const headline: [string, any, string][] = [
-    ['LATITUDE :', report.latitudeDMS, ''],
-    ['LONGITUDE :', report.longitudeDMS, ''],
-    ['CATCHMENT AREA (A):', report.catchmentAreaKm2, 'km2'],
-    ['LENGTH OF STREAM (L):', report.lengthOfStreamKm, 'km'],
-    ['LEVEL STREAM ORIGIN:', report.levelStreamOriginM, 'm'],
-    ['HIGHEST CONTOUR:', report.highestContourM, 'm'],
-  ];
-
-  for (const [label, value, unit] of headline) {
-    const row = summary.addRow([label, value, unit]);
-    row.height = 24;
-    const cellA = row.getCell(1);
-    const cellB = row.getCell(2);
-    const cellC = row.getCell(3);
-    cellA.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0F172A' } };
-    cellA.fill = LABEL_FILL;
-    cellB.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF0284C7' } };
-    cellC.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF64748B' } };
-    cellA.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    cellB.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    cellC.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    cellA.border = THIN_BORDER;
-    cellB.border = THIN_BORDER;
-    cellC.border = THIN_BORDER;
-  }
-
-  summary.addRow([]);
-  const scopeM = report.scopeAppliedM ?? 500;
-  const secondary: [string, any, string][] = [
-    ['ELEVATION DROP (Δh):', report.elevationDropM, 'm'],
-    ['TARGET CHAINAGE:', report.targetChainageFormatted ?? String(report.targetChainage), ''],
-    [
-      'ANALYSIS SCOPE:',
-      scopeM,
-      report.scopeExpandedDueToFlatRelief ? 'm (expanded: relief < 5m)' : 'm',
-    ],
-    ['RELIEF IN SCOPE:', report.reliefWithinScopeM !== undefined ? report.reliefWithinScopeM : '—', 'm'],
-    ['MEETS 5 m THRESHOLD:', report.meetsReliefThreshold === undefined ? '—' : report.meetsReliefThreshold ? 'Yes' : 'No', ''],
-    ['ELEVATION SOURCE:', report.elevationSource ?? 'Not recorded', ''],
-    [
-      'ORIGIN DATUM:',
-      report.elevationOriginKind === 'survey' ? 'Uploaded survey sheet' : 'Sampled from DEM',
-      '',
-    ],
-    ['DEM COVERAGE:', report.demCoverage !== undefined ? Number((report.demCoverage * 100).toFixed(1)) : 100, '%'],
-  ];
-
-  for (const [label, value, unit] of secondary) {
-    const row = summary.addRow([label, value, unit]);
-    row.height = 20;
-    const cellA = row.getCell(1);
-    const cellB = row.getCell(2);
-    const cellC = row.getCell(3);
-    cellA.font = { name: 'Arial', size: 9, bold: true, color: { argb: 'FF334155' } };
-    cellB.font = { name: 'Arial', size: 9, color: { argb: 'FF334155' } };
-    cellC.font = { name: 'Arial', size: 9, color: { argb: 'FF64748B' } };
-    cellA.fill = LABEL_FILL;
-    cellA.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    cellB.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    cellC.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
-    cellA.border = THIN_BORDER;
-    cellB.border = THIN_BORDER;
-    cellC.border = THIN_BORDER;
-  }
-
-  summary.addRow([]);
-
-  // Embed the delineation snapshot
   let snapshotDataUrl = clientSnapshotDataUrl;
   if (!snapshotDataUrl && typeof document !== 'undefined') {
     try {
@@ -479,19 +405,7 @@ export async function buildClientHydrologyWorkbook(
     }
   }
 
-  if (snapshotDataUrl) {
-    const base64Data = snapshotDataUrl.includes(',')
-      ? snapshotDataUrl.split(',')[1]
-      : snapshotDataUrl;
-    const imageId = workbook.addImage({
-      base64: base64Data,
-      extension: 'png',
-    });
-    summary.addImage(imageId, {
-      tl: { col: 0, row: summary.rowCount + 1 },
-      ext: { width: 840, height: 574 },
-    });
-  }
+  await populateStormwaterDprWorkbook(workbook, report, snapshotDataUrl);
 
   const out = await workbook.xlsx.writeBuffer();
   return new Blob([out], {

@@ -29,6 +29,7 @@ export interface SnapshotParams {
   tributaryPaths?: [number, number][][];
   contours?: { elevation: number; coordinates: [number, number][] }[];
   chainages?: { chainage: number; formatted: string; lat: number; lng: number }[];
+  elevationProfile?: { distanceM: number; elevationM: number; lat: number; lng: number }[];
   width?: number;
   height?: number;
   outputFormat?: 'png' | 'jpeg';
