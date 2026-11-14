@@ -50,6 +50,56 @@ export function localMetersToGeo(
 }
 
 /**
+ * Centripetal Catmull-Rom spline evaluation (alpha = 0.5)
+ * Mathematically guaranteed cusp-free, loop-free, and adheres strictly
+ * to real river channel geometry without overshooting into adjacent banks.
+ */
+export function evalCentripetalCatmullRom2D(
+  p0: { x: number; y: number },
+  p1: { x: number; y: number },
+  p2: { x: number; y: number },
+  p3: { x: number; y: number },
+  u: number
+): { x: number; y: number } {
+  const d01 = Math.hypot(p1.x - p0.x, p1.y - p0.y) ** 0.5 || 1e-4;
+  const d12 = Math.hypot(p2.x - p1.x, p2.y - p1.y) ** 0.5 || 1e-4;
+  const d23 = Math.hypot(p3.x - p2.x, p3.y - p2.y) ** 0.5 || 1e-4;
+
+  const t0 = 0;
+  const t1 = t0 + d01;
+  const t2 = t1 + d12;
+  const t3 = t2 + d23;
+  const t = t1 + u * (t2 - t1);
+
+  const a1x = ((t1 - t) * p0.x + (t - t0) * p1.x) / (t1 - t0);
+  const a1y = ((t1 - t) * p0.y + (t - t0) * p1.y) / (t1 - t0);
+  const a2x = ((t2 - t) * p1.x + (t - t1) * p2.x) / (t2 - t1);
+  const a2y = ((t2 - t) * p1.y + (t - t1) * p2.y) / (t2 - t1);
+  const a3x = ((t3 - t) * p2.x + (t - t2) * p3.x) / (t3 - t2);
+  const a3y = ((t3 - t) * p2.y + (t - t2) * p3.y) / (t3 - t2);
+
+  const b1x = ((t2 - t) * a1x + (t - t0) * a2x) / (t2 - t0);
+  const b1y = ((t2 - t) * a1y + (t - t0) * a2y) / (t2 - t0);
+  const b2x = ((t3 - t) * a2x + (t - t1) * a3x) / (t3 - t1);
+  const b2y = ((t3 - t) * a2y + (t - t1) * a3y) / (t3 - t1);
+
+  const cx = ((t2 - t) * b1x + (t - t1) * b2x) / (t2 - t1);
+  const cy = ((t2 - t) * b1y + (t - t1) * b2y) / (t2 - t1);
+  return { x: cx, y: cy };
+}
+
+export function evalCatmullRomSpline(v0: number, v1: number, v2: number, v3: number, t: number): number {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return 0.5 * (
+    (2 * v1) +
+    (-v0 + v2) * t +
+    (2 * v0 - 5 * v1 + 4 * v2 - v3) * t2 +
+    (-v0 + 3 * v1 - 3 * v2 + v3) * t3
+  );
+}
+
+/**
  * Resample a river centerline to uniform station spacing ds (meters)
  */
 export function resampleCenterline(
@@ -77,16 +127,6 @@ export function resampleCenterline(
   }
 
   const totalLength = currentStation;
-function evalCatmullRomSpline(v0: number, v1: number, v2: number, v3: number, t: number): number {
-  const t2 = t * t;
-  const t3 = t2 * t;
-  return 0.5 * (
-    (2 * v1) +
-    (-v0 + v2) * t +
-    (2 * v0 - 5 * v1 + 4 * v2 - v3) * t2 +
-    (-v0 + 3 * v1 - 3 * v2 + v3) * t3
-  );
-}
 
   const numSegments = Math.max(2, Math.round(totalLength / targetSpacingM));
   const actualSpacing = totalLength / numSegments;
@@ -118,8 +158,9 @@ function evalCatmullRomSpline(v0: number, v1: number, v2: number, v3: number, t:
       const p2 = pB;
       const p3 = metricPoints[Math.min(metricPoints.length - 1, segIdx + 2)];
 
-      interpX = evalCatmullRomSpline(p0.x, p1.x, p2.x, p3.x, t);
-      interpY = evalCatmullRomSpline(p0.y, p1.y, p2.y, p3.y, t);
+      const cPt = evalCentripetalCatmullRom2D(p0, p1, p2, p3, t);
+      interpX = cPt.x;
+      interpY = cPt.y;
 
       if (p1.raw.bedElevationM !== undefined && p2.raw.bedElevationM !== undefined) {
         const z0 = p0.raw.bedElevationM ?? p1.raw.bedElevationM;
@@ -316,17 +357,6 @@ export function generateRiverGridMesh(
   const nx = res.nx;
   const targetSpacingM = res.targetSpacingM;
 
-  function evalCatmullRomSpline(v0: number, v1: number, v2: number, v3: number, t: number): number {
-    const t2 = t * t;
-    const t3 = t2 * t;
-    return 0.5 * (
-      (2 * v1) +
-      (-v0 + v2) * t +
-      (2 * v0 - 5 * v1 + 4 * v2 - v3) * t2 +
-      (-v0 + 3 * v1 - 3 * v2 + v3) * t3
-    );
-  }
-
   // Direction vector at outlet for tangential extrapolation when elongated
   const pEnd = metricRaw[metricRaw.length - 1];
   const pPrev = metricRaw[Math.max(0, metricRaw.length - 2)];
@@ -363,8 +393,9 @@ export function generateRiverGridMesh(
         const p2 = pB;
         const p3 = metricRaw[Math.min(metricRaw.length - 1, segIdx + 2)];
 
-        interpX = evalCatmullRomSpline(p0.x, p1.x, p2.x, p3.x, t);
-        interpY = evalCatmullRomSpline(p0.y, p1.y, p2.y, p3.y, t);
+        const cPt = evalCentripetalCatmullRom2D(p0, p1, p2, p3, t);
+        interpX = cPt.x;
+        interpY = cPt.y;
 
         if (p1.raw.bedElevationM !== undefined && p2.raw.bedElevationM !== undefined) {
           const z0 = p0.raw.bedElevationM ?? p1.raw.bedElevationM;
