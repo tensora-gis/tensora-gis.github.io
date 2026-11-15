@@ -196,7 +196,11 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
         </div>
 
         {errorMessage && (
-          <div className="bg-red-950/60 border border-red-500/40 rounded-lg p-2.5 text-xs text-red-300 flex items-center justify-between">
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="bg-red-950/60 border border-red-500/40 rounded-lg p-2.5 text-xs text-red-300 flex items-center justify-between"
+          >
             <span>{errorMessage}</span>
             <button
               onClick={() => setErrorMessage(null)}
@@ -340,14 +344,18 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
 
                 <button
                   onClick={handleExportGeoJson}
-                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded text-xs transition"
+                  disabled={isRunning || isExportingExcel}
+                  aria-label="Export GeoJSON mesh results"
+                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 border border-slate-700 rounded text-xs transition"
                 >
                   GeoJSON
                 </button>
 
                 <button
                   onClick={handleExportAscii}
-                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded text-xs transition"
+                  disabled={isRunning || isExportingExcel}
+                  aria-label="Export ASCII depth grid"
+                  className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 border border-slate-700 rounded text-xs transition"
                 >
                   ASCII Grid
                 </button>

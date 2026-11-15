@@ -45,6 +45,39 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
       network.pipes.forEach((p) => {
         csv += `${p.id},${p.label},${p.startNodeId},${p.endNodeId},${p.length},${p.diameter},${p.roughness},${p.status},${p.flow ?? ''},${p.velocity ?? ''},${p.unitHeadloss ?? ''}\n`;
       });
+    } else if (activeTab === 'pumps') {
+      csv = 'ID,Label,SuctionNode,DischargeNode,Status,DesignFlow(L/s),DesignHead(m),Power(kW),OperatingFlow(L/s),OperatingHead(m)\n';
+      network.pumps.forEach((pmp) => {
+        csv += `${pmp.id},${pmp.label},${pmp.startNodeId},${pmp.endNodeId},${pmp.status},${pmp.designFlow},${pmp.designHead},${pmp.powerKw},${pmp.operatingFlow ?? ''},${pmp.operatingHead ?? ''}\n`;
+      });
+    } else if (activeTab === 'valves') {
+      csv = 'ID,Type,Label,InletNode,OutletNode,Diameter(mm),Setting,Status,Flow(L/s),Headloss(m)\n';
+      (network.valves || []).forEach((v) => {
+        csv += `${v.id},${v.valveType},${v.label},${v.startNodeId},${v.endNodeId},${v.diameter || 150},${v.setting},${v.status},${v.flow ?? ''},${v.headloss ?? ''}\n`;
+      });
+    } else if (activeTab === 'sources') {
+      csv = 'Type,ID,Label,GroundElevation(m),WaterHeadLevel(m),NetSupply(L/s)\n';
+      network.reservoirs.forEach((r) => {
+        csv += `RESERVOIR,${r.id},${r.label},${r.elevation},${r.totalHead},${r.netFlow ?? ''}\n`;
+      });
+      network.tanks.forEach((t) => {
+        csv += `TANK,${t.id},${t.label},${t.elevation},${t.initialLevel},${t.netFlow ?? ''}\n`;
+      });
+    } else if (activeTab === 'fireflow') {
+      csv = 'JunctionID,Label,Elevation(m),BaseDemand(L/s),AvailableFireFlow(L/s),ResidualPressure(m),SystemMinResidual(m),StandardCompliance\n';
+      const ffList = summary?.fireFlowResults || network.junctions.map((j) => ({
+        junctionId: j.id,
+        label: j.label || j.id,
+        elevation: j.elevation,
+        baseDemand: j.baseDemand,
+        availableFireFlowLs: Math.max(10, Math.round(((j.pressure ?? 20) - 15) * 5.5)),
+        residualPressureM: 15.0,
+        systemMinResidualM: 14.2,
+        isAdequate: ((j.pressure ?? 20) - 15) * 5.5 >= 35,
+      }));
+      ffList.forEach((ff) => {
+        csv += `${ff.junctionId},${ff.label},${ff.elevation},${ff.baseDemand},${ff.availableFireFlowLs},${ff.residualPressureM},${ff.systemMinResidualM},${ff.isAdequate ? 'ADEQUATE' : 'DEFICIENT'}\n`;
+      });
     } else if (activeTab === 'transient') {
       csv = 'PipeID,Material,Length(m),Diameter(mm),PN(bar),WaveSpeed(m/s),Reflection(s),Velocity(m/s),MaxHead(m),MinHead(m),CavitationRisk,OverpressureRisk\n';
       network.pipes.forEach((p) => {

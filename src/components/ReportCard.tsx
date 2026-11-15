@@ -1438,6 +1438,14 @@ export const ReportCard: React.FC<ReportCardProps> = ({
             </button>
             <button
               type="button"
+              onClick={() => setExportError(null)}
+              className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium transition-colors font-tech cursor-pointer"
+              aria-label="Dismiss export error"
+            >
+              Dismiss
+            </button>
+            <button
+              type="button"
               onClick={() => window.location.reload()}
               className="px-2 py-0.5 rounded bg-[#ef4444]/20 hover:bg-[#ef4444]/30 text-white text-[10px] font-medium transition-colors font-tech cursor-pointer"
             >

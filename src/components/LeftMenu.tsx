@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ActiveModuleTab } from '../types/navigation';
 import {
   CloudRain,
@@ -28,6 +28,18 @@ export const LeftMenu: React.FC<LeftMenuProps> = ({
   onCloseMobile,
   isMobileDrawerOpen = false,
 }) => {
+  useEffect(() => {
+    if (!isMobileDrawerOpen || !onCloseMobile) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onCloseMobile();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMobileDrawerOpen, onCloseMobile]);
+
   const tabs = [
     {
       id: 'stormwater' as const,
@@ -132,7 +144,12 @@ export const LeftMenu: React.FC<LeftMenuProps> = ({
             className="fixed inset-0 bg-black/70 backdrop-blur-xs transition-opacity"
             onClick={onCloseMobile}
           />
-          <div className="relative w-64 max-w-[80vw] h-full bg-[#0d0d0d] border-r border-[#222] shadow-2xl z-10">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Modules navigation menu"
+            className="relative w-64 max-w-[80vw] h-full bg-[#0d0d0d] border-r border-[#222] shadow-2xl z-10"
+          >
             {menuContent(true)}
           </div>
         </div>

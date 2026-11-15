@@ -584,9 +584,11 @@ export const MapViewport: React.FC<MapViewportProps> = ({
           ] as const
         ).map(([label, active, setActive, swatch]) => (
           <button
+            type="button"
             key={label}
             onClick={() => setActive(!active)}
             aria-pressed={active}
+            aria-label={`Toggle ${label} layer`}
             className={`flex items-center justify-between gap-3 px-2 py-1 rounded text-xs transition-colors ${
               active
                 ? 'bg-amber-950/30 text-amber-300 font-medium border border-amber-900/40'
@@ -604,7 +606,9 @@ export const MapViewport: React.FC<MapViewportProps> = ({
         <div className="pt-1.5 mt-1 border-t border-[#222] flex flex-col gap-1">
           {report && (
             <button
+              type="button"
               onClick={handleFocusCatchment}
+              aria-label="Zoom to active catchment delineation"
               className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] bg-amber-950/30 hover:bg-amber-900/30 text-amber-300 font-medium transition-colors border border-amber-900/40"
               title="Zoom to the active delineation"
             >
@@ -615,7 +619,9 @@ export const MapViewport: React.FC<MapViewportProps> = ({
 
           {alignment && alignment.coordinates.length > 1 && (
             <button
+              type="button"
               onClick={handleFitCorridor}
+              aria-label="Fit entire corridor alignment on screen"
               className="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] bg-[#171717]/80 hover:bg-[#171717] text-[#737373] transition-colors border border-[#222]"
               title="Fit the entire corridor on screen"
             >

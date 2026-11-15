@@ -156,7 +156,9 @@ export const CalibrationPanel: React.FC<CalibrationPanelProps> = ({
 
             <div className="flex items-center justify-between pt-2 border-t border-slate-800">
               <button
+                type="button"
                 onClick={handleRunCalibration}
+                aria-label="Evaluate NASA SWOT satellite calibration"
                 className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold transition"
               >
                 Evaluate Calibration
@@ -164,7 +166,9 @@ export const CalibrationPanel: React.FC<CalibrationPanelProps> = ({
 
               {result && (
                 <button
+                  type="button"
                   onClick={handleApply}
+                  aria-label={`Apply Calibrated Manning n (${result.calibratedManningN})`}
                   className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold transition shadow-md"
                 >
                   Apply Calibrated Manning n ({result.calibratedManningN})

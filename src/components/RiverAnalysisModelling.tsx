@@ -272,7 +272,8 @@ export const RiverAnalysisModelling: React.FC = () => {
       })
       .catch((err) => {
         console.warn('Instant simulation error:', err);
-        setTimeout(() => setCadNotification(null), 3000);
+        setCadNotification(`⚠️ Instant CFD calculation failed: ${err?.message || 'Solver error'}`);
+        setTimeout(() => setCadNotification(null), 5000);
       });
   };
 
@@ -504,12 +505,16 @@ export const RiverAnalysisModelling: React.FC = () => {
           setIsMeshConfigModalOpen(false);
           return;
         }
+        setIsBackendDropdownOpen(false);
         if (cadDrawModeRef.current) {
           setCadDrawMode(null);
           setCadDrawPoints([]);
           setCadHoverFeedback(null);
           setCadNotification(null);
+          return;
         }
+        setSelectedCell(null);
+        setDetectedRiver(null);
       } else if (e.key === 'Enter') {
         if (cadDrawPointsRef.current.length >= 2) {
           handleCompleteCadPolyline();
@@ -1131,8 +1136,8 @@ export const RiverAnalysisModelling: React.FC = () => {
       setTimeout(() => setEarthDemStatus(null), 5000);
     } catch (err: any) {
       console.error('Earth DEM sync failed:', err);
-      setEarthDemStatus('Earth DEM probe error');
-      setTimeout(() => setEarthDemStatus(null), 4000);
+      setEarthDemStatus(`Earth DEM sync failed: ${err?.message || 'probe error'}`);
+      setTimeout(() => setEarthDemStatus(null), 5000);
     } finally {
       setIsSyncingEarthDem(false);
     }
@@ -2261,16 +2266,40 @@ export const RiverAnalysisModelling: React.FC = () => {
 
         {/* CAD Notification Toast */}
         {cadNotification && (
-          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-[500] bg-slate-900/95 border border-amber-500/80 text-amber-200 px-4 py-2 rounded-xl text-xs font-medium shadow-2xl animate-fade-in">
-            {cadNotification}
+          <div
+            role="status"
+            aria-live="polite"
+            className="absolute top-16 left-1/2 -translate-x-1/2 z-[500] bg-slate-900/95 border border-amber-500/80 text-amber-200 px-4 py-2 rounded-xl text-xs font-medium shadow-2xl animate-fade-in flex items-center gap-3"
+          >
+            <span>{cadNotification}</span>
+            <button
+              type="button"
+              onClick={() => setCadNotification(null)}
+              className="text-amber-400 hover:text-white text-xs font-bold transition ml-1"
+              aria-label="Dismiss CAD notification"
+            >
+              ✕
+            </button>
           </div>
         )}
 
         {/* Earth DEM Sync Status Toast */}
         {earthDemStatus && (
-          <div className="absolute top-24 left-1/2 -translate-x-1/2 z-[500] bg-slate-900/95 border border-cyan-500/80 text-cyan-200 px-4 py-2 rounded-xl text-xs font-medium shadow-2xl animate-fade-in flex items-center gap-2">
+          <div
+            role="status"
+            aria-live="polite"
+            className="absolute top-24 left-1/2 -translate-x-1/2 z-[500] bg-slate-900/95 border border-cyan-500/80 text-cyan-200 px-4 py-2 rounded-xl text-xs font-medium shadow-2xl animate-fade-in flex items-center gap-2"
+          >
             <span>🛰️</span>
             <span>{earthDemStatus}</span>
+            <button
+              type="button"
+              onClick={() => setEarthDemStatus(null)}
+              className="text-cyan-400 hover:text-white text-xs font-bold transition ml-2"
+              aria-label="Dismiss Earth DEM status"
+            >
+              ✕
+            </button>
           </div>
         )}
 

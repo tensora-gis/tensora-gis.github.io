@@ -112,7 +112,9 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
           {crossSections.map((cs, idx) => (
             <button
               key={idx}
+              type="button"
               onClick={() => setSelectedIdx(idx)}
+              aria-pressed={selectedIdx === idx}
               className={`px-3 py-1.5 rounded font-medium transition whitespace-nowrap ${
                 selectedIdx === idx
                   ? 'bg-cyan-600 text-white'
@@ -182,6 +184,7 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
             <label className="text-slate-400 block mb-1">Template Shape</label>
             <select
               value={template.type}
+              aria-label="Template Shape"
               onChange={(e) => handleTemplateChange('type', e.target.value as CrossSectionTemplateType)}
               className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100 focus:outline-none focus:border-cyan-500"
             >
@@ -197,6 +200,7 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
               type="number"
               step="0.5"
               value={template.bottomWidthM}
+              aria-label="Bottom Width (m)"
               onChange={(e) => handleTemplateChange('bottomWidthM', parseFloat(e.target.value) || 10)}
               className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100 focus:outline-none focus:border-cyan-500"
             />
@@ -208,6 +212,7 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
               type="number"
               step="0.1"
               value={template.bankSlopeHtoV}
+              aria-label="Bank Slope (H:1V)"
               onChange={(e) => handleTemplateChange('bankSlopeHtoV', parseFloat(e.target.value) || 1.5)}
               className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100 focus:outline-none focus:border-cyan-500"
             />
@@ -219,6 +224,7 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
               type="number"
               step="0.1"
               value={template.depthM}
+              aria-label="Channel Depth (m)"
               onChange={(e) => handleTemplateChange('depthM', parseFloat(e.target.value) || 2.0)}
               className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100 focus:outline-none focus:border-cyan-500"
             />
@@ -230,6 +236,7 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
               type="number"
               step="1"
               value={template.leftFloodplainWidthM || 0}
+              aria-label="Left Floodplain (m)"
               onChange={(e) => handleTemplateChange('leftFloodplainWidthM', parseFloat(e.target.value) || 0)}
               className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100 focus:outline-none focus:border-cyan-500"
             />
@@ -241,6 +248,7 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
               type="number"
               step="1"
               value={template.rightFloodplainWidthM || 0}
+              aria-label="Right Floodplain (m)"
               onChange={(e) => handleTemplateChange('rightFloodplainWidthM', parseFloat(e.target.value) || 0)}
               className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100 focus:outline-none focus:border-cyan-500"
             />
@@ -249,7 +257,9 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
 
         <div className="flex justify-end pt-2 border-t border-slate-800">
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Apply cross-section geometry and close"
             className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-xs font-semibold transition"
           >
             Apply & Close

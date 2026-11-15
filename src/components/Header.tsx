@@ -173,6 +173,7 @@ export const Header: React.FC<HeaderProps> = ({
             {onSignOut && (
               <button
                 onClick={onSignOut}
+                aria-label="Sign out"
                 className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-medium text-[#737373] hover:text-white bg-[#111] hover:bg-[#171717] border border-[#222] rounded transition-colors"
                 title="Sign out"
               >
@@ -188,6 +189,7 @@ export const Header: React.FC<HeaderProps> = ({
           <>
             <button
               onClick={onOpenRegister}
+              aria-label="Chainage Register"
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[#e5e7eb] bg-[#111] hover:bg-[#171717] border border-[#222] rounded transition-colors whitespace-nowrap"
               title="View Latitude & Longitude for every chainage in the uploaded file"
             >
@@ -197,6 +199,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               onClick={onClearData}
+              aria-label="Clear loaded corridor"
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[#737373] hover:text-[#ef4444] bg-[#111] hover:bg-[#ef4444]/10 border border-[#222] rounded transition-colors whitespace-nowrap"
               title="Clear loaded corridor"
             >

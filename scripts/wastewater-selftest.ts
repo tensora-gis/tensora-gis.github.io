@@ -173,12 +173,23 @@ console.log('\n[5] Testing EPA SWMM / Sewer INP Export and Import Round-Trip');
 const sampleModel = createCoastalDualLiftNetwork();
 const inpText = exportToSwmmInp(sampleModel);
 check('exportToSwmmInp produces valid INP text with sections', inpText.includes('[JUNCTIONS]') && inpText.includes('[CONDUITS]'));
+check('exportToSwmmInp includes FORCE_MAIN cross-sections for force mains', inpText.includes('FORCE_MAIN'));
 
 const parsedModel = parseSwmmInp(inpText, 'coastal_test.inp');
 check(
   'parseSwmmInp recovers manholes and conduits from exported INP',
   parsedModel.manholes.length === sampleModel.manholes.length &&
     parsedModel.conduits.length === sampleModel.conduits.length
+);
+check(
+  'parseSwmmInp recovers forceMains from exported INP without data loss',
+  parsedModel.forceMains.length === (sampleModel.forceMains || []).length &&
+    parsedModel.forceMains.length > 0
+);
+check(
+  'parseSwmmInp recovers pump curve ratings from exported INP',
+  parsedModel.pumps.length === sampleModel.pumps.length &&
+    parsedModel.pumps[0].ratedDischargeLs === sampleModel.pumps[0].ratedDischargeLs
 );
 
 const simParsed = simulateWastewaterNetwork(parsedModel);

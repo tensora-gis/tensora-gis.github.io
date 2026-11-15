@@ -141,7 +141,7 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
     return () => {
       map.off('click', handleMapClick);
     };
-  }, [activeTool, onAddJunction, onAddReservoir, onAddTank, onAddPumpOnGround, onSelectElement, pendingStartNode]);
+  }, [activeTool, onAddJunction, onAddReservoir, onAddTank, onAddPumpOnGround, onAddValveOnGround, onSelectElement, pendingStartNode]);
 
   // Handle Node Clicks (connecting pipes, selecting, deleting)
   const handleNodeClick = useCallback(
@@ -214,6 +214,7 @@ export const WaterMapViewport: React.FC<WaterMapViewportProps> = ({
       network,
       onAddPipe,
       onAddPump,
+      onAddValve,
       onDeleteElement,
       onProfileRouteSelected,
       onSelectElement,

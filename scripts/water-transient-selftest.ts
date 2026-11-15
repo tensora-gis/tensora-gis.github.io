@@ -20,6 +20,7 @@
 import { createHighlandMunicipalNetwork } from '../src/data/sampleWaterNetworks';
 import { simulateWaterNetwork, applyWaterPipeOptimization, computeTransientSurgeAnalysis } from '../src/utils/waterHydraulicsEngine';
 import { buildWaterExcelWorkbook } from '../src/utils/waterExcelExport';
+import { exportToEpanetInp, parseEpanetInp } from '../src/utils/epanetParser';
 
 function assert(condition: boolean, message: string) {
   if (!condition) {
@@ -233,6 +234,44 @@ async function runTests() {
 
   assert(mocPumpTripRes.maxNegativeSurgeDeltaHM > 0, `MOC pump trip downsurge observed: -${mocPumpTripRes.maxNegativeSurgeDeltaHM.toFixed(1)}m`);
   console.log(`  ✓ MOC 1D Characteristic compatibility and DVCM column separation verified!`);
+
+  // Test 8: EPANET INP Serialization & Parsing Round-Trip
+  console.log('\n--- 8. EPANET INP Serialization & Parsing Round-Trip ---');
+  const epanetText = exportToEpanetInp(initialNetwork);
+  assert(epanetText.includes('[JUNCTIONS]') && epanetText.includes('[PIPES]'), 'exportToEpanetInp generates valid sections');
+  const parsedEpanet = parseEpanetInp(epanetText, 'epanet_test.inp');
+  assert(parsedEpanet.junctions.length === initialNetwork.junctions.length, 'parseEpanetInp recovers all junctions');
+  assert(parsedEpanet.pipes.length === initialNetwork.pipes.length, 'parseEpanetInp recovers all pipes');
+  assert(parsedEpanet.pumps.length === initialNetwork.pumps.length, 'parseEpanetInp recovers all pumps');
+  assert(parsedEpanet.pumps[0].powerKw === (initialNetwork.pumps[0].powerKw || 15), 'parseEpanetInp recovers pump powerKw from POWER token');
+
+  // Test 9: PRV Pressure Reducing Valve Modeling & Regulation
+  console.log('\n--- 9. PRV Pressure Reducing Valve Modeling & Regulation ---');
+  const netWithPrv = {
+    ...createHighlandMunicipalNetwork(),
+    valves: [
+      {
+        id: 'PRV-1',
+        label: 'Zone 2 Pressure Reducer',
+        type: 'valve' as const,
+        startNodeId: 'J-2',
+        endNodeId: 'J-3',
+        valveType: 'PRV' as const,
+        setting: 20.0,
+        diameter: 150,
+        status: 'ACTIVE' as const,
+      },
+    ],
+  };
+  const { updatedNetwork: prvSolved } = simulateWaterNetwork(netWithPrv);
+  const prv = prvSolved.valves?.find((v) => v.id === 'PRV-1');
+  const downJ = prvSolved.junctions.find((j) => j.id === 'J-3');
+  assert(Boolean(prv), 'PRV valve exists in solved network');
+  assert(prv!.status === 'ACTIVE' || prv!.status === 'OPEN', `PRV status is valid: ${prv?.status}`);
+  if (prv!.status === 'ACTIVE') {
+    assert(Math.abs((downJ?.pressure ?? 0) - 20.0) < 0.2, `Downstream junction J-3 pressure regulated to 20m (got ${downJ?.pressure}m)`);
+    assert((prv!.headloss ?? 0) >= 0, `PRV headloss is positive (${prv?.headloss}m)`);
+  }
 
   console.log('\n===============================================================');
   console.log('🎉 ALL WATER DISTRIBUTION & HAMMER SELF-TESTS PASSED (100%)');

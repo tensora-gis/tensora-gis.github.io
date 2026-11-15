@@ -1086,6 +1086,7 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             <button
               type="button"
               onClick={() => setCameraView('iso')}
+              aria-label="Isometric 3D Camera View"
               className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-200 border border-slate-700 text-[11px]"
             >
               Isometric
@@ -1093,6 +1094,7 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             <button
               type="button"
               onClick={() => setCameraView('top')}
+              aria-label="Top 2D Camera View"
               className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-200 border border-slate-700 text-[11px]"
             >
               Top (2D)
@@ -1100,6 +1102,7 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             <button
               type="button"
               onClick={() => setCameraView('side')}
+              aria-label="Side Section Camera View"
               className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-200 border border-slate-700 text-[11px]"
             >
               Section
@@ -1108,6 +1111,8 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             <button
               type="button"
               onClick={() => setIsAutoRotating(!isAutoRotating)}
+              aria-pressed={isAutoRotating}
+              aria-label={isAutoRotating ? 'Stop camera auto-rotation' : 'Start camera auto-rotation'}
               className={`px-2 py-0.5 rounded text-[11px] border transition ${
                 isAutoRotating
                   ? 'bg-cyan-700 border-cyan-400 text-white'
@@ -1127,6 +1132,7 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
                 step="0.5"
                 value={verticalExaggeration}
                 onChange={(e) => setVerticalExaggeration(parseFloat(e.target.value))}
+                aria-label="Vertical Exaggeration"
                 className="w-16 accent-cyan-500"
                 title={`Vertical exaggeration: ${verticalExaggeration}x`}
               />

@@ -393,6 +393,20 @@ export function simulateWaterNetwork(network: WaterDistributionNetwork): {
     }
   }
 
+  // Enforce PRV / valve regulation on downstream junction heads
+  for (const v of network.valves || []) {
+    if (v.status !== 'CLOSED' && v.valveType === 'PRV' && v.setting > 0) {
+      const downJunc = network.junctions.find((j) => j.id === v.endNodeId);
+      const hStart = heads.get(v.startNodeId) ?? 0;
+      if (downJunc) {
+        const targetHead = downJunc.elevation + v.setting;
+        if (hStart > targetHead) {
+          heads.set(v.endNodeId, targetHead);
+        }
+      }
+    }
+  }
+
   // Calculate Output Metrics & Results
   let totalDemandLs = 0;
   const negativePressureNodes: string[] = [];
@@ -513,12 +527,31 @@ export function simulateWaterNetwork(network: WaterDistributionNetwork): {
 
   // Calculate Valve Flow & Headloss
   const updatedValves: WaterValve[] = (network.valves || []).map((v) => {
-    const q = flows.get(v.id) ?? 0;
+    let q = flows.get(v.id) ?? 0;
     const hStart = heads.get(v.startNodeId) ?? 0;
-    const hEnd = heads.get(v.endNodeId) ?? 0;
+    let hEnd = heads.get(v.endNodeId) ?? 0;
+    let status = v.status;
+
+    if (v.status !== 'CLOSED' && v.valveType === 'PRV' && v.setting > 0) {
+      const downJunc = network.junctions.find((j) => j.id === v.endNodeId);
+      if (downJunc) {
+        const targetHead = downJunc.elevation + v.setting;
+        if (hStart > targetHead) {
+          status = 'ACTIVE';
+          hEnd = targetHead;
+        } else if (hEnd > hStart) {
+          status = 'CLOSED';
+          q = 0;
+        } else {
+          status = 'OPEN';
+        }
+      }
+    }
+
     const hl = Math.max(0, hStart - hEnd);
     return {
       ...v,
+      status,
       flow: Math.round(q * 100) / 100,
       headloss: Math.round(hl * 100) / 100,
     };

@@ -51,22 +51,24 @@ export const ReachPersistence: React.FC<ReachPersistenceProps> = ({
 }) => {
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !isSaving) {
         e.stopPropagation();
         onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, isSaving, onClose]);
 
   if (!isOpen) return null;
 
   const handleSaveToIndexedDb = async () => {
+    setIsSaving(true);
     setErrorMessage(null);
     try {
       await RiverDataService.saveReach(reach);
@@ -75,6 +77,8 @@ export const ReachPersistence: React.FC<ReachPersistenceProps> = ({
     } catch (err: any) {
       setSaveStatus(null);
       setErrorMessage(`Failed to save: ${err?.message || String(err)}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -101,6 +105,7 @@ export const ReachPersistence: React.FC<ReachPersistenceProps> = ({
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = '';
 
     setErrorMessage(null);
     const reader = new FileReader();
@@ -147,7 +152,11 @@ export const ReachPersistence: React.FC<ReachPersistenceProps> = ({
         </div>
 
         {errorMessage && (
-          <div className="bg-red-950/60 border border-red-500/40 rounded-lg p-2.5 text-xs text-red-300 flex items-center justify-between">
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="bg-red-950/60 border border-red-500/40 rounded-lg p-2.5 text-xs text-red-300 flex items-center justify-between"
+          >
             <span>{errorMessage}</span>
             <button
               onClick={() => setErrorMessage(null)}
@@ -168,11 +177,16 @@ export const ReachPersistence: React.FC<ReachPersistenceProps> = ({
             </p>
             <button
               onClick={handleSaveToIndexedDb}
-              className="w-full py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded font-medium transition"
+              disabled={isSaving}
+              className="w-full py-1.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 border border-slate-700 rounded font-medium transition cursor-pointer"
             >
-              Save Project to Browser Storage
+              {isSaving ? 'Saving Project to Storage...' : 'Save Project to Browser Storage'}
             </button>
-            {saveStatus && <div className="text-cyan-400 text-[11px]">{saveStatus}</div>}
+            {saveStatus && (
+              <div role="status" aria-live="polite" className="text-cyan-400 text-[11px]">
+                {saveStatus}
+              </div>
+            )}
           </div>
 
           {/* JSON Archive Section */}

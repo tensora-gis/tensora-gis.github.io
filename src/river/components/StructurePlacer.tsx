@@ -530,7 +530,10 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                       {inspectingStructureId === s.id ? 'Close' : 'Tune / Modify'}
                     </button>
                     <button
+                      type="button"
                       onClick={() => handleToggleStructure(s.id)}
+                      aria-pressed={s.enabled}
+                      aria-label={`Toggle active state for ${s.name}`}
                       className={`px-3 py-1 rounded-lg text-xs font-semibold transition ${
                         s.enabled
                           ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 shadow'
@@ -540,9 +543,11 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                       {s.enabled ? 'ACTIVE IN CFD' : 'BYPASSED'}
                     </button>
                     <button
+                      type="button"
                       onClick={() => handleDeleteStructure(s.id)}
                       className="p-1 hover:text-red-400 text-slate-400 transition"
                       title="Delete Structure"
+                      aria-label={`Delete structure ${s.name}`}
                     >
                       ✕
                     </button>
@@ -577,6 +582,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                     <input
                       type="checkbox"
                       checked={isSolid}
+                      aria-label="Solid Masking"
                       onChange={(e) => handleModifyStructure(cur.id, { solidMasking: e.target.checked })}
                       className="rounded accent-cyan-500"
                     />
@@ -595,6 +601,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                     </div>
                     <input
                       type="range"
+                      aria-label="Crest Elevation"
                       min={(crestVal - 5).toFixed(1)}
                       max={(crestVal + 5).toFixed(1)}
                       step="0.05"
@@ -612,6 +619,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                     </div>
                     <input
                       type="range"
+                      aria-label="Thickness / Top Width"
                       min="0.5"
                       max="20.0"
                       step="0.2"
@@ -629,6 +637,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                     </div>
                     <input
                       type="range"
+                      aria-label="Side Slope H to V"
                       min="0.5"
                       max="5.0"
                       step="0.1"
@@ -646,6 +655,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                     </div>
                     <input
                       type="range"
+                      aria-label="Structure Length"
                       min="2.0"
                       max="100.0"
                       step="1.0"
@@ -663,6 +673,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                     </div>
                     <input
                       type="range"
+                      aria-label="Orientation Angle"
                       min="-180"
                       max="180"
                       step="5"
@@ -680,6 +691,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                     </div>
                     <input
                       type="range"
+                      aria-label="Permeability"
                       min="0.0"
                       max="0.8"
                       step="0.05"
@@ -698,6 +710,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
+                        aria-label="Shift upstream 10 meters"
                         onClick={() => handleModifyStructure(cur.id, { stationM: Math.max(0, (cur.stationM ?? 0) - 10) })}
                         className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-mono text-[11px]"
                       >
@@ -705,6 +718,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                       </button>
                       <button
                         type="button"
+                        aria-label="Shift upstream 2 meters"
                         onClick={() => handleModifyStructure(cur.id, { stationM: Math.max(0, (cur.stationM ?? 0) - 2) })}
                         className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-mono text-[11px]"
                       >
@@ -712,6 +726,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                       </button>
                       <input
                         type="range"
+                        aria-label="Structure Station Position"
                         min="0"
                         max={mesh.reachLengthM}
                         step="2"
@@ -721,6 +736,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                       />
                       <button
                         type="button"
+                        aria-label="Shift downstream 2 meters"
                         onClick={() => handleModifyStructure(cur.id, { stationM: Math.min(mesh.reachLengthM, (cur.stationM ?? 0) + 2) })}
                         className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-mono text-[11px]"
                       >
@@ -728,6 +744,7 @@ export const StructurePlacer: React.FC<StructurePlacerProps> = ({
                       </button>
                       <button
                         type="button"
+                        aria-label="Shift downstream 10 meters"
                         onClick={() => handleModifyStructure(cur.id, { stationM: Math.min(mesh.reachLengthM, (cur.stationM ?? 0) + 10) })}
                         className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded font-mono text-[11px]"
                       >

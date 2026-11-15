@@ -113,6 +113,7 @@ export const ReachSelector: React.FC<ReachSelectorProps> = ({
         type="button"
         onClick={handleFetchLiveDischarge}
         disabled={isFetchingLiveQ}
+        aria-label="Query real-time river flow from Copernicus GloFAS"
         className="flex items-center gap-1 px-2 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 hover:text-cyan-200 rounded-lg text-xs font-medium transition shadow-sm"
         title="Query Copernicus GloFAS via Open-Meteo Flood API for real-time daily flow"
       >
@@ -125,7 +126,11 @@ export const ReachSelector: React.FC<ReachSelectorProps> = ({
       </button>
 
       {liveQNotice && (
-        <span className="text-[11px] px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800 text-cyan-200 animate-fade-in">
+        <span
+          role="status"
+          aria-live="polite"
+          className="text-[11px] px-2 py-0.5 rounded bg-cyan-950 border border-cyan-800 text-cyan-200 animate-fade-in"
+        >
           {liveQNotice}
         </span>
       )}

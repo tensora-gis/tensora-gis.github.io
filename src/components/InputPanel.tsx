@@ -201,7 +201,9 @@ export const InputPanel: React.FC<InputPanelProps> = ({
           </span>
           {alignment && (
             <button
+              type="button"
               onClick={onClearData}
+              aria-label="Clear all data"
               className="text-[10px] text-[#737373] hover:text-[#ef4444] flex items-center gap-1 transition-colors"
               title="Clear all data"
             >
@@ -445,6 +447,7 @@ export const InputPanel: React.FC<InputPanelProps> = ({
                     <button
                       key={ch.id}
                       type="button"
+                      aria-pressed={isCurrent}
                       onClick={() => {
                         setTypedChainage(ch.chainage.toString());
                         onSelectChainage(ch.chainage);

@@ -102,6 +102,8 @@ export const TurbulencePanel: React.FC<TurbulencePanelProps> = ({
             ].map((m) => (
               <button
                 key={m.id}
+                type="button"
+                aria-pressed={parameters.model === m.id}
                 onClick={() => handleChange('model', m.id as TurbulenceModelType)}
                 className={`p-2.5 rounded-lg border text-left transition ${
                   parameters.model === m.id
@@ -129,6 +131,7 @@ export const TurbulencePanel: React.FC<TurbulencePanelProps> = ({
                 type="number"
                 step="0.01"
                 value={parameters.kappa}
+                aria-label="von Kármán Constant κ"
                 onChange={(e) => handleChange('kappa', parseFloat(e.target.value) || 0.41)}
                 className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100"
               />
@@ -140,6 +143,7 @@ export const TurbulencePanel: React.FC<TurbulencePanelProps> = ({
                 type="number"
                 step="0.5"
                 value={parameters.eddyViscosityCapM2s}
+                aria-label="Eddy Viscosity Cap (m²/s)"
                 onChange={(e) => handleChange('eddyViscosityCapM2s', parseFloat(e.target.value) || 5.0)}
                 className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100"
               />
@@ -151,6 +155,7 @@ export const TurbulencePanel: React.FC<TurbulencePanelProps> = ({
                 type="number"
                 step="0.01"
                 value={parameters.cMu}
+                aria-label="c_μ (k-ε closure)"
                 onChange={(e) => handleChange('cMu', parseFloat(e.target.value) || 0.09)}
                 className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100"
               />
@@ -162,6 +167,7 @@ export const TurbulencePanel: React.FC<TurbulencePanelProps> = ({
                 type="number"
                 step="0.1"
                 value={parameters.schmidtNumberSediment}
+                aria-label="Turbulent Schmidt σ_c (Sediment)"
                 onChange={(e) => handleChange('schmidtNumberSediment', parseFloat(e.target.value) || 1.0)}
                 className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100"
               />
@@ -176,6 +182,7 @@ export const TurbulencePanel: React.FC<TurbulencePanelProps> = ({
             <input
               type="checkbox"
               checked={parameters.wallFunctionsEnabled}
+              aria-label="Equilibrium Bed Wall Functions"
               onChange={(e) => handleChange('wallFunctionsEnabled', e.target.checked)}
               className="w-4 h-4 rounded text-purple-600 focus:ring-0 cursor-pointer"
             />
@@ -184,7 +191,9 @@ export const TurbulencePanel: React.FC<TurbulencePanelProps> = ({
 
         <div className="flex justify-end pt-2 border-t border-slate-800">
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Apply turbulence parameters and close"
             className="px-4 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded text-xs font-semibold transition"
           >
             Apply & Close

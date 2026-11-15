@@ -74,6 +74,7 @@ export const ConfidenceBadge: React.FC<ConfidenceBadgeProps> = ({
       <div
         role="button"
         tabIndex={0}
+        aria-expanded={showTooltip}
         aria-label={`Accuracy Tier: ${currentTier.label}. Click to view data source details.`}
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
@@ -82,6 +83,9 @@ export const ConfidenceBadge: React.FC<ConfidenceBadgeProps> = ({
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             setShowTooltip((prev) => !prev);
+          } else if (e.key === 'Escape' && showTooltip) {
+            e.preventDefault();
+            setShowTooltip(false);
           }
         }}
         className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold cursor-pointer transition select-none shadow-sm focus:outline-none focus:ring-1 focus:ring-cyan-400 ${currentTier.bg}`}

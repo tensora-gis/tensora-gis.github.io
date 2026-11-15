@@ -3,6 +3,7 @@ import {
   WastewaterNetwork,
   WastewaterManhole,
   WastewaterOutfall,
+  WastewaterWetWell,
 } from '../../types/wastewater';
 import { X, TrendingUp, Play, Pause, RotateCcw, ShieldAlert, Waves } from 'lucide-react';
 
@@ -69,14 +70,23 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
 
       if (i > 0) {
         const prevNode = validNodes[i - 1];
-        // Look for connecting conduit
+        // Look for connecting conduit or force main
         const conduit = network.conduits.find(
           (c) =>
             (c.startNodeId === prevNode.id && c.endNodeId === node.id) ||
             (c.startNodeId === node.id && c.endNodeId === prevNode.id)
         );
+        const forceMain = !conduit && network.forceMains
+          ? network.forceMains.find(
+              (fm) =>
+                (fm.startNodeId === prevNode.id && fm.endNodeId === node.id) ||
+                (fm.startNodeId === node.id && fm.endNodeId === prevNode.id)
+            )
+          : undefined;
         const dist = conduit
           ? conduit.lengthM
+          : forceMain
+          ? forceMain.lengthM
           : Math.sqrt(
               Math.pow((node.lat - prevNode.lat) * 111000, 2) +
                 Math.pow((node.lng - prevNode.lng) * 98000, 2)
@@ -87,14 +97,15 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
 
       const rim = 'rimElevation' in node ? node.rimElevation : ('invertElevation' in node ? node.invertElevation + 2.0 : 170.0);
       const inv = 'invertElevation' in node ? node.invertElevation : ('floorElevation' in node ? node.floorElevation : 168.0);
+      const isWetWell = 'floorElevation' in node && 'maxWaterLevelM' in node;
       const hgl =
         'waterElevationM' in node
           ? (node as WastewaterManhole).waterElevationM ?? inv + 0.2
           : ('receivingWaterElevation' in node
               ? (node as WastewaterOutfall).receivingWaterElevation
-              : inv + 0.2);
+              : (isWetWell ? (node as WastewaterWetWell).maxWaterLevelM : inv + 0.2));
 
-      // Find connected conduit for diameter
+      // Find connected conduit or force main for diameter
       const nextNode = validNodes[i + 1];
       const conduit = nextNode
         ? network.conduits.find(
@@ -103,8 +114,15 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
               (c.startNodeId === nextNode.id && c.endNodeId === node.id)
           )
         : undefined;
+      const forceMain = !conduit && nextNode && network.forceMains
+        ? network.forceMains.find(
+            (fm) =>
+              (fm.startNodeId === node.id && fm.endNodeId === nextNode.id) ||
+              (fm.startNodeId === nextNode.id && fm.endNodeId === node.id)
+          )
+        : undefined;
 
-      const diaM = (conduit?.diameterMm || 250) / 1000;
+      const diaM = (conduit?.diameterMm || forceMain?.diameterMm || 250) / 1000;
       const hasDrop = 'hasDropConnection' in node ? Boolean((node as WastewaterManhole).hasDropConnection) : false;
       const dropHeight = 'dropHeightM' in node ? (node as WastewaterManhole).dropHeightM || 0 : 0;
 
@@ -123,7 +141,7 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
         crownElevation: Math.round((inv + diaM) * 100) / 100,
         waterElevation: Math.max(inv, hgl),
         dynamicHglElevation: Math.round(dynHgl * 100) / 100,
-        conduitDiameterMm: conduit?.diameterMm,
+        conduitDiameterMm: conduit?.diameterMm || forceMain?.diameterMm,
         flowDepthRatio: conduit?.flowDepthRatio,
         hasDrop,
         dropHeightM: dropHeight,
@@ -163,7 +181,9 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
   const allElevations = [
     ...profileData.map((p) => p.rimElevation),
     ...profileData.map((p) => p.invertElevation),
+    ...profileData.map((p) => p.crownElevation),
     ...profileData.map((p) => p.waterElevation),
+    ...profileData.map((p) => p.dynamicHglElevation),
   ];
   const minElev = Math.floor(Math.min(...allElevations) - 2);
   const maxElev = Math.ceil(Math.max(...allElevations) + 2);

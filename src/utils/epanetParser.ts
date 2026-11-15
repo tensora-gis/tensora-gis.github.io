@@ -155,9 +155,16 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
 
   let currentSection = '';
 
-  for (let line of lines) {
-    line = line.trim();
-    if (!line || line.startsWith(';')) continue;
+  for (const rawLine of lines) {
+    let comment = '';
+    const commentIdx = rawLine.indexOf(';');
+    let lineWithoutComment = rawLine;
+    if (commentIdx >= 0) {
+      comment = rawLine.slice(commentIdx + 1).replace(/^;+/, '').trim();
+      lineWithoutComment = rawLine.slice(0, commentIdx);
+    }
+    const line = lineWithoutComment.trim();
+    if (!line) continue;
 
     if (line.startsWith('[') && line.endsWith(']')) {
       currentSection = line.slice(1, -1).toUpperCase();
@@ -200,7 +207,7 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
         const patId = tokens[3] && !tokens[3].startsWith(';') ? tokens[3] : undefined;
         junctions.push({
           id,
-          label: id,
+          label: comment || id,
           type: 'junction',
           elevation: elev,
           baseDemand: demand,
@@ -216,9 +223,9 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
         const head = parseFloat(tokens[1]) || 100;
         reservoirs.push({
           id,
-          label: id,
+          label: comment || id,
           type: 'reservoir',
-          elevation: Math.max(0, head - 15),
+          elevation: Math.round((head - 15) * 100) / 100,
           totalHead: head,
           lat: 0,
           lng: 0,
@@ -235,7 +242,7 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
         const diam = parseFloat(tokens[5]) || 12;
         tanks.push({
           id,
-          label: id,
+          label: comment || id,
           type: 'tank',
           elevation: elev,
           initialLevel: init,
@@ -261,7 +268,7 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
 
         pipes.push({
           id,
-          label: id,
+          label: comment || id,
           type: 'pipe',
           startNodeId: n1,
           endNodeId: n2,
@@ -278,19 +285,32 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
         const id = tokens[0];
         const n1 = tokens[1];
         const n2 = tokens[2];
+        let powerKw = 22;
+        let designFlow = 30;
+        let designHead = 40;
+        let shutoffHead = 53.2;
+        let maxFlow = 60;
+
+        if (tokens[3]?.toUpperCase() === 'POWER' && tokens[4]) {
+          powerKw = parseFloat(tokens[4]) || 22;
+          designFlow = Math.round(powerKw * 1.5);
+          shutoffHead = Math.round(designHead * 1.33 * 10) / 10;
+          maxFlow = Math.round(designFlow * 1.6);
+        }
+
         pumps.push({
           id,
-          label: id,
+          label: comment || id,
           type: 'pump',
           startNodeId: n1,
           endNodeId: n2,
           status: 'OPEN',
           curveType: '1-POINT',
-          designFlow: 30,
-          designHead: 40,
-          shutoffHead: 53.2,
-          maxFlow: 60,
-          powerKw: 22,
+          designFlow,
+          designHead,
+          shutoffHead,
+          maxFlow,
+          powerKw,
           speed: 1.0,
         });
         break;
@@ -306,7 +326,7 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
         const minor = parseFloat(tokens[6]) || 0;
         valves.push({
           id,
-          label: id,
+          label: comment || id,
           type: 'valve',
           startNodeId: n1,
           endNodeId: n2,

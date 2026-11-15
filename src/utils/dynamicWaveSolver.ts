@@ -489,7 +489,8 @@ export function runDynamicWaveSimulation(
         // Q = (Qprev + g*A*dt/L * (Hu - Hd)) / (1 + dt * g * n^2 * |Qprev| / (Rh^(4/3) * A))
         const frictionFactor = (G * n * n * Math.abs(Qprev[k])) / (Math.pow(Rh, 4.0 / 3.0) * A);
         const denom = 1.0 + dtSec * frictionFactor;
-        const transCoeff = (G * A * dtSec) / (L * denom);
+        const transCoeff = (G * A * dtSec) / L;
+        const effCoeff = transCoeff / denom;
 
         const Qk = (Qprev[k] + transCoeff * (Hu - Hd)) / denom;
         Q[k] = Qk;
@@ -503,10 +504,10 @@ export function runDynamicWaveSimulation(
         R[dIdx] += Qk;
 
         // Jacobian entries dR/dHu and dR/dHd
-        triplets.push({ row: uIdx, col: uIdx, val: -transCoeff });
-        triplets.push({ row: uIdx, col: dIdx, val: transCoeff });
-        triplets.push({ row: dIdx, col: uIdx, val: transCoeff });
-        triplets.push({ row: dIdx, col: dIdx, val: -transCoeff });
+        triplets.push({ row: uIdx, col: uIdx, val: -effCoeff });
+        triplets.push({ row: uIdx, col: dIdx, val: effCoeff });
+        triplets.push({ row: dIdx, col: uIdx, val: effCoeff });
+        triplets.push({ row: dIdx, col: dIdx, val: -effCoeff });
       }
 
       // 2. Evaluate Nodal Storage, Demands & Boundaries (Eq. 3.4)

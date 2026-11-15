@@ -119,6 +119,8 @@ export const SedimentPanel: React.FC<SedimentPanelProps> = ({
             ].map((f) => (
               <button
                 key={f.id}
+                type="button"
+                aria-pressed={parameters.formula === f.id}
                 onClick={() => handleChange('formula', f.id as SedimentFormula)}
                 className={`p-2.5 rounded-lg border text-left transition ${
                   parameters.formula === f.id
@@ -146,6 +148,7 @@ export const SedimentPanel: React.FC<SedimentPanelProps> = ({
                 type="number"
                 step="0.05"
                 value={parameters.d50Mm}
+                aria-label="Median Grain Size d_50 (mm)"
                 onChange={(e) => handleChange('d50Mm', parseFloat(e.target.value) || 0.5)}
                 className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100"
               />
@@ -157,6 +160,7 @@ export const SedimentPanel: React.FC<SedimentPanelProps> = ({
                 type="number"
                 step="0.05"
                 value={parameters.specificGravity}
+                aria-label="Specific Gravity s"
                 onChange={(e) => handleChange('specificGravity', parseFloat(e.target.value) || 2.65)}
                 className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100"
               />
@@ -168,6 +172,7 @@ export const SedimentPanel: React.FC<SedimentPanelProps> = ({
                 type="number"
                 step="0.02"
                 value={parameters.bedPorosity}
+                aria-label="Bed Packing Porosity p"
                 onChange={(e) => handleChange('bedPorosity', parseFloat(e.target.value) || 0.4)}
                 className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100"
               />
@@ -178,6 +183,7 @@ export const SedimentPanel: React.FC<SedimentPanelProps> = ({
               <input
                 type="number"
                 value={parameters.decoupledIntervalSteps}
+                aria-label="Decoupled Sub-Step Interval"
                 onChange={(e) => handleChange('decoupledIntervalSteps', parseInt(e.target.value) || 5)}
                 className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100"
               />
@@ -187,7 +193,9 @@ export const SedimentPanel: React.FC<SedimentPanelProps> = ({
 
         <div className="flex justify-end pt-2 border-t border-slate-800">
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Apply sediment parameters and close"
             className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-semibold transition"
           >
             Apply & Close

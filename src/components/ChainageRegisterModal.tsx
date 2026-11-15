@@ -171,8 +171,10 @@ export const ChainageRegisterModal: React.FC<ChainageRegisterModalProps> = ({
 
           <div className="flex items-center gap-2 shrink-0">
             <button
+              type="button"
               onClick={handleExportRegisterExcel}
               disabled={chainages.length === 0 || isExporting}
+              aria-label="Export register as Excel spreadsheet"
               className="flex items-center gap-1.5 px-3 py-1.5 bg-[#10b981]/20 hover:bg-[#10b981]/30 border border-[#10b981]/40 text-[#86efac] rounded text-xs font-medium transition-colors disabled:opacity-50 font-tech"
               title="Download the complete register as an Excel workbook"
             >
@@ -180,6 +182,7 @@ export const ChainageRegisterModal: React.FC<ChainageRegisterModalProps> = ({
               <span>{isExporting ? 'Exporting...' : 'Export Register'}</span>
             </button>
             <button
+              type="button"
               onClick={onClose}
               aria-label="Close register"
               className="p-1.5 text-[#737373] hover:text-white rounded hover:bg-[#171717] transition-colors"
@@ -190,9 +193,14 @@ export const ChainageRegisterModal: React.FC<ChainageRegisterModalProps> = ({
         </div>
 
         {exportError && (
-          <div className="px-6 py-2 bg-red-950/40 border-b border-red-500/30 text-red-300 text-xs flex items-center justify-between font-tech">
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="px-6 py-2 bg-red-950/40 border-b border-red-500/30 text-red-300 text-xs flex items-center justify-between font-tech"
+          >
             <span>Export error: {exportError}</span>
             <button
+              type="button"
               onClick={() => setExportError(null)}
               className="text-red-400 hover:text-red-200 ml-2"
               aria-label="Dismiss export error"
@@ -285,10 +293,13 @@ export const ChainageRegisterModal: React.FC<ChainageRegisterModalProps> = ({
                       </td>
                       <td className="py-2 px-3 text-right">
                         <button
+                          type="button"
                           onClick={() => {
                             onSelectChainage(ch.chainage);
                             onClose();
                           }}
+                          aria-label={`Delineate chainage ${ch.formatted}`}
+                          aria-pressed={isSelected}
                           className={`px-2.5 py-1 text-[11px] rounded transition-colors font-medium ${
                             isSelected
                               ? 'bg-amber-500 text-[#0a0a0a] font-bold'

@@ -92,6 +92,7 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = '';
 
     setFileName(file.name);
     const reader = new FileReader();
@@ -257,6 +258,7 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
                   min="0.2"
                   max="15.0"
                   value={carveDepthM}
+                  aria-label="Channel Carve Depth (m)"
                   onChange={(e) => setCarveDepthM(parseFloat(e.target.value) || 1.5)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100 font-mono text-xs focus:border-cyan-400 focus:outline-none"
                 />
@@ -275,6 +277,7 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
                   min="0.2"
                   max="0.95"
                   value={channelWidthRatio}
+                  aria-label="Active Channel Ratio"
                   onChange={(e) => setChannelWidthRatio(parseFloat(e.target.value) || 0.6)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100 font-mono text-xs focus:border-cyan-400 focus:outline-none"
                 />
@@ -293,6 +296,7 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
                   min="0.012"
                   max="0.060"
                   value={channelManningN}
+                  aria-label="Channel Manning Roughness n"
                   onChange={(e) => setChannelManningN(parseFloat(e.target.value) || 0.030)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100 font-mono text-xs focus:border-cyan-400 focus:outline-none"
                 />
@@ -309,6 +313,7 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
                   min="0.030"
                   max="0.150"
                   value={floodplainManningN}
+                  aria-label="Floodplain Manning Roughness n"
                   onChange={(e) => setFloodplainManningN(parseFloat(e.target.value) || 0.065)}
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-slate-100 font-mono text-xs focus:border-cyan-400 focus:outline-none"
                 />
@@ -384,6 +389,8 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
         {/* Feedback / Status */}
         {statusMessage && (
           <div
+            role={statusMessage.isError ? 'alert' : 'status'}
+            aria-live={statusMessage.isError ? 'assertive' : 'polite'}
             className={`p-2.5 rounded-xl text-xs font-medium border animate-fade-in ${
               statusMessage.isError
                 ? 'bg-rose-950/60 border-rose-800 text-rose-200'
