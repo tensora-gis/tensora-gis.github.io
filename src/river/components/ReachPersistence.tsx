@@ -3,7 +3,7 @@
  * Manages saving/loading projects to IndexedDB and JSON file archive import/export
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   RiverReachDefinition,
   RiverGridMesh,
@@ -50,38 +50,59 @@ export const ReachPersistence: React.FC<ReachPersistenceProps> = ({
   onLoadArchive,
 }) => {
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 
   const handleSaveToIndexedDb = async () => {
+    setErrorMessage(null);
     try {
       await RiverDataService.saveReach(reach);
       setSaveStatus('Project reach saved successfully to browser local database!');
       setTimeout(() => setSaveStatus(null), 3000);
     } catch (err: any) {
-      setSaveStatus(`Failed to save: ${err.message}`);
+      setSaveStatus(null);
+      setErrorMessage(`Failed to save: ${err?.message || String(err)}`);
     }
   };
 
   const handleExportJson = () => {
-    const jsonStr = serializeRiverProject({
-      reach,
-      mesh,
-      boundaries,
-      structures,
-      gauges,
-      swotObservation,
-      turbParams,
-      sedParams,
-    });
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    triggerFileDownload(blob, `${reach.id}.tensora-reach.json`);
+    setErrorMessage(null);
+    try {
+      const jsonStr = serializeRiverProject({
+        reach,
+        mesh,
+        boundaries,
+        structures,
+        gauges,
+        swotObservation,
+        turbParams,
+        sedParams,
+      });
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      triggerFileDownload(blob, `${reach.id}.tensora-reach.json`);
+    } catch (err: any) {
+      setErrorMessage(`Failed to export project: ${err?.message || String(err)}`);
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setErrorMessage(null);
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
@@ -90,15 +111,23 @@ export const ReachPersistence: React.FC<ReachPersistenceProps> = ({
         onLoadArchive(archive);
         onClose();
       } catch (err: any) {
-        alert(`Invalid project file: ${err.message}`);
+        setErrorMessage(`Invalid project file: ${err?.message || String(err)}`);
       }
+    };
+    reader.onerror = () => {
+      setErrorMessage('Failed to read selected project file from disk.');
     };
     reader.readAsText(file);
   };
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Project Storage & JSON File Archive"
+        className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4"
+      >
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <span className="p-1.5 bg-cyan-500/20 text-cyan-400 rounded-lg">
@@ -108,10 +137,27 @@ export const ReachPersistence: React.FC<ReachPersistenceProps> = ({
             </span>
             <h3 className="text-base font-semibold">Project Storage & JSON File Archive</h3>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition">
+          <button
+            onClick={onClose}
+            aria-label="Close project storage modal"
+            className="text-slate-400 hover:text-white transition"
+          >
             ✕
           </button>
         </div>
+
+        {errorMessage && (
+          <div className="bg-red-950/60 border border-red-500/40 rounded-lg p-2.5 text-xs text-red-300 flex items-center justify-between">
+            <span>{errorMessage}</span>
+            <button
+              onClick={() => setErrorMessage(null)}
+              className="text-red-400 hover:text-red-200 ml-2 font-bold"
+              aria-label="Dismiss error notice"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         <div className="space-y-3 text-xs">
           {/* IndexedDB Section */}
@@ -149,6 +195,7 @@ export const ReachPersistence: React.FC<ReachPersistenceProps> = ({
                 <input
                   type="file"
                   accept=".json"
+                  aria-label="Import JSON project archive"
                   onChange={handleFileUpload}
                   className="hidden"
                 />

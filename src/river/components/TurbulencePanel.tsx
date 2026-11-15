@@ -2,7 +2,7 @@
  * Depth-Averaged RANS Turbulence Configuration & Diagnostics Panel
  */
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   TurbulenceParameters,
   TurbulenceModelType,
@@ -27,6 +27,18 @@ export const TurbulencePanel: React.FC<TurbulencePanelProps> = ({
   currentMeanNuT = 0,
   currentMaxK = 0,
 }) => {
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleChange = (key: keyof TurbulenceParameters, val: any) => {
@@ -38,7 +50,12 @@ export const TurbulencePanel: React.FC<TurbulencePanelProps> = ({
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Depth-Averaged RANS Turbulence Modelling"
+        className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4"
+      >
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <span className="p-1.5 bg-purple-500/20 text-purple-400 rounded-lg">
@@ -48,7 +65,11 @@ export const TurbulencePanel: React.FC<TurbulencePanelProps> = ({
             </span>
             <h3 className="text-base font-semibold">Depth-Averaged RANS Turbulence Modelling</h3>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition">
+          <button
+            onClick={onClose}
+            aria-label="Close turbulence panel"
+            className="text-slate-400 hover:text-white transition"
+          >
             ✕
           </button>
         </div>

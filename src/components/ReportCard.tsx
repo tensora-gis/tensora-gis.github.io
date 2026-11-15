@@ -499,6 +499,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
           <span className="text-[10px] text-[#888] pl-1">Standard:</span>
           <select
             value={designStandard}
+            aria-label="Engineering Design Standard"
             onChange={(e) => {
               const next = e.target.value as DprDesignStandard;
               setDesignStandard(next);
@@ -714,6 +715,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
               <label className="text-[#888] block mb-1">USDA Soil</label>
               <select
                 value={soilTexture}
+                aria-label="USDA Soil Texture"
                 onChange={(e) => setSoilTexture(e.target.value as UsdaSoilTexture)}
                 className="w-full bg-[#181818] border border-[#333] text-amber-300 rounded px-1.5 py-1 focus:outline-none"
               >
@@ -739,6 +741,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
               <label className="text-[#888] block mb-1">Peak Rain (mm/h)</label>
               <select
                 value={stormIntensityMmHr}
+                aria-label="Peak Rain Intensity"
                 onChange={(e) => setStormIntensityMmHr(Number(e.target.value))}
                 className="w-full bg-[#181818] border border-[#333] text-amber-300 rounded px-1.5 py-1 focus:outline-none"
               >
@@ -753,6 +756,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
               <label className="text-[#888] block mb-1">Duration</label>
               <select
                 value={stormDurationHours}
+                aria-label="Storm Duration"
                 onChange={(e) => setStormDurationHours(Number(e.target.value))}
                 className="w-full bg-[#181818] border border-[#333] text-amber-300 rounded px-1.5 py-1 focus:outline-none"
               >
@@ -766,6 +770,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
               <label className="text-[#888] block mb-1">Culvert Diam</label>
               <select
                 value={culvertDiameterM}
+                aria-label="Culvert Diameter"
                 onChange={(e) => setCulvertDiameterM(Number(e.target.value))}
                 className="w-full bg-[#181818] border border-[#333] text-amber-300 rounded px-1.5 py-1 focus:outline-none"
               >
@@ -1449,6 +1454,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
         </div>
         <select
           value={designStandard}
+          aria-label="DPR Engineering Standard"
           onChange={(e) => {
             const next = e.target.value as DprDesignStandard;
             setDesignStandard(next);

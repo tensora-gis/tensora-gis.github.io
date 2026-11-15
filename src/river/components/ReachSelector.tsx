@@ -66,6 +66,7 @@ export const ReachSelector: React.FC<ReachSelectorProps> = ({
         </span>
         <select
           value={currentReach.id}
+          aria-label="Select active river reach"
           onChange={(e) => {
             const val = e.target.value;
             const dbEntry = GLOBAL_RIVER_DATABASE.find((r) => r.id === val);

@@ -2,7 +2,7 @@
  * Full-Scale 2D CFD Simulation Runner & Multi-Format Export Modal
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   RiverGridMesh,
   HydrodynamicsState,
@@ -64,11 +64,25 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
     sed: SedimentState;
   } | null>(null);
   const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || isRunning) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isRunning, onClose]);
 
   if (!isOpen) return null;
 
   const handleStartSimulation = async () => {
     setIsRunning(true);
+    setErrorMessage(null);
     setProgressPct(0);
     setSimTimeSec(0);
     setCompletedSummary(null);
@@ -94,7 +108,7 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
       setCompletedSummary(summary);
       onSimulationFinished(state.hydro, state.turb, state.sed, summary);
     } catch (err: any) {
-      alert(`Simulation error: ${err.message}`);
+      setErrorMessage(`Simulation error: ${err?.message || String(err)}`);
     } finally {
       setIsRunning(false);
       engine.dispose();
@@ -104,6 +118,7 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
   const handleExportExcel = async () => {
     if (!completedSummary || !lastState) return;
     setIsExportingExcel(true);
+    setErrorMessage(null);
 
     try {
       const buffer = await createRiverExcelWorkbook({
@@ -124,7 +139,7 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
       });
       triggerFileDownload(blob, `${reach.id}_2D_River_CFD_Analysis.xlsx`);
     } catch (err: any) {
-      alert(`Failed to export Excel report: ${err.message}`);
+      setErrorMessage(`Failed to export Excel report: ${err?.message || String(err)}`);
     } finally {
       setIsExportingExcel(false);
     }
@@ -132,21 +147,34 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
 
   const handleExportGeoJson = () => {
     if (!lastState) return;
-    const jsonStr = exportRiverToGeoJson(mesh, lastState.hydro, lastState.turb, lastState.sed);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    triggerFileDownload(blob, `${reach.id}_2D_Mesh_Results.geojson`);
+    try {
+      const jsonStr = exportRiverToGeoJson(mesh, lastState.hydro, lastState.turb, lastState.sed);
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      triggerFileDownload(blob, `${reach.id}_2D_Mesh_Results.geojson`);
+    } catch (err: any) {
+      setErrorMessage(`Failed to export GeoJSON: ${err?.message || String(err)}`);
+    }
   };
 
   const handleExportAscii = () => {
     if (!lastState) return;
-    const ascStr = exportRiverToAsciiGrid(mesh, 'depth', lastState.hydro);
-    const blob = new Blob([ascStr], { type: 'text/plain' });
-    triggerFileDownload(blob, `${reach.id}_Depth_Grid.asc`);
+    try {
+      const ascStr = exportRiverToAsciiGrid(mesh, 'depth', lastState.hydro);
+      const blob = new Blob([ascStr], { type: 'text/plain' });
+      triggerFileDownload(blob, `${reach.id}_Depth_Grid.asc`);
+    } catch (err: any) {
+      setErrorMessage(`Failed to export ASCII Grid: ${err?.message || String(err)}`);
+    }
   };
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-xl w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="2D Shallow-Water CFD Simulation"
+        className="bg-slate-900 border border-slate-800 rounded-xl max-w-xl w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4"
+      >
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <span className="p-1.5 bg-emerald-500/20 text-emerald-400 rounded-lg">
@@ -157,10 +185,28 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
             </span>
             <h3 className="text-base font-semibold">Run Full-Scale 2D Shallow-Water CFD Simulation</h3>
           </div>
-          <button onClick={onClose} disabled={isRunning} className="text-slate-400 hover:text-white transition">
+          <button
+            onClick={onClose}
+            disabled={isRunning}
+            aria-label="Close simulation panel"
+            className="text-slate-400 hover:text-white transition disabled:opacity-50"
+          >
             ✕
           </button>
         </div>
+
+        {errorMessage && (
+          <div className="bg-red-950/60 border border-red-500/40 rounded-lg p-2.5 text-xs text-red-300 flex items-center justify-between">
+            <span>{errorMessage}</span>
+            <button
+              onClick={() => setErrorMessage(null)}
+              className="text-red-400 hover:text-red-200 ml-2 font-bold"
+              aria-label="Dismiss error notice"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Configuration */}
         <div className="grid grid-cols-2 gap-3 text-xs">
@@ -170,6 +216,7 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
               value={durationSec}
               onChange={(e) => setDurationSec(parseInt(e.target.value) || 60)}
               disabled={isRunning}
+              aria-label="Simulation Duration"
               className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100 focus:outline-none focus:border-cyan-500"
             >
               <option value="30">30 seconds (Rapid Test)</option>
@@ -186,6 +233,7 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({
               value={backendPref}
               onChange={(e) => setBackendPref(e.target.value as any)}
               disabled={isRunning}
+              aria-label="Computational Backend"
               className="w-full bg-slate-800 border border-slate-700 rounded p-1.5 text-slate-100 focus:outline-none focus:border-cyan-500"
             >
               <option value="webgpu">WebGPU (Integrated GPU WGSL Shaders)</option>

@@ -2,7 +2,7 @@
  * Sediment Transport & Morphodynamics Configuration Panel
  */
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   SedimentParameters,
   SedimentFormula,
@@ -25,6 +25,18 @@ export const SedimentPanel: React.FC<SedimentPanelProps> = ({
   cumulativeScourM3 = 0,
   cumulativeDepoM3 = 0,
 }) => {
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleChange = (key: keyof SedimentParameters, val: any) => {
@@ -38,7 +50,12 @@ export const SedimentPanel: React.FC<SedimentPanelProps> = ({
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Sediment Transport & Exner Morphodynamics"
+        className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4"
+      >
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <span className="p-1.5 bg-amber-500/20 text-amber-400 rounded-lg">
@@ -48,7 +65,11 @@ export const SedimentPanel: React.FC<SedimentPanelProps> = ({
             </span>
             <h3 className="text-base font-semibold">Sediment Transport & Exner Morphodynamics</h3>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition">
+          <button
+            onClick={onClose}
+            aria-label="Close sediment panel"
+            className="text-slate-400 hover:text-white transition"
+          >
             ✕
           </button>
         </div>
@@ -80,6 +101,7 @@ export const SedimentPanel: React.FC<SedimentPanelProps> = ({
           <input
             type="checkbox"
             checked={parameters.enabled}
+            aria-label="Coupled Morphodynamic Bed Evolution"
             onChange={(e) => handleChange('enabled', e.target.checked)}
             className="w-4 h-4 rounded text-amber-600 focus:ring-0 cursor-pointer"
           />

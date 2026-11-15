@@ -26,6 +26,8 @@ export const ChainageRegisterModal: React.FC<ChainageRegisterModalProps> = ({
   const searchRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -76,55 +78,64 @@ export const ChainageRegisterModal: React.FC<ChainageRegisterModalProps> = ({
   if (!isOpen) return null;
 
   const handleExportRegisterExcel = async () => {
-    const ExcelJS = await loadExcelJS();
-    const wb = new ExcelJS.Workbook();
-    const rows: (string | number)[][] = [
-      ['CORRIDOR CHAINAGE COORDINATE REGISTER'],
-      ['PROJECT / ALIGNMENT', corridorName],
-      ['TOTAL POINTS', chainages.length],
-      [],
-      [
-        'Chainage',
-        'Formatted Chainage',
-        'Latitude (DMS)',
-        'Longitude (DMS)',
-        'Latitude (DD)',
-        'Longitude (DD)',
-        'Elevation (m MSL)',
-        'Elevation Source',
-        'Distance from Start (m)',
-      ],
-      ...chainages.map((ch) => [
-        ch.chainage,
-        ch.formatted,
-        ch.dmsLat,
-        ch.dmsLng,
-        ch.decLat ?? ch.lat,
-        ch.decLng ?? ch.lng,
-        ch.elevation !== undefined && ch.elevation !== null ? ch.elevation : 'Not available',
-        ch.elevationSource === 'survey'
-          ? 'Survey sheet'
-          : ch.elevationSource === 'dem'
-            ? 'DEM (30 m)'
-            : 'Not available',
-        Math.round(ch.distanceFromStartM),
-      ]),
-    ];
-    const ws = wb.addWorksheet('Chainage_Register');
-    ws.addRows(rows);
-    ws.columns = [
-      { width: 14 }, { width: 18 }, { width: 22 }, { width: 22 },
-      { width: 15 }, { width: 15 }, { width: 18 }, { width: 16 }, { width: 22 },
-    ];
+    setIsExporting(true);
+    setExportError(null);
+    try {
+      const ExcelJS = await loadExcelJS();
+      const wb = new ExcelJS.Workbook();
+      const rows: (string | number)[][] = [
+        ['CORRIDOR CHAINAGE COORDINATE REGISTER'],
+        ['PROJECT / ALIGNMENT', corridorName],
+        ['TOTAL POINTS', chainages.length],
+        [],
+        [
+          'Chainage',
+          'Formatted Chainage',
+          'Latitude (DMS)',
+          'Longitude (DMS)',
+          'Latitude (DD)',
+          'Longitude (DD)',
+          'Elevation (m MSL)',
+          'Elevation Source',
+          'Distance from Start (m)',
+        ],
+        ...chainages.map((ch) => [
+          ch.chainage,
+          ch.formatted,
+          ch.dmsLat,
+          ch.dmsLng,
+          ch.decLat ?? ch.lat,
+          ch.decLng ?? ch.lng,
+          ch.elevation !== undefined && ch.elevation !== null ? ch.elevation : 'Not available',
+          ch.elevationSource === 'survey'
+            ? 'Survey sheet'
+            : ch.elevationSource === 'dem'
+              ? 'DEM (30 m)'
+              : 'Not available',
+          Math.round(ch.distanceFromStartM),
+        ]),
+      ];
+      const ws = wb.addWorksheet('Chainage_Register');
+      ws.addRows(rows);
+      ws.columns = [
+        { width: 14 }, { width: 18 }, { width: 22 }, { width: 22 },
+        { width: 15 }, { width: 15 }, { width: 18 }, { width: 16 }, { width: 22 },
+      ];
 
-    const buffer = await wb.xlsx.writeBuffer();
-    const safeName = (corridorName || 'corridor').replace(/[^a-zA-Z0-9_-]/g, '_') || 'corridor';
-    downloadBlob(
-      new Blob([buffer], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      }),
-      `${safeName}_Chainages.xlsx`
-    );
+      const buffer = await wb.xlsx.writeBuffer();
+      const safeName = (corridorName || 'corridor').replace(/[^a-zA-Z0-9_-]/g, '_') || 'corridor';
+      downloadBlob(
+        new Blob([buffer], {
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }),
+        `${safeName}_Chainages.xlsx`
+      );
+    } catch (err) {
+      console.error('Failed to export chainage register Excel:', err);
+      setExportError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const visible = filteredChainages.slice(0, RENDER_LIMIT);
@@ -161,12 +172,12 @@ export const ChainageRegisterModal: React.FC<ChainageRegisterModalProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={handleExportRegisterExcel}
-              disabled={chainages.length === 0}
+              disabled={chainages.length === 0 || isExporting}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-[#10b981]/20 hover:bg-[#10b981]/30 border border-[#10b981]/40 text-[#86efac] rounded text-xs font-medium transition-colors disabled:opacity-50 font-tech"
               title="Download the complete register as an Excel workbook"
             >
-              <Download className="w-3.5 h-3.5 text-[#10b981]" />
-              <span>Export Register</span>
+              <Download className={`w-3.5 h-3.5 text-[#10b981] ${isExporting ? 'animate-spin' : ''}`} />
+              <span>{isExporting ? 'Exporting...' : 'Export Register'}</span>
             </button>
             <button
               onClick={onClose}
@@ -178,12 +189,26 @@ export const ChainageRegisterModal: React.FC<ChainageRegisterModalProps> = ({
           </div>
         </div>
 
+        {exportError && (
+          <div className="px-6 py-2 bg-red-950/40 border-b border-red-500/30 text-red-300 text-xs flex items-center justify-between font-tech">
+            <span>Export error: {exportError}</span>
+            <button
+              onClick={() => setExportError(null)}
+              className="text-red-400 hover:text-red-200 ml-2"
+              aria-label="Dismiss export error"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
         <div className="px-6 py-3 bg-[#111]/60 border-b border-[#222] flex items-center justify-between gap-4">
           <div className="relative flex-1 max-w-md">
             <Search className="w-4 h-4 text-[#737373] absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               ref={searchRef}
               type="search"
+              aria-label="Filter chainage records"
               placeholder="Filter by chainage, latitude or longitude..."
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full bg-[#0a0a0a] border border-[#222] rounded pl-9 pr-3 py-1.5 text-xs text-[#e5e7eb] placeholder:text-[#737373] focus:outline-none focus:border-amber-500 font-mono-numbers focus-tech font-tech"

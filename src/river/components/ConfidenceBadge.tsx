@@ -72,10 +72,19 @@ export const ConfidenceBadge: React.FC<ConfidenceBadgeProps> = ({
   return (
     <div className={`relative inline-block ${className}`}>
       <div
+        role="button"
+        tabIndex={0}
+        aria-label={`Accuracy Tier: ${currentTier.label}. Click to view data source details.`}
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
         onClick={() => setShowTooltip(!showTooltip)}
-        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold cursor-pointer transition select-none shadow-sm ${currentTier.bg}`}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setShowTooltip((prev) => !prev);
+          }
+        }}
+        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semibold cursor-pointer transition select-none shadow-sm focus:outline-none focus:ring-1 focus:ring-cyan-400 ${currentTier.bg}`}
       >
         <span className={`w-2 h-2 rounded-full ${currentTier.dot} animate-pulse`} />
         <span>{currentTier.icon}</span>

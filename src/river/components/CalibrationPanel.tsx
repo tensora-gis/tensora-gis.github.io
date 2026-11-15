@@ -2,7 +2,7 @@
  * NASA SWOT Radar Satellite Calibration & WSE Validation Panel
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   RiverGridMesh,
   HydrodynamicsState,
@@ -32,6 +32,18 @@ export const CalibrationPanel: React.FC<CalibrationPanelProps> = ({
 }) => {
   const [result, setResult] = useState<SwotCalibrationResult | null>(null);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleRunCalibration = () => {
@@ -49,7 +61,12 @@ export const CalibrationPanel: React.FC<CalibrationPanelProps> = ({
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="NASA SWOT Radar Satellite Altimetry Calibration"
+        className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4"
+      >
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <span className="p-1.5 bg-blue-500/20 text-blue-400 rounded-lg">
@@ -59,7 +76,11 @@ export const CalibrationPanel: React.FC<CalibrationPanelProps> = ({
             </span>
             <h3 className="text-base font-semibold">NASA SWOT Radar Satellite Altimetry Calibration</h3>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition">
+          <button
+            onClick={onClose}
+            aria-label="Close SWOT calibration panel"
+            className="text-slate-400 hover:text-white transition"
+          >
             ✕
           </button>
         </div>

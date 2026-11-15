@@ -50,8 +50,8 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
       network.pipes.forEach((p) => {
         const a = p.waveSpeedMs || 1050;
         const refl = ((2 * p.length) / a).toFixed(2);
-        const cav = (p.minTransientHeadM ?? 0) < -10 ? 'YES' : 'NO';
-        const over = (p.maxTransientHeadM ?? 0) > (p.pressureRatingPnBar || 16) * 10 ? 'YES' : 'NO';
+        const cav = (p.cavitationRisk?.includes('Cavitation') || (p.minTransientPressureBar !== undefined && p.minTransientPressureBar < -0.98)) ? 'YES' : 'NO';
+        const over = (p.overpressureRisk?.includes('Rupture') || p.overpressureRisk?.includes('Warning') || (p.maxTransientPressureBar !== undefined && p.maxTransientPressureBar > (p.pressureRatingPnBar || 16))) ? 'YES' : 'NO';
         csv += `${p.id},${p.material || 'Ductile Iron'},${p.length},${p.diameter},${p.pressureRatingPnBar || 16},${a},${refl},${p.velocity ?? ''},${p.maxTransientHeadM ?? ''},${p.minTransientHeadM ?? ''},${cav},${over}\n`;
       });
     }
@@ -634,8 +634,8 @@ export const WaterFlexTables: React.FC<WaterFlexTablesProps> = ({
                 .map((p) => {
                   const a = p.waveSpeedMs || 1050;
                   const refl = ((2 * p.length) / a).toFixed(2);
-                  const isCav = (p.minTransientHeadM ?? 0) < -10;
-                  const isOver = (p.maxTransientHeadM ?? 0) > (p.pressureRatingPnBar || 16) * 10;
+                  const isCav = p.cavitationRisk ? p.cavitationRisk.includes('Cavitation') : (p.minTransientPressureBar !== undefined ? p.minTransientPressureBar < -0.98 : false);
+                  const isOver = p.overpressureRisk ? (p.overpressureRisk.includes('Rupture') || p.overpressureRisk.includes('Warning')) : (p.maxTransientPressureBar !== undefined ? p.maxTransientPressureBar > (p.pressureRatingPnBar || 16) : false);
                   return (
                     <tr
                       key={p.id}

@@ -538,6 +538,203 @@ boundaryField
 }
 
 /**
+ * Generates 0/k turbulent kinetic energy boundary condition
+ */
+export function generateFieldK(options?: OpenFoamCaseOptions): string {
+  return `/*--------------------------------*- C++ -*----------------------------------*\\
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volScalarField;
+    location    "0";
+    object      k;
+}
+dimensions      [0 2 -2 0 0 0 0];
+
+internalField   uniform 0.001;
+
+boundaryField
+{
+    inlet
+    {
+        type            turbulentIntensityKineticEnergyInlet;
+        intensity       0.05;
+        value           uniform 0.001;
+    }
+    outlet
+    {
+        type            inletOutlet;
+        inletValue      uniform 0.001;
+        value           uniform 0.001;
+    }
+    leftBank
+    {
+        type            kqRWallFunction;
+        value           uniform 0.001;
+    }
+    rightBank
+    {
+        type            kqRWallFunction;
+        value           uniform 0.001;
+    }
+    bed
+    {
+        type            kqRWallFunction;
+        value           uniform 0.001;
+    }
+    atmosphere
+    {
+        type            inletOutlet;
+        inletValue      uniform 0.001;
+        value           uniform 0.001;
+    }
+}
+`;
+}
+
+/**
+ * Generates 0/omega specific dissipation rate boundary condition
+ */
+export function generateFieldOmega(options?: OpenFoamCaseOptions): string {
+  return `/*--------------------------------*- C++ -*----------------------------------*\\
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volScalarField;
+    location    "0";
+    object      omega;
+}
+dimensions      [0 0 -1 0 0 0 0];
+
+internalField   uniform 1.0;
+
+boundaryField
+{
+    inlet
+    {
+        type            turbulentMixingLengthFrequencyInlet;
+        mixingLength    0.5;
+        value           uniform 1.0;
+    }
+    outlet
+    {
+        type            inletOutlet;
+        inletValue      uniform 1.0;
+        value           uniform 1.0;
+    }
+    leftBank
+    {
+        type            omegaWallFunction;
+        value           uniform 1.0;
+    }
+    rightBank
+    {
+        type            omegaWallFunction;
+        value           uniform 1.0;
+    }
+    bed
+    {
+        type            omegaWallFunction;
+        value           uniform 1.0;
+    }
+    atmosphere
+    {
+        type            inletOutlet;
+        inletValue      uniform 1.0;
+        value           uniform 1.0;
+    }
+}
+`;
+}
+
+/**
+ * Generates 0/nut turbulent viscosity boundary condition
+ */
+export function generateFieldNut(options?: OpenFoamCaseOptions): string {
+  const ks = options?.d50Mm ? (options.d50Mm * 0.0025).toFixed(4) : '0.0100';
+  return `/*--------------------------------*- C++ -*----------------------------------*\\
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volScalarField;
+    location    "0";
+    object      nut;
+}
+dimensions      [0 2 -1 0 0 0 0];
+
+internalField   uniform 0;
+
+boundaryField
+{
+    inlet
+    {
+        type            calculated;
+        value           uniform 0;
+    }
+    outlet
+    {
+        type            calculated;
+        value           uniform 0;
+    }
+    leftBank
+    {
+        type            nutkWallFunction;
+        value           uniform 0;
+    }
+    rightBank
+    {
+        type            nutkWallFunction;
+        value           uniform 0;
+    }
+    bed
+    {
+        type            nutkRoughWallFunction;
+        roughnessHeight ${ks};
+        roughnessConstant 0.5;
+        value           uniform 0;
+    }
+    atmosphere
+    {
+        type            calculated;
+        value           uniform 0;
+    }
+}
+`;
+}
+
+/**
+ * Generates system/surfaceFeaturesDict for extracting edge meshes from STL
+ */
+export function generateSurfaceFeaturesDict(): string {
+  return `/*--------------------------------*- C++ -*----------------------------------*\\
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    location    "system";
+    object      surfaceFeaturesDict;
+}
+surfaces
+(
+    "structures.stl"
+    {
+        surfs
+        (
+            {
+                file "structures.stl";
+                includedAngle 150;
+            }
+        );
+    }
+);
+`;
+}
+
+/**
  * Helper to emit a formatted 3D STL facet
  */
 function emitStlFacet(
@@ -930,8 +1127,13 @@ export function generateStructuresStl(
         const next = (k + 1) % 4;
         const cA = pCorners[k];
         const cB = pCorners[next];
-        emitStlFacet(lines, 0, 0, 0, [cA[0], cA[1], zBase], [cB[0], cB[1], zBase], [cB[0], cB[1], zTop]);
-        emitStlFacet(lines, 0, 0, 0, [cA[0], cA[1], zBase], [cB[0], cB[1], zTop], [cA[0], cA[1], zTop]);
+        const dx = cB[0] - cA[0];
+        const dy = cB[1] - cA[1];
+        const len = Math.max(1e-4, Math.hypot(dx, dy));
+        const nx = dy / len;
+        const ny = -dx / len;
+        emitStlFacet(lines, nx, ny, 0, [cA[0], cA[1], zBase], [cB[0], cB[1], zBase], [cB[0], cB[1], zTop]);
+        emitStlFacet(lines, nx, ny, 0, [cA[0], cA[1], zBase], [cB[0], cB[1], zTop], [cA[0], cA[1], zTop]);
       }
     }
   }
@@ -1050,6 +1252,7 @@ export function populateOpenFoamZip(zip: JSZip, options: OpenFoamCaseOptions): J
   system.file('fvSchemes', generateFvSchemes());
   system.file('fvSolution', generateFvSolution());
   system.file('snappyHexMeshDict', generateSnappyHexMeshDict());
+  system.file('surfaceFeaturesDict', generateSurfaceFeaturesDict());
   system.file(
     'setFieldsDict',
     `/*--------------------------------*- C++ -*----------------------------------*\\
@@ -1106,6 +1309,9 @@ value           ( 0 0 -9.81 );
   const zero = zip.folder('0')!;
   zero.file('U', generateFieldU(options));
   zero.file('alpha.water', generateFieldAlphaWater());
+  zero.file('k', generateFieldK(options));
+  zero.file('omega', generateFieldOmega(options));
+  zero.file('nut', generateFieldNut(options));
   zero.file(
     'p_rgh',
     `/*--------------------------------*- C++ -*----------------------------------*\\

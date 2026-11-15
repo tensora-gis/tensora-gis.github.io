@@ -499,24 +499,31 @@ export const RiverAnalysisModelling: React.FC = () => {
   // Keyboard CAD drawing shortcuts (Escape to cancel, Enter to complete, Ctrl+Z to undo)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!cadDrawModeRef.current) return;
       if (e.key === 'Escape') {
-        setCadDrawMode(null);
-        setCadDrawPoints([]);
-        setCadHoverFeedback(null);
-        setCadNotification(null);
+        if (isMeshConfigModalOpen) {
+          setIsMeshConfigModalOpen(false);
+          return;
+        }
+        if (cadDrawModeRef.current) {
+          setCadDrawMode(null);
+          setCadDrawPoints([]);
+          setCadHoverFeedback(null);
+          setCadNotification(null);
+        }
       } else if (e.key === 'Enter') {
         if (cadDrawPointsRef.current.length >= 2) {
           handleCompleteCadPolyline();
         }
       } else if (e.key === 'z' && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        setCadDrawPoints((prev) => prev.slice(0, -1));
+        if (cadDrawModeRef.current) {
+          e.preventDefault();
+          setCadDrawPoints((prev) => prev.slice(0, -1));
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [isMeshConfigModalOpen]);
 
   // Update CAD Preview Layer on Map with live rubber-banding, dimension feedback, and shape outlines
   useEffect(() => {
@@ -1027,7 +1034,8 @@ export const RiverAnalysisModelling: React.FC = () => {
       });
       triggerFileDownload(blob, `${reach.id}_2D_River_CFD_Analysis.xlsx`);
     } catch (err: any) {
-      alert(`Excel export failed: ${err.message}`);
+      setCadNotification(`Excel export failed: ${err.message}`);
+      setTimeout(() => setCadNotification(null), 5000);
     } finally {
       setIsExportingExcel(false);
     }
@@ -2504,7 +2512,12 @@ export const RiverAnalysisModelling: React.FC = () => {
       {/* Completely Modifiable Mesh Generation & CFD Discretization Studio Modal */}
       {isMeshConfigModalOpen && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl text-slate-100 flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Computational Mesh Generation & CFD Discretization"
+            className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl text-slate-100 flex flex-col gap-4 max-h-[90vh] overflow-y-auto"
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2.5">
                 <span className="p-2 bg-cyan-500/20 text-cyan-400 rounded-xl text-lg">📐</span>
@@ -2519,6 +2532,7 @@ export const RiverAnalysisModelling: React.FC = () => {
               </div>
               <button
                 onClick={() => setIsMeshConfigModalOpen(false)}
+                aria-label="Close mesh configuration dialog"
                 className="text-slate-400 hover:text-white transition"
               >
                 ✕

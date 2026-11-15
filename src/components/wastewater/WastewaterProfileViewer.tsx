@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import {
   WastewaterNetwork,
   WastewaterManhole,
+  WastewaterOutfall,
 } from '../../types/wastewater';
 import { X, TrendingUp, Play, Pause, RotateCcw, ShieldAlert, Waves } from 'lucide-react';
 
@@ -86,7 +87,12 @@ export const WastewaterProfileViewer: React.FC<WastewaterProfileViewerProps> = (
 
       const rim = 'rimElevation' in node ? node.rimElevation : ('invertElevation' in node ? node.invertElevation + 2.0 : 170.0);
       const inv = 'invertElevation' in node ? node.invertElevation : ('floorElevation' in node ? node.floorElevation : 168.0);
-      const hgl = 'waterElevationM' in node ? (node as WastewaterManhole).waterElevationM ?? inv + 0.2 : inv + 0.2;
+      const hgl =
+        'waterElevationM' in node
+          ? (node as WastewaterManhole).waterElevationM ?? inv + 0.2
+          : ('receivingWaterElevation' in node
+              ? (node as WastewaterOutfall).receivingWaterElevation
+              : inv + 0.2);
 
       // Find connected conduit for diameter
       const nextNode = validNodes[i + 1];

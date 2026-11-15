@@ -35,6 +35,8 @@ export interface WaterJunction extends BaseElement {
   waterAgeHours?: number;
   /** Chlorine residual concentration in mg/L */
   chlorineResidualMgL?: number;
+  /** Diurnal demand pattern ID if assigned */
+  patternId?: string;
 }
 
 export interface WaterReservoir extends BaseElement {
@@ -105,6 +107,10 @@ export interface WaterPipe extends BaseElement {
   cavitationRisk?: string;
   /** Transient overpressure risk rating */
   overpressureRisk?: string;
+  /** Maximum transient pressure in bar */
+  maxTransientPressureBar?: number;
+  /** Minimum transient pressure in bar */
+  minTransientPressureBar?: number;
 }
 
 export interface WaterPump extends BaseElement {
@@ -169,6 +175,8 @@ export interface WaterDistributionNetwork {
   pipes: WaterPipe[];
   pumps: WaterPump[];
   valves: WaterValve[];
+  /** Diurnal demand patterns */
+  patterns?: { id: string; multipliers: number[] }[];
 }
 
 export interface HourlySimulationPoint {

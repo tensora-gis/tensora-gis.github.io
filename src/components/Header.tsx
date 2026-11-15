@@ -133,6 +133,7 @@ export const Header: React.FC<HeaderProps> = ({
           <span className="text-[#737373]">Standard:</span>
           <select
             value={std}
+            aria-label="DPR Engineering Design Standard"
             onChange={(e) => {
               const next = e.target.value as DprDesignStandard;
               setGlobalDesignStandard(next);

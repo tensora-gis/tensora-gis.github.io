@@ -843,6 +843,18 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
     return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
   }, []);
 
+  // Escape key listener to close viewer
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   // Mouse interaction handlers for 3D Camera Orbit & Pan
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     isDraggingRef.current = true;
@@ -900,11 +912,28 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
     }
   };
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-md p-3 sm:p-6 animate-fade-in">
-      <div className="relative flex flex-col w-full h-full max-w-7xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="ParaView 3D CFD Interactive Post-Processor"
+        className="relative flex flex-col w-full h-full max-w-7xl bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl overflow-hidden"
+      >
         {/* Top Header Bar */}
         <div className="flex items-center justify-between px-5 py-3.5 bg-slate-950 border-b border-slate-800">
           <div className="flex items-center gap-3">
@@ -947,6 +976,7 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             <button
               type="button"
               onClick={onClose}
+              aria-label="Close ParaView visualizer"
               className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition"
             >
               ✕
@@ -962,6 +992,7 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             <select
               value={scalarField}
               onChange={(e) => setScalarField(e.target.value as ParaViewScalarField)}
+              aria-label="Color by scalar field"
               className="bg-slate-800 border border-slate-700 rounded-md px-2.5 py-1 text-slate-100 font-medium focus:outline-none focus:border-cyan-500"
             >
               <option value="velocity">Velocity Magnitude |V| (m/s)</option>
@@ -976,6 +1007,7 @@ export const ParaView3DVisualizer: React.FC<ParaView3DVisualizerProps> = ({
             <select
               value={colorPalette}
               onChange={(e) => setColorPalette(e.target.value as ColorMapPalette)}
+              aria-label="Colormap palette"
               className="bg-slate-800 border border-slate-700 rounded-md px-2 py-1 text-slate-200 text-xs"
             >
               <option value="cool-to-warm">ParaView Cool-to-Warm</option>

@@ -31,7 +31,8 @@ export function exportToEpanetInp(network: WaterDistributionNetwork): string {
     const id = j.id.padEnd(16);
     const elev = j.elevation.toFixed(2).padStart(10);
     const demand = j.baseDemand.toFixed(2).padStart(12);
-    lines.push(`${id} ${elev} ${demand}           ; ${j.label}`);
+    const pat = (j.patternId || '').padEnd(12);
+    lines.push(`${id} ${elev} ${demand}   ${pat}; ${j.label}`);
   }
   lines.push('');
 
@@ -98,6 +99,19 @@ export function exportToEpanetInp(network: WaterDistributionNetwork): string {
     lines.push('');
   }
 
+  if (network.patterns && network.patterns.length > 0) {
+    lines.push('[PATTERNS]');
+    lines.push(';ID              Multipliers');
+    for (const pat of network.patterns) {
+      const mults = pat.multipliers;
+      for (let i = 0; i < mults.length; i += 6) {
+        const chunk = mults.slice(i, i + 6).map((m) => m.toFixed(2).padStart(8)).join(' ');
+        lines.push(`${pat.id.padEnd(16)} ${chunk}`);
+      }
+    }
+    lines.push('');
+  }
+
   lines.push('[COORDINATES]');
   lines.push(';Node            X-Coord (Lng)    Y-Coord (Lat)');
   for (const j of network.junctions) {
@@ -137,6 +151,7 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
   const pumps: WaterPump[] = [];
   const valves: WaterValve[] = [];
   const coords = new Map<string, { lat: number; lng: number }>();
+  const patternMap = new Map<string, number[]>();
 
   let currentSection = '';
 
@@ -164,16 +179,32 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
         break;
       }
 
+      case 'PATTERNS': {
+        const id = tokens[0];
+        const mults = tokens.slice(1).map(Number).filter((n) => !isNaN(n));
+        if (mults.length > 0) {
+          const existing = patternMap.get(id);
+          if (existing) {
+            existing.push(...mults);
+          } else {
+            patternMap.set(id, [...mults]);
+          }
+        }
+        break;
+      }
+
       case 'JUNCTIONS': {
         const id = tokens[0];
         const elev = parseFloat(tokens[1]) || 0;
         const demand = parseFloat(tokens[2]) || 0;
+        const patId = tokens[3] && !tokens[3].startsWith(';') ? tokens[3] : undefined;
         junctions.push({
           id,
           label: id,
           type: 'junction',
           elevation: elev,
           baseDemand: demand,
+          patternId: patId,
           lat: 0,
           lng: 0,
         });
@@ -313,6 +344,8 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
     }
   }
 
+  const patterns = Array.from(patternMap.entries()).map(([id, multipliers]) => ({ id, multipliers }));
+
   return {
     name: filename.replace(/\.[^/.]+$/, ''),
     units: 'SI',
@@ -323,5 +356,6 @@ export function parseEpanetInp(text: string, filename = 'Imported Network'): Wat
     pipes,
     pumps,
     valves,
+    patterns: patterns.length > 0 ? patterns : undefined,
   };
 }

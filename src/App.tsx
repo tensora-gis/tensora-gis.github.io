@@ -93,6 +93,9 @@ export default function App({
   const handleSelectChainage = useCallback(
     (ch: number) => {
       const target = alignment ?? createDefaultSampleCorridor();
+      if (!alignment) {
+        setAlignment(target);
+      }
       return runDelineation(ch, target);
     },
     [alignment, runDelineation]
@@ -129,6 +132,17 @@ export default function App({
           }
         } catch (err) {
           console.error('Free-point delineation error:', err);
+          setReport(null);
+          setFailure({
+            targetChainage: 0,
+            targetChainageFormatted: 'Free-point (Map Click)',
+            latitudeDD: lat,
+            longitudeDD: lng,
+            scopeAppliedM: 500,
+            scopeExpandedDueToFlatRelief: false,
+            demCoverage: 0,
+            message: `Free-point delineation failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
         } finally {
           setIsLoading(false);
         }
@@ -253,14 +267,32 @@ export default function App({
   }, []);
 
   const handleLoadDemo = useCallback(async () => {
-    const stations = await enrichChainagesWithElevation(createDefaultSampleCorridor().chainages);
-    const enriched: CorridorAlignment = { ...createDefaultSampleCorridor(), chainages: stations };
-    setAlignment(enriched);
-    if (stations.length > 0) {
-      await runDelineation(
-        stations.find((c) => Math.abs(c.chainage - 69340) < 0.1)?.chainage ?? stations[0].chainage,
-        enriched
-      );
+    setIsLoading(true);
+    setFailure(null);
+    try {
+      const stations = await enrichChainagesWithElevation(createDefaultSampleCorridor().chainages);
+      const enriched: CorridorAlignment = { ...createDefaultSampleCorridor(), chainages: stations };
+      setAlignment(enriched);
+      if (stations.length > 0) {
+        await runDelineation(
+          stations.find((c) => Math.abs(c.chainage - 69340) < 0.1)?.chainage ?? stations[0].chainage,
+          enriched
+        );
+      }
+    } catch (err) {
+      console.error('Failed to load demo corridor:', err);
+      setFailure({
+        targetChainage: 69340,
+        targetChainageFormatted: '69+340',
+        latitudeDD: 15.3173,
+        longitudeDD: 75.7139,
+        scopeAppliedM: 500,
+        scopeExpandedDueToFlatRelief: false,
+        demCoverage: 0,
+        message: `Failed to load demo corridor: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setIsLoading(false);
     }
   }, [runDelineation]);
 

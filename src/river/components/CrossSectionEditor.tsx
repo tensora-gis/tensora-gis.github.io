@@ -2,7 +2,7 @@
  * Transverse Cross-Section Viewer & Geometry Editor
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CrossSectionStation, CrossSectionTemplateType } from '../types/riverReach';
 import { generateCrossSectionPoints } from '../geometry/empiricalSection';
 
@@ -22,6 +22,18 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
   currentSimWaterDepthM = 1.5,
 }) => {
   const [selectedIdx, setSelectedIdx] = useState(0);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   if (!isOpen || crossSections.length === 0) return null;
 
@@ -58,8 +70,8 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
   }
 
   const svgWidth = 460;
-  const svgHeight = 200;
-  const pad = 25;
+  const svgHeight = 220;
+  const pad = 30;
 
   const scaleX = (x: number) => pad + ((x - minX) / Math.max(1, maxX - minX)) * (svgWidth - 2 * pad);
   const scaleZ = (z: number) =>
@@ -71,7 +83,12 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-2xl w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="River Cross-Section Geometry Editor"
+        className="bg-slate-900 border border-slate-800 rounded-xl max-w-2xl w-full p-5 shadow-2xl text-slate-100 flex flex-col gap-4"
+      >
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2">
             <span className="p-1.5 bg-cyan-500/20 text-cyan-400 rounded-lg">
@@ -81,7 +98,11 @@ export const CrossSectionEditor: React.FC<CrossSectionEditorProps> = ({
             </span>
             <h3 className="text-base font-semibold">River Cross-Section Geometry Editor</h3>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition">
+          <button
+            onClick={onClose}
+            aria-label="Close cross-section editor"
+            className="text-slate-400 hover:text-white transition"
+          >
             ✕
           </button>
         </div>

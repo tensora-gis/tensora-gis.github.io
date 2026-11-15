@@ -664,6 +664,10 @@ export function simulateWaterNetwork(network: WaterDistributionNetwork): {
       waveSpeedMs: tRes?.waveSpeedMs,
       maxTransientHeadM: tRes?.maxTransientHeadM,
       minTransientHeadM: tRes?.minTransientHeadM,
+      maxTransientPressureBar: tRes?.maxTransientPressureBar,
+      minTransientPressureBar: tRes?.minTransientPressureBar,
+      cavitationRisk: tRes?.cavitationRisk,
+      overpressureRisk: tRes?.overpressureRisk,
     };
   });
 
@@ -874,6 +878,11 @@ export function computeTransientSurgeAnalysis(
       recommendedProtection: recProtection,
     };
   });
+
+  if (network.pipes.length === 0) {
+    maxSystemSurgeHeadM = 0;
+    minSystemSurgeHeadM = 0;
+  }
 
   // 3. Transient Protection Devices Schedule
   const protectionDevices: TransientProtectionDevice[] = [];

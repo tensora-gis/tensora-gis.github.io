@@ -76,6 +76,11 @@ export function exportToSwmmInp(network: WastewaterNetwork): string {
   lines.push('');
 
   // 4. Gravity Conduits
+  const nodeInvertMap = new Map<string, number>();
+  for (const m of network.manholes) nodeInvertMap.set(m.id, m.invertElevation);
+  for (const o of network.outfalls) nodeInvertMap.set(o.id, o.invertElevation);
+  for (const w of network.wetWells) nodeInvertMap.set(w.id, w.floorElevation);
+
   lines.push('[CONDUITS]');
   lines.push(';;Name           From Node        To Node          Length     Roughness  InOffset   OutOffset  InitFlow   MaxFlow   ');
   for (const c of network.conduits) {
@@ -84,7 +89,13 @@ export function exportToSwmmInp(network: WastewaterNetwork): string {
     const to = c.endNodeId.padEnd(16);
     const len = c.lengthM.toFixed(1).padStart(10);
     const n = c.manningN.toFixed(4).padStart(10);
-    lines.push(`${id} ${from} ${to} ${len} ${n} 0.0        0.0        0.0        0.0        ; ${c.label}`);
+    const upNodeInv = nodeInvertMap.get(c.startNodeId);
+    const dnNodeInv = nodeInvertMap.get(c.endNodeId);
+    const inOffsetVal = upNodeInv !== undefined ? Math.max(0, c.upstreamInvertM - upNodeInv) : 0.0;
+    const outOffsetVal = dnNodeInv !== undefined ? Math.max(0, c.downstreamInvertM - dnNodeInv) : 0.0;
+    const inOffset = inOffsetVal.toFixed(2).padStart(10);
+    const outOffset = outOffsetVal.toFixed(2).padStart(10);
+    lines.push(`${id} ${from} ${to} ${len} ${n} ${inOffset} ${outOffset} 0.0        0.0        ; ${c.label}`);
   }
   lines.push('');
 
@@ -173,6 +184,8 @@ export function parseSwmmInp(text: string, filename = 'Imported_Sewer_Model.inp'
   const pumps: WastewaterPump[] = [];
   const coords = new Map<string, { lat: number; lng: number }>();
   const xsections = new Map<string, number>(); // conduitId -> diameterMm
+  const conduitOffsets = new Map<string, { inOffset: number; outOffset: number }>();
+  const patternMap = new Map<string, number[]>();
 
   let currentSection = '';
   let routingMethod: 'DYNAMICWAVE' | 'KINEMATIC' | 'STEADY' = 'DYNAMICWAVE';
@@ -265,6 +278,8 @@ export function parseSwmmInp(text: string, filename = 'Imported_Sewer_Model.inp'
       const endNodeId = tokens[2];
       const lengthM = parseFloat(tokens[3]) || 60.0;
       const manningN = parseFloat(tokens[4]) || 0.012;
+      const inOffset = parseFloat(tokens[5]) || 0.0;
+      const outOffset = parseFloat(tokens[6]) || 0.0;
       conduits.push({
         id,
         label: `Conduit ${id}`,
@@ -274,11 +289,12 @@ export function parseSwmmInp(text: string, filename = 'Imported_Sewer_Model.inp'
         diameterMm: 250,
         material: 'PVC',
         manningN,
-        upstreamInvertM: 170.0,
-        downstreamInvertM: 169.5,
+        upstreamInvertM: 0,
+        downstreamInvertM: 0,
         lengthM,
         slopeMPerM: 0.005,
       });
+      conduitOffsets.set(id, { inOffset, outOffset });
     } else if (currentSection === '[PUMPS]') {
       const id = tokens[0];
       const startNodeId = tokens[1];
@@ -302,6 +318,18 @@ export function parseSwmmInp(text: string, filename = 'Imported_Sewer_Model.inp'
         const mh = manholes.find((m) => m.id === id);
         if (mh) {
           mh.baseDryWeatherFlowLs = baseline;
+        }
+      }
+    } else if (currentSection === '[PATTERNS]') {
+      const name = tokens[0];
+      const startIndex = tokens[1]?.toUpperCase() === 'HOURLY' ? 2 : 1;
+      const mults = tokens.slice(startIndex).map(Number).filter((n) => !isNaN(n));
+      if (mults.length > 0) {
+        const existing = patternMap.get(name);
+        if (existing) {
+          existing.push(...mults);
+        } else {
+          patternMap.set(name, [...mults]);
         }
       }
     }
@@ -336,6 +364,26 @@ export function parseSwmmInp(text: string, filename = 'Imported_Sewer_Model.inp'
     if (dia) c.diameterMm = dia;
   });
 
+  // Resolve conduit inverts and slopes from node inverts + offsets
+  const nodeInverts = new Map<string, number>();
+  manholes.forEach((m) => nodeInverts.set(m.id, m.invertElevation));
+  outfalls.forEach((o) => nodeInverts.set(o.id, o.invertElevation));
+  wetWells.forEach((w) => nodeInverts.set(w.id, w.floorElevation));
+
+  conduits.forEach((c) => {
+    const upNodeInv = nodeInverts.get(c.startNodeId) ?? 170.0;
+    const dnNodeInv = nodeInverts.get(c.endNodeId) ?? (upNodeInv - 0.5);
+    const offsets = conduitOffsets.get(c.id);
+    const inOffset = offsets?.inOffset ?? 0.0;
+    const outOffset = offsets?.outOffset ?? 0.0;
+    c.upstreamInvertM = Math.round((upNodeInv + inOffset) * 1000) / 1000;
+    c.downstreamInvertM = Math.round((dnNodeInv + outOffset) * 1000) / 1000;
+    const drop = c.upstreamInvertM - c.downstreamInvertM;
+    c.slopeMPerM = c.lengthM > 0 ? (drop > 0 ? drop / c.lengthM : 0.001) : 0.001;
+  });
+
+  const patterns = Array.from(patternMap.entries()).map(([name, multipliers]) => ({ name, multipliers }));
+
   return {
     name: filename.replace(/\.[^/.]+$/, ''),
     units: 'SI',
@@ -346,5 +394,6 @@ export function parseSwmmInp(text: string, filename = 'Imported_Sewer_Model.inp'
     pumps,
     forceMains: [],
     outfalls,
+    patterns: patterns.length > 0 ? patterns : undefined,
   };
 }

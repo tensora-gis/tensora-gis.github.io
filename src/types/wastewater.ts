@@ -209,6 +209,8 @@ export interface WastewaterNetwork {
   pumps: WastewaterPump[];
   forceMains: WastewaterForceMain[];
   outfalls: WastewaterOutfall[];
+  /** Diurnal flow patterns */
+  patterns?: { name: string; multipliers: number[] }[];
 }
 
 export interface HourlySewerSimulationPoint {

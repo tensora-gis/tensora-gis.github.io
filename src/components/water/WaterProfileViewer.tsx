@@ -76,7 +76,35 @@ export const WaterProfileViewer: React.FC<WaterProfileViewerProps> = ({
             (p.startNodeId === prevNode.id && p.endNodeId === node.id) ||
             (p.startNodeId === node.id && p.endNodeId === prevNode.id)
         );
-        cumulativeDist += connectingPipe ? connectingPipe.length : 150;
+        let segmentDist = connectingPipe ? connectingPipe.length : 0;
+        if (!segmentDist) {
+          const pump = network.pumps?.find(
+            (p) =>
+              (p.startNodeId === prevNode.id && p.endNodeId === node.id) ||
+              (p.startNodeId === node.id && p.endNodeId === prevNode.id)
+          );
+          const valve = network.valves?.find(
+            (v) =>
+              (v.startNodeId === prevNode.id && v.endNodeId === node.id) ||
+              (v.startNodeId === node.id && v.endNodeId === prevNode.id)
+          );
+          if (pump || valve) {
+            segmentDist = 10;
+          } else if (prevNode.lat && prevNode.lng && node.lat && node.lng) {
+            const R = 6371000;
+            const dLat = ((node.lat - prevNode.lat) * Math.PI) / 180;
+            const dLng = ((node.lng - prevNode.lng) * Math.PI) / 180;
+            const a =
+              Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos((prevNode.lat * Math.PI) / 180) *
+                Math.cos((node.lat * Math.PI) / 180) *
+                Math.sin(dLng / 2) *
+                Math.sin(dLng / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            segmentDist = Math.round(R * c);
+          }
+        }
+        cumulativeDist += segmentDist > 0 ? segmentDist : 100;
       }
 
       let groundElev = node.elevation;

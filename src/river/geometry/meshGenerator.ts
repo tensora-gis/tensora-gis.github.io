@@ -620,7 +620,30 @@ export function generateRiverGridMesh(
         eta = Math.max(-1.0, Math.min(1.0, eta + dEta));
       }
 
-      const lateralDistM = eta * halfWidth;
+      let lateralDistM = eta * halfWidth;
+
+      // In sharp bends, limit inner-bank lateral offset to prevent self-intersection (R < W/2)
+      if (i > 0 && i < nx) {
+        const prevPt = centerline[i - 1];
+        const nextPt = centerline[i + 1];
+        const [pxX, pxY] = geoToLocalMeters(prevPt.lat, prevPt.lng, originLat, originLng);
+        const [nxX, nxY] = geoToLocalMeters(nextPt.lat, nextPt.lng, originLat, originLng);
+        const d1x = cx - pxX, d1y = cy - pxY;
+        const d2x = nxX - cx, d2y = nxY - cy;
+        const cross = d1x * d2y - d1y * d2x;
+        const l1 = Math.max(1, Math.hypot(d1x, d1y));
+        const l2 = Math.max(1, Math.hypot(d2x, d2y));
+        const kappaVal = cross / (l1 * l2);
+        if (Math.abs(kappaVal) > 1e-4) {
+          const rBend = (0.5 * (l1 + l2)) / Math.abs(kappaVal);
+          const maxInnerOffset = Math.max(2.0, rBend * 0.85);
+          if (kappaVal > 0 && lateralDistM < -maxInnerOffset) {
+            lateralDistM = -maxInnerOffset;
+          } else if (kappaVal < 0 && lateralDistM > maxInnerOffset) {
+            lateralDistM = maxInnerOffset;
+          }
+        }
+      }
 
       const nodeX = cx + lateralDistM * normX;
       const nodeY = cy + lateralDistM * normY;
@@ -1078,14 +1101,20 @@ export function scaleMesh(
     const scaledCY = csScaled * tY + cnScaled * nY;
     const [newCenterLat, newCenterLng] = localMetersToGeo(scaledCX, scaledCY, originLat, originLng);
 
-    // Recompute face lengths
+    // Recompute face lengths and face normals
     const faceLengths: number[] = [];
+    const faceNormals: [number, number][] = [];
     for (let f = 0; f < 4; f++) {
       const pA = updatedCorners[f];
       const pB = updatedCorners[(f + 1) % 4];
       const [ax, ay] = geoToLocalMeters(pA[0], pA[1], originLat, originLng);
       const [bx, by] = geoToLocalMeters(pB[0], pB[1], originLat, originLng);
-      faceLengths.push(Math.max(1.0e-4, Math.hypot(bx - ax, by - ay)));
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len = Math.max(1.0e-5, Math.hypot(dx, dy));
+      faceLengths.push(len);
+      // Outward normal: (dy, -dx) / len
+      faceNormals.push([dy / len, -dx / len]);
     }
 
     return {
@@ -1097,6 +1126,7 @@ export function scaleMesh(
       corners: updatedCorners,
       areaM2: Math.max(1.0, cell.areaM2 * streamwiseScale * lateralScale),
       faceLengths,
+      faceNormals,
     };
   });
 

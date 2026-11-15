@@ -470,10 +470,17 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
 
                     {/* Cavitation and Rupture Status Badges */}
                     <div className="pt-2 border-t border-rose-900/40 flex flex-wrap gap-1.5">
-                      {((element as WaterPipe).minTransientHeadM ?? 0) < -10 ? (
+                      {((element as WaterPipe).cavitationRisk?.includes('Cavitation') ||
+                        ((element as WaterPipe).minTransientPressureBar !== undefined &&
+                          (element as WaterPipe).minTransientPressureBar! < -0.98)) ? (
                         <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/20 border border-red-500/50 text-red-300 text-[10px] font-tech font-bold">
                           <ShieldAlert className="w-3 h-3 text-red-400" />
                           <span>Vapor Cavitation Risk</span>
+                        </div>
+                      ) : ((element as WaterPipe).cavitationRisk === 'Sub-atmospheric') ? (
+                        <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/50 text-amber-300 text-[10px] font-tech font-bold">
+                          <AlertTriangle className="w-3 h-3 text-amber-400" />
+                          <span>Sub-Atmospheric Head</span>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-tech">
@@ -482,11 +489,13 @@ export const WaterPropertyInspector: React.FC<WaterPropertyInspectorProps> = ({
                         </div>
                       )}
 
-                      {((element as WaterPipe).maxTransientHeadM ?? 0) >
-                      ((element as WaterPipe).pressureRatingPnBar || 16) * 10 ? (
+                      {((element as WaterPipe).overpressureRisk?.includes('Rupture') ||
+                        (element as WaterPipe).overpressureRisk?.includes('Warning') ||
+                        ((element as WaterPipe).maxTransientPressureBar !== undefined &&
+                          (element as WaterPipe).maxTransientPressureBar! > ((element as WaterPipe).pressureRatingPnBar || 16))) ? (
                         <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 border border-amber-500/50 text-amber-300 text-[10px] font-tech font-bold">
                           <AlertTriangle className="w-3 h-3 text-amber-400" />
-                          <span>Exceeds PN Rating</span>
+                          <span>{(element as WaterPipe).overpressureRisk || 'Exceeds PN Rating'}</span>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-tech">

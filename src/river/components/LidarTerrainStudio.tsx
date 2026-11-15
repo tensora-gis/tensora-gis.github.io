@@ -9,7 +9,7 @@
  * 5. Automatic Manning roughness zoning for channel and overbank floodplains
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { RiverGridMesh } from '../types/riverReach';
 import {
   sampleLidarTerrainForMesh,
@@ -44,6 +44,18 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
   const [fileName, setFileName] = useState<string>('');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; isError?: boolean } | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || isProcessing) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isProcessing, onClose]);
 
   if (!isOpen) return null;
 
@@ -90,6 +102,9 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
         setStatusMessage({ text: `Loaded ${file.name} (${(content.length / 1024).toFixed(1)} KB)` });
       }
     };
+    reader.onerror = () => {
+      setStatusMessage({ text: 'Failed to read LiDAR file from disk.', isError: true });
+    };
     reader.readAsText(file);
   };
 
@@ -135,7 +150,12 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl text-slate-100 flex flex-col gap-4 max-h-[90vh] overflow-y-auto animate-fade-in">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="LiDAR Terrain & Bathymetry Studio"
+        className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl text-slate-100 flex flex-col gap-4 max-h-[90vh] overflow-y-auto animate-fade-in"
+      >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
           <div className="flex items-center gap-2.5">
@@ -152,7 +172,11 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition p-1">
+          <button
+            onClick={onClose}
+            aria-label="Close LiDAR studio"
+            className="text-slate-400 hover:text-white transition p-1"
+          >
             ✕
           </button>
         </div>
@@ -325,6 +349,7 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
               <input
                 type="file"
                 accept=".xyz,.csv,.txt,.pts"
+                aria-label="Select LiDAR survey file"
                 onChange={handleFileUpload}
                 className="w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-cyan-300 hover:file:bg-slate-700 cursor-pointer"
               />
@@ -339,6 +364,7 @@ export const LidarTerrainStudio: React.FC<LidarTerrainStudioProps> = ({
               <textarea
                 rows={4}
                 value={surveyRawText}
+                aria-label="Paste survey coordinates"
                 onChange={(e) => setSurveyRawText(e.target.value)}
                 placeholder="Paste [Lat, Lng, Elev] or [X, Y, Z] rows here..."
                 className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2 text-slate-100 font-mono text-[11px] focus:border-cyan-400 focus:outline-none"
