@@ -799,7 +799,7 @@ export function computeStructureFluxModifier(
       return { fluxReductionFactor: s.permeability };
     } else {
       const head = etaMax - s.crestElevationM;
-      const overtopFactor = Math.min(1.0, Math.max(0.1, head / Math.max(0.5, hL)));
+      const overtopFactor = Math.min(1.0, Math.max(0.1, head / Math.max(0.5, Math.max(hL, hR))));
       return { fluxReductionFactor: Math.min(1.0, s.permeability + (1.0 - s.permeability) * overtopFactor) };
     }
   }
@@ -834,7 +834,7 @@ export function computeStructureFluxModifier(
       return { fluxReductionFactor: Math.max(0.0, Math.min(1.0, p.permeability ?? 0.2)) };
     } else {
       const head = etaMax - crest;
-      const factor = Math.min(1.0, Math.max(0.05, head / Math.max(0.5, hL)));
+      const factor = Math.min(1.0, Math.max(0.05, head / Math.max(0.5, Math.max(hL, hR))));
       const basePerm = p.permeability ?? 0.0;
       return { fluxReductionFactor: Math.min(1.0, basePerm + (1.0 - basePerm) * factor) };
     }

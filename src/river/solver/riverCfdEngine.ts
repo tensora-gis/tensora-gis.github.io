@@ -65,15 +65,41 @@ export class RiverCfdEngine {
   }
 
   public async initialize(): Promise<void> {
-    this.solver = await createRiverSolver(this.backendType);
-    await this.solver.init(
-      this.mesh,
-      this.boundaries,
-      this.structures,
-      this.turbParams,
-      this.sedParams
-    );
-    this.backendType = this.solver.getBackendType();
+    const candidateBackends: Array<'webgpu' | 'webgl2' | 'cpu'> = [];
+    if (this.backendType === 'webgpu') {
+      candidateBackends.push('webgpu', 'webgl2', 'cpu');
+    } else if (this.backendType === 'webgl2') {
+      candidateBackends.push('webgl2', 'cpu');
+    } else {
+      candidateBackends.push('cpu');
+    }
+
+    let initSuccess = false;
+    let lastError: any = null;
+
+    for (const backend of candidateBackends) {
+      try {
+        const candidateSolver = await createRiverSolver(backend);
+        await candidateSolver.init(
+          this.mesh,
+          this.boundaries,
+          this.structures,
+          this.turbParams,
+          this.sedParams
+        );
+        this.solver = candidateSolver;
+        this.backendType = candidateSolver.getBackendType();
+        initSuccess = true;
+        break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`River CFD solver init failed on ${backend}, falling back:`, err);
+      }
+    }
+
+    if (!initSuccess || !this.solver) {
+      throw lastError || new Error('Failed to initialize any river solver backend (WebGPU, WebGL2, CPU)');
+    }
 
     // Calculate initial volume
     const state = this.solver.getState();

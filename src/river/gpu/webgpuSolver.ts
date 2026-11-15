@@ -243,7 +243,7 @@ fn shallowWaterStep(@builtin(global_invocation_id) global_id: vec3<u32>) {
       var sStar: f32 = 0.5 * (sL + sR);
       let denomStar = hStarR * (sR - vnR) - hStarL * (sL - vnL);
       if (abs(denomStar) > 1.0e-6) {
-        let numStar = sR * hStarR * vnR - sL * hStarL * vnL + 0.5 * params.g * (hStarL * hStarL - hStarR * hStarR);
+        let numStar = hStarR * vnR * (sR - vnR) - hStarL * vnL * (sL - vnL) + 0.5 * params.g * (hStarL * hStarL - hStarR * hStarR);
         sStar = numStar / denomStar;
       }
 

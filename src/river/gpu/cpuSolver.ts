@@ -598,7 +598,7 @@ export function computeHllcFlux(
   const denomStar = hStarR * (sR - vnR) - hStarL * (sL - vnL);
   if (Math.abs(denomStar) > 1e-6) {
     const numStar =
-      sR * hStarR * vnR - sL * hStarL * vnL + 0.5 * G * (hStarL * hStarL - hStarR * hStarR);
+      hStarR * vnR * (sR - vnR) - hStarL * vnL * (sL - vnL) + 0.5 * G * (hStarL * hStarL - hStarR * hStarR);
     sStar = numStar / denomStar;
   }
 
@@ -883,14 +883,17 @@ export function stepCpuSolver(ctx: CpuSolverContext, dtSec: number): void {
         ny
       );
 
-      // Check if this cell or neighbor has a custom CAD hydraulic structure
+      // Check if this cell or neighbor has a custom CAD hydraulic structure (symmetric interface coupling)
       const structC = structMap.get(c);
-      if (structC) {
-        const mod = computeStructureFluxModifier(structC, hL, zL, hR, zR, length);
-        if (mod.fluxReductionFactor < 1.0) {
-          fluxH *= mod.fluxReductionFactor;
-          fluxHu *= mod.fluxReductionFactor;
-          fluxHv *= mod.fluxReductionFactor;
+      const structN = nbr >= 0 ? structMap.get(nbr) : undefined;
+      if (structC || structN) {
+        const modC = structC ? computeStructureFluxModifier(structC, hL, zL, hR, zR, length).fluxReductionFactor : 1.0;
+        const modN = structN ? computeStructureFluxModifier(structN, hL, zL, hR, zR, length).fluxReductionFactor : 1.0;
+        const redFactor = Math.min(modC, modN);
+        if (redFactor < 1.0) {
+          fluxH *= redFactor;
+          fluxHu *= redFactor;
+          fluxHv *= redFactor;
         }
       }
 

@@ -226,7 +226,7 @@ void main() {
       float sStar = 0.5 * (sL + sR);
       float denomStar = hStarR * (sR - vnR) - hStarL * (sL - vnL);
       if (abs(denomStar) > 1.0e-6) {
-        float numStar = sR * hStarR * vnR - sL * hStarL * vnL + 0.5 * G * (hStarL * hStarL - hStarR * hStarR);
+        float numStar = hStarR * vnR * (sR - vnR) - hStarL * vnL * (sL - vnL) + 0.5 * G * (hStarL * hStarL - hStarR * hStarR);
         sStar = numStar / denomStar;
       }
 

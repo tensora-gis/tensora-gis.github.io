@@ -4,10 +4,10 @@
 
 Tensora GIS is an engineering-grade geospatial modeling and simulation suite designed for highway, railway, and municipal infrastructure projects. Built with TypeScript and React, Tensora GIS unifies four core engineering disciplines into a cohesive, high-performance web platform powered by real global Digital Elevation Models (DEMs):
 
-1. **Stormwater Catchment & Stream Delineation** - Real Earth D8 flow accumulation, formation modeling, and 70%-framed delineation reports.
-2. **Water Distribution Modelling & Transient Surge** - EPANET-standard Global Gradient Algorithm (GGA), Extended Period Simulation (EPS), Fire Flow analysis, Darwin automated pipe optimization, and Joukowsky/Allievi Water Hammer physics.
-3. **Wastewater Collection & Sewer Hydraulics** - EPA SWMM 5.2 engine, circular partial-flow Manning hydraulics, tractive force self-cleansing checks, drop structures, lift station pumping cycles, Pomeroy-Parkhurst $\text{H}_2\text{S}$ corrosion, and I&I analysis.
-4. **River Analysis & 2D Hydrodynamic CFD** - In-browser 2D Saint-Venant shallow-water finite-volume solver with WebGPU hardware acceleration, authentic solid civil structures, modifiable mesh shaping, well-balanced Audusse hydrostatic reconstruction, and LiDAR bathymetric carving.
+1. **Stormwater Catchment, Stream Delineation & DPR Cross-Drainage Hydraulics** - Real Earth D8 flow accumulation, formation modeling, 70%-framed delineation reports, and multi-codal DPR Excel workbooks (IRC / MoRTH / IS vs. FHWA / AASHTO / USGS).
+2. **Water Distribution Modelling & Transient Surge** - EPANET-standard Global Gradient Algorithm (GGA), Extended Period Simulation (EPS) with diurnal patterns, Fire Flow analysis, Darwin automated pipe optimization, and Joukowsky/Allievi Water Hammer physics with 1D Method of Characteristics (MOC).
+3. **Wastewater Collection & Sewer Hydraulics** - EPA SWMM 5.2 engine, circular partial-flow Manning hydraulics, 1D Saint-Venant Dynamic Wave routing with Preissmann virtual slot, tractive force self-cleansing checks, drop structures, lift station pumping cycles, Pomeroy-Parkhurst $\text{H}_2\text{S}$ corrosion, and I&I analysis.
+4. **River Analysis & 2D Hydrodynamic CFD** - In-browser 2D Saint-Venant shallow-water finite-volume solver with WebGPU hardware acceleration, authentic solid civil structures, modifiable mesh shaping along river centerlines, well-balanced Audusse hydrostatic reconstruction, LiDAR bathymetric carving, and interactive 3D ParaView/OpenFOAM exports.
 
 ---
 
@@ -37,7 +37,7 @@ Tensora GIS is an engineering-grade geospatial modeling and simulation suite des
 
 ### 1. Stormwater Catchment & Stream Delineation
 
-Designed specifically for road and railway corridor culvert design where traditional raw DEM analysis fails due to the elevated embankment:
+Designed specifically for road and railway corridor cross-drainage culvert design where traditional raw DEM analysis fails due to the elevated embankment:
 
 - **Corridor Ingestion & Linear Referencing**: Ingests alignment vectors (`.kml` / `.kmz`) and survey chainage registers (`.csv` / `.xlsx`). Interactively projects any station perpendicularly onto the 3D alignment, reporting coordinates in both Decimal Degrees and Degrees-Minutes-Seconds (DMS).
 - **Physical Formation Modeling**: Models the embankment cross-section ($12\text{ m}$ formation half-width) and cuts the formation to simulate culvert invert placement at the true toe of slope, preventing artificial upstream pooling or false catchment truncation.
@@ -46,8 +46,28 @@ Designed specifically for road and railway corridor culvert design where traditi
 - **Spatially Distributed Green-Ampt Infiltration Physics**: Full USDA 7-soil parameter classification table ($K_s$, $\psi$, $\theta_s$, $\theta_r$, $n$). Evaluates the time-to-ponding criterion $F_p = \frac{K_s \psi \Delta\theta}{i - K_s}$ and executes an implicit Newton-Raphson solver for cumulative infiltration depth $F(t)$ and Hortonian overland excess $i_{eff}(t)$ with tolerance $< 10^{-9}\text{ m}$.
 - **2D Semi-Implicit Diffusive-Wave Overland Routing**: 2D local inertial formulation (Bates et al., 2010) with adaptive CFL gravity-wave time-stepping, embankment toe ponding, culvert abstraction coupling, and WebGPU WGSL compute kernel acceleration (`src/river/gpu/overland_diffusive.wgsl`).
 - **FHWA HDS-5 Culvert Rating Hydraulics**: Inlet control (Form 1 unsubmerged / Form 2 submerged) with smooth transition blending, full-barrel and part-full outlet control energy balance ($H_L = (K_e + 19.63 n^2 L / R_h^{4/3} + 1) V^2 / 2g$), governing headwater rating curve $HW(Q)$, and inverse bisection rating solver $Q(HW)$.
-- **70%-Framed Catchment Snapshot**: Automatic North-up canvas rendering that frames the delineated catchment boundary and stream to cover 70% of the viewport width and height.
-- **Standardized Excel Export**: Generates a clean, single-sheet calculation summary workbook embedding the high-resolution delineation snapshot, target chainage coordinates, catchment area ($A$), stream length ($L$), stream origin elevation, and highest ridge contour.
+- **Dual Engineering Codal Provisions (Indian vs. International)**:
+  - **Indian Codal Provisions**:
+    - **Standards**: IRC:SP:13-2004, IRC:5-2015, IRC:SP:42, IS 456, IS 10430.
+    - **Rational Method**: $Q_r = 0.028 \cdot P \cdot f \cdot I_c \cdot A$ with Kirpich overland time of concentration $t_c = 0.0195 \cdot (L^{0.77} / S^{0.385})$ and rainfall intensity $I_c = \frac{F}{(t_c + c)^d}$.
+    - **Empirical Flood Envelopes**: Dickens ($Q = C_d A^{3/4}$), Ryves ($Q = C_y A^{2/3}$), and Inglis ($Q = \frac{124 A}{\sqrt{A + 10.4}}$).
+    - **Regime Hydraulics & Scour**: Lacey regime waterway width $W = 4.825 \sqrt{Q}$, Molesworth afflux $h_a = \left(\frac{V^2}{17.88} + 0.015\right) \left(\left(\frac{A}{a}\right)^2 - 1\right)$, and Lacey regime scour depth $d_{sm} = 1.34 \left(\frac{q^2}{f_{Lacey}}\right)^{1/3}$ with codal bend/pier multiplier ($1.50 - 2.00$).
+    - **Compliance Thresholds**: Velocity $0.60 - 3.00\text{ m/s}$, Max Afflux $h_a \le 0.30\text{ m}$, Max $HW/D \le 1.20$.
+  - **International Standards**:
+    - **Standards**: FHWA HDS-5, AASHTO, USGS National Streamflow Statistics (NSS), USBR, HEC-18 / HEC-20.
+    - **Rational Method**: $Q = 0.00278 \cdot C \cdot I \cdot A$ (metric) with USGS regional regression envelope $Q = a \cdot A^b$.
+    - **Culvert Hydraulics & Scour**: FHWA waterway multiplier $3.65 \sqrt{Q}$, USBR backwater, and HEC-18 contraction/local scour depth ($d_s / y_0 = 2.0 K_1 K_2 K_3 (a / y_0)^{0.65} Fr_1^{0.43}$).
+    - **Compliance Thresholds**: Velocity $0.90 - 4.50\text{ m/s}$, Max Backwater $h_a \le 0.15\text{ m}$, Max $HW/D \le 1.50$.
+  - **Live Standard Switcher**: Global UI toggle in both the Header and ReportCard dynamically switches all active calculation sheets, formulas, and labels in real time.
+- **Shared Detailed Project Report (DPR) 5-Worksheet Excel Architecture**:
+  - `src/utils/dprExcelBase.ts`: Single-source truth for typography (Calibri/Consolas), 60+ engineering number formats, cell borders, fill palettes, and codal constants lookup tables.
+  - `src/utils/stormwaterDprBuilder.ts` & `src/server/stormwaterDprWorkbook.ts`: Generates a fully formatted 5-worksheet DPR workbook with live UPPERCASE Excel formulas, cell cross-references, conditional formatting rules, and embedded 70% framed North-up catchment snapshot:
+    1. `00_Codal_Constants`: Live tabular lookups of codal constants, runoff coefficients, velocity envelopes, afflux limits, and scour multipliers.
+    2. `01_CD_Executive_Summary`: Alignment, chainage, coordinates, high-resolution snapshot, and dynamic KPI links to calculations.
+    3. `02_Hydrology_Worked_Calcs`: Full step-by-step worked formulas ($t_c, I_c, Q_r$, empirical envelopes, and $Q_{design}$).
+    4. `03_Culvert_Hydraulics_Scour`: Lacey waterway, Manning barrel capacity, velocity compliance, afflux, $HW/D$, and regime scour.
+    5. `04_Catchment_Hypsometry`: 25+ elevation bands detailing area distribution, cumulative hypsometry, and stream profile.
+- **Offline Client Excel Parity**: ExcelJS is bundled directly into the client production bundle with background prewarming (`prewarmExcelJS()`), guaranteeing 100% offline DPR generation on static hosts (GitHub Pages) with zero broken CDN chunks. Safe 10-second deferred blob URL cleanup prevents premature download cancellation.
 
 ### 2. Water Distribution & Transient Surge Modelling
 
@@ -142,9 +162,13 @@ Tensora GIS includes an in-browser two-dimensional depth-averaged Saint-Venant s
   - Unified `🏗️ Civil Structure / Obstacle ▾` dropdown with live drawing guide and status feedback.
   - Single `<select value={thematicDisplay}>` scalar field dropdown with explicit engineering units, eliminating cluttered horizontal button bars.
 - **Mathematical & Physical CFD Engine Formulations**:
-  - **Analytical Toro (2001) HLLC Riemann Solver**: Evaluates exact contact middle wave speed $S^*$ including the hydrostatic pressure gradient jump $\frac{1}{2}g(h_L^2 - h_R^2)$.
+  - **Analytical Toro (2001) HLLC Riemann Solver**: Evaluates exact contact middle wave speed $S^*$ including the full Rankine-Hugoniot convective momentum jump $h^*_R v_{nR} (s_R - v_{nR}) - h^*_L v_{nL} (s_L - v_{nL}) + \frac{1}{2}g(h_L^{*2} - h_R^{*2})$ across CPU, WebGL2, and WebGPU WGSL compute solvers.
+  - **Anti-Self-Intersection Mesh Curvature Limiting**: Enforces an inner-bank lateral offset limit in sharp meander bends ($R < W/2$), bounding inner-bank spacing to $\le 0.85 R_{\text{bend}}$ to prevent quadrilateral cell inversion or grid folding on tight oxbow reaches.
+  - **OpenFOAM 3D Case & Watertight STL Pipeline**: Generates complete, syntactically conforming OpenFOAM directories with `blockMeshDict` (strictly outward normals across all 6 boundary patches), `snappyHexMeshDict`, `system/surfaceFeaturesDict` (`includedAngle 150`), `0/U`, `0/p_rgh`, `0/k` ($k$-$\omega$ SST kinetic energy), `0/omega` (specific dissipation rate), `0/nut` (turbulent viscosity with sediment roughness $k_s = 2.5 d_{50}$), and watertight `.stl` geometry with non-zero facet normals.
   - **Dry-Bed Rarefaction Wave Speeds**: Exact analytical wave speeds ($v_n \pm 2\sqrt{gh}$) guaranteeing stable advancing flood wave fronts over dry terrain without division-by-zero.
   - **Well-Balanced Audusse Hydrostatic Reconstruction**: Strict $C$-property preservation next to solid structures and over steep mountain drops ($< 10^{-7}\text{ m/s}$ spurious velocity).
+  - **Symmetric Structure Interface Coupling**: Enforces interface flux antisymmetry ($F_{ij} = -F_{ji}$) with mutual overtopping modulation ($\min(\text{mod}_C, \text{mod}_N)$) and bilateral depth evaluation ($\max(h_L, h_R)$), guaranteeing zero spurious mass generation across solid boundaries.
+  - **Graceful Multi-Backend Fallback Chain**: Sequential runtime initialization attempts `WebGPU` $\to$ `WebGL2` $\to$ `Host CPU Reference FVM`, logging hardware capabilities without unhandled exceptions.
   - **Anisotropic CFL Dynamic Time-Stepping**: Dynamically evaluates the Courant-Friedrichs-Lewy condition ($\text{CFL} \le 0.45$) based on maximum wave celerity $c = \sqrt{gh} + |\mathbf{u}|$ and effective cell dimension $\Delta x_{eff} = \min(\sqrt{A_c}, A_c / \max_f(L_f))$.
   - **Semi-Implicit Manning Bed Friction**: Implicit formulation stabilizing shear friction deceleration ($\tau_b = \rho g n^2 |\mathbf{u}| \mathbf{u} / h^{1/3}$) over extremely shallow inundation zones without timestep collapse.
   - **Depth-Averaged RANS Turbulence Closures**:
@@ -256,6 +280,9 @@ tensora-gis/
 │   │   └── types/             # Hydrodynamic, mesh, and solver interface definitions
 │   ├── data/                  # Standard reference alignments and sample networks
 │   ├── server/                # Server-side snapshot canvas & Excel generators
+│   │   ├── snapshotCanvas.ts          # Server-side @napi-rs/canvas rasterization
+│   │   ├── stormwaterDprWorkbook.ts   # Server-side 5-worksheet DPR Excel builder
+│   │   └── index.ts                   # Server export index
 │   ├── types/                 # TypeScript interfaces and engineering data models
 │   └── utils/                 # Hydraulic, hydrological, and geospatial computation engines
 │       ├── geoUtils.ts                # Geodesy, Haversine, DMS formatting, polyline math
@@ -264,10 +291,15 @@ tensora-gis/
 │       ├── flowDelineation.ts         # D8 routing, depression fill, catchment boundary
 │       ├── delineationEngine.ts       # Corridor formation cut & scope ladder resolution
 │       ├── stormwaterSnapshot.ts      # 70% viewport framing canvas snapshot engine
-│       ├── epanetParser.ts            # EPANET .INP file parser and exporter
+│       ├── excelLoader.ts             # Direct client-side ExcelJS loader with background prewarming
+│       ├── dprExcelBase.ts            # Shared DPR Excel styling, number formats & codal lookups
+│       ├── stormwaterDprBuilder.ts    # 5-worksheet cross-drainage DPR Excel builder
+│       ├── epanetParser.ts            # EPANET .INP parser/exporter with [PATTERNS]
 │       ├── waterHydraulicsEngine.ts   # EPANET GGA solver & transient surge analyzer
+│       ├── mocTransientSolver.ts      # 1D Method of Characteristics transient solver
 │       ├── waterExcelExport.ts        # 11-sheet water distribution calculation workbook
-│       ├── swmmParser.ts              # EPA SWMM .INP file parser and exporter
+│       ├── swmmParser.ts              # EPA SWMM .INP parser/exporter with [PATTERNS] & inverts
+│       ├── dynamicWaveSolver.ts       # 1D Dynamic Wave Preissmann slot sewer solver
 │       ├── wastewaterHydraulicsEngine.ts # Partial-flow Manning & lift station solver
 │       └── wastewaterExcelExport.ts   # 10-sheet wastewater calculation workbook
 ├── index.html                 # Single SPA HTML entrypoint
@@ -318,18 +350,21 @@ npm start
 Tensora GIS includes exhaustive regression and physics self-test suites verifying mathematical accuracy, convergence stability, and file integrity across all engineering domains:
 
 ```bash
-# Run all 11 core verification test suites end-to-end
+# Run all 13 core verification test suites end-to-end (100% offline)
 npm test
 
-# Run dedicated River CFD, GPU, CAD Solid & LiDAR verification suites
+# Run dedicated River CFD, GPU, CAD Solid & LiDAR verification suites (10 suites)
 npm run test:river
+
+# Run comprehensive Stormwater DPR Excel export assertion suite (116 assertions)
+npx tsx scripts/verify-stormwater-excel.ts
 
 # Individual module self-tests:
 npx tsx scripts/gpu-solver-selftest.ts         # WebGPU, WebGL2, CPU parity & performance
 npx tsx scripts/solid-cfd-mesh-selftest.ts    # Solid CAD civil structures & CFD flow disruption
 npx tsx scripts/move-mesh-selftest.ts         # Interactive Leaflet gizmo mesh drag-and-drop
 npx tsx scripts/lidar-accuracy-selftest.ts    # LiDAR IDW parsing, Audusse C-property & Toro S*
-npx tsx scripts/engine-selftest.ts --offline  # 65 offline stormwater delineation tests
+npx tsx scripts/engine-selftest.ts --offline  # 77 offline stormwater delineation tests
 npx tsx scripts/wastewater-selftest.ts        # SWMM hydraulic engine stability & 10-run suite
 npx tsx scripts/water-transient-selftest.ts   # EPANET GGA, EPS, Fire Flow & Hammer surge
 ```
@@ -361,8 +396,11 @@ The repository automatically deploys to GitHub Pages on every push to `master` v
 ## Engineering Standards & Data Integrity
 
 - **Open Standards**: Fully compatible with EPA SWMM 5.2 and EPANET 2.2 input and output standards.
+- **Dual Engineering Codal Provisions**: Unifies Indian codal provisions (IRC:SP:13-2004, IRC:5-2015, IRC:SP:42, IS 456, Lacey / Khosla) and International standards (FHWA HDS-5, AASHTO, USGS NSS, USBR, HEC-18 / HEC-20) with live formula recalculation.
+- **WAI-ARIA Accessibility**: Complete keyboard navigation, non-blocking notification banners (zero intrusive `alert()` popups), and standard dialog roles (`role="dialog"`, `aria-modal="true"`, `Escape` key close handlers) across all engineering modal interfaces.
+- **Zero Fabrication Guarantee**: The engine never invents baseline elevations or speculative hydrologic divides; any unavailable DEM tile or unverified boundary surfaces transparently with diagnostic telemetry.
 - **Traceable Attribution**: Exported workbooks and KML packages document the DEM elevation source, spatial resolution, and boundary coordinates.
-- **Zero Proprietary Lock-In**: Models export directly to industry-standard `.INP` and `.XLSX` files for seamless import into Bentley OpenFlows (WaterGEMS, SewerGEMS, HAMMER) or EPA desktop software.
+- **Zero Proprietary Lock-In**: Models export directly to industry-standard `.INP`, `.XLSX`, `.GEOJSON`, and `.ASC` files for seamless import into Bentley OpenFlows (WaterGEMS, SewerGEMS, HAMMER), EPA desktop software, ParaView, or OpenFOAM.
 
 ---
 
